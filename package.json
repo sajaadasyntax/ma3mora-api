@@ -4,6 +4,9 @@
   "private": true,
   "description": "Ma3mora Inventory Management System - Backend API",
   "main": "dist/index.js",
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
