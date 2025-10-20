@@ -1,6 +1,7 @@
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
+import compression from 'compression';
 import authRoutes from './routes/auth';
 import inventoriesRoutes from './routes/inventories';
 import itemsRoutes from './routes/items';
@@ -18,6 +19,7 @@ app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:3000',
   credentials: true,
 }));
+app.use(compression()); // Add compression for faster data transfer
 app.use(express.json());
 app.use(cookieParser());
 
