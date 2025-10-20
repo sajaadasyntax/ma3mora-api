@@ -1,0 +1,352 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  SALES_GROCERY
+  SALES_BAKERY
+  INVENTORY
+  PROCUREMENT
+  ACCOUNTANT
+  AUDITOR
+}
+
+enum Section {
+  GROCERY
+  BAKERY
+}
+
+enum CustomerType {
+  WHOLESALE
+  RETAIL
+}
+
+enum PaymentMethod {
+  CASH
+  BANK
+}
+
+enum PaymentStatus {
+  PAID
+  PARTIAL
+  CREDIT
+}
+
+enum DeliveryStatus {
+  NOT_DELIVERED
+  DELIVERED
+}
+
+enum ProcOrderStatus {
+  CREATED
+  RECEIVED
+  PARTIAL
+  CANCELLED
+}
+
+enum BalanceScope {
+  CASHBOX
+  CUSTOMER
+  SUPPLIER
+}
+
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  passwordHash String
+  role         Role
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  accesses               UserInventoryAccess[]
+  salesInvoices          SalesInvoice[]
+  procOrders             ProcOrder[]
+  expenses               Expense[]
+  auditLogs              AuditLog[]
+  salesPayments          SalesPayment[]
+  inventoryDelivery      InventoryDelivery[]
+  inventoryReceipt       InventoryReceipt[]
+  paymentConfirmedOrders ProcOrder[]          @relation("PaymentConfirmer")
+  paymentConfirmedInvoices SalesInvoice[]     @relation("InvoicePaymentConfirmer")
+
+  @@map("users")
+}
+
+model Inventory {
+  id     String  @id @default(cuid())
+  name   String  @unique
+  isMain Boolean @default(false)
+
+  accesses      UserInventoryAccess[]
+  stocks        InventoryStock[]
+  salesInvoices SalesInvoice[]
+  procOrders    ProcOrder[]
+  expenses      Expense[]
+
+  @@map("inventories")
+}
+
+model UserInventoryAccess {
+  userId      String
+  inventoryId String
+  section     Section
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  inventory Inventory @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+
+  @@id([userId, inventoryId, section])
+  @@map("user_inventory_access")
+}
+
+model Item {
+  id        String   @id @default(cuid())
+  name      String
+  section   Section
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  prices            ItemPrice[]
+  stocks            InventoryStock[]
+  salesInvoiceItems SalesInvoiceItem[]
+  procOrderItems    ProcOrderItem[]
+
+  @@map("items")
+}
+
+model ItemPrice {
+  id        String       @id @default(cuid())
+  itemId    String
+  tier      CustomerType
+  price     Decimal      @db.Decimal(10, 2)
+  validFrom DateTime     @default(now())
+
+  item Item @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@index([itemId, tier])
+  @@map("item_prices")
+}
+
+model InventoryStock {
+  inventoryId String
+  itemId      String
+  quantity    Decimal @default(0) @db.Decimal(10, 2)
+
+  inventory Inventory @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+  item      Item      @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@id([inventoryId, itemId])
+  @@map("inventory_stocks")
+}
+
+model Customer {
+  id        String       @id @default(cuid())
+  name      String
+  type      CustomerType
+  division  Section
+  phone     String?
+  address   String?
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  salesInvoices  SalesInvoice[]
+  openingBalance OpeningBalance[]
+
+  @@map("customers")
+}
+
+model Supplier {
+  id        String   @id @default(cuid())
+  name      String
+  phone     String?
+  address   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  procOrders     ProcOrder[]
+  openingBalance OpeningBalance[]
+
+  @@map("suppliers")
+}
+
+model SalesInvoice {
+  id                 String         @id @default(cuid())
+  invoiceNumber      String         @unique
+  inventoryId        String
+  section            Section
+  salesUserId        String
+  customerId         String
+  paymentMethod      PaymentMethod
+  paymentStatus      PaymentStatus  @default(CREDIT)
+  deliveryStatus     DeliveryStatus @default(NOT_DELIVERED)
+  paymentConfirmed   Boolean        @default(false)
+  paymentConfirmedBy String?
+  paymentConfirmedAt DateTime?
+  subtotal           Decimal        @db.Decimal(10, 2)
+  discount           Decimal        @default(0) @db.Decimal(10, 2)
+  total              Decimal        @db.Decimal(10, 2)
+  paidAmount         Decimal        @default(0) @db.Decimal(10, 2)
+  notes              String?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  inventory               Inventory @relation(fields: [inventoryId], references: [id])
+  salesUser               User      @relation(fields: [salesUserId], references: [id])
+  customer                Customer  @relation(fields: [customerId], references: [id])
+  paymentConfirmedByUser  User?     @relation("InvoicePaymentConfirmer", fields: [paymentConfirmedBy], references: [id])
+
+  items      SalesInvoiceItem[]
+  payments   SalesPayment[]
+  deliveries InventoryDelivery[]
+
+  @@map("sales_invoices")
+}
+
+model SalesInvoiceItem {
+  id        String  @id @default(cuid())
+  invoiceId String
+  itemId    String
+  quantity  Decimal @db.Decimal(10, 2)
+  giftQty   Decimal @default(0) @db.Decimal(10, 2)
+  unitPrice Decimal @db.Decimal(10, 2)
+  lineTotal Decimal @db.Decimal(10, 2)
+
+  invoice SalesInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  item    Item         @relation(fields: [itemId], references: [id])
+
+  @@map("sales_invoice_items")
+}
+
+model SalesPayment {
+  id        String        @id @default(cuid())
+  invoiceId String
+  amount    Decimal       @db.Decimal(10, 2)
+  method    PaymentMethod
+  paidAt    DateTime      @default(now())
+  recordedBy String
+  notes     String?
+
+  invoice    SalesInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  recordedByUser User     @relation(fields: [recordedBy], references: [id])
+
+  @@map("sales_payments")
+}
+
+model InventoryDelivery {
+  id         String   @id @default(cuid())
+  invoiceId  String
+  deliveredBy String
+  deliveredAt DateTime @default(now())
+  notes      String?
+
+  invoice       SalesInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  deliveredByUser User       @relation(fields: [deliveredBy], references: [id])
+
+  @@map("inventory_deliveries")
+}
+
+model ProcOrder {
+  id                 String           @id @default(cuid())
+  orderNumber        String           @unique
+  inventoryId        String
+  section            Section
+  createdBy          String
+  supplierId         String
+  status             ProcOrderStatus  @default(CREATED)
+  total              Decimal          @db.Decimal(10, 2)
+  paymentConfirmed   Boolean          @default(false)
+  paymentConfirmedBy String?
+  paymentConfirmedAt DateTime?
+  notes              String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  inventory             Inventory @relation(fields: [inventoryId], references: [id])
+  creator               User      @relation(fields: [createdBy], references: [id])
+  supplier              Supplier  @relation(fields: [supplierId], references: [id])
+  paymentConfirmedByUser User?    @relation("PaymentConfirmer", fields: [paymentConfirmedBy], references: [id])
+
+  items    ProcOrderItem[]
+  receipts InventoryReceipt[]
+
+  @@map("proc_orders")
+}
+
+model ProcOrderItem {
+  id       String  @id @default(cuid())
+  orderId  String
+  itemId   String
+  quantity Decimal @db.Decimal(10, 2)
+  unitCost Decimal @db.Decimal(10, 2)
+  lineTotal Decimal @db.Decimal(10, 2)
+
+  order ProcOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  item  Item      @relation(fields: [itemId], references: [id])
+
+  @@map("proc_order_items")
+}
+
+model InventoryReceipt {
+  id         String   @id @default(cuid())
+  orderId    String
+  receivedBy String
+  receivedAt DateTime @default(now())
+  notes      String?
+
+  order         ProcOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  receivedByUser User     @relation(fields: [receivedBy], references: [id])
+
+  @@map("inventory_receipts")
+}
+
+model Expense {
+  id          String        @id @default(cuid())
+  inventoryId String?
+  section     Section?
+  amount      Decimal       @db.Decimal(10, 2)
+  method      PaymentMethod
+  description String
+  createdBy   String
+  createdAt   DateTime      @default(now())
+
+  inventory Inventory? @relation(fields: [inventoryId], references: [id])
+  creator   User       @relation(fields: [createdBy], references: [id])
+
+  @@map("expenses")
+}
+
+model OpeningBalance {
+  id         String       @id @default(cuid())
+  scope      BalanceScope
+  refId      String?
+  amount     Decimal      @db.Decimal(10, 2)
+  openedAt   DateTime     @default(now())
+  notes      String?
+
+  customer Customer? @relation(fields: [refId], references: [id], map: "opening_balance_customer_fkey")
+  supplier Supplier? @relation(fields: [refId], references: [id], map: "opening_balance_supplier_fkey")
+
+  @@map("opening_balances")
+}
+
+model AuditLog {
+  id       String   @id @default(cuid())
+  userId   String
+  action   String
+  entity   String
+  entityId String
+  before   String?
+  after    String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([entity, entityId])
+  @@index([userId])
+  @@map("audit_logs")
+}
+
