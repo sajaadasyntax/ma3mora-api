@@ -416,18 +416,7 @@ router.get('/balance/sessions', requireRole('ACCOUNTANT', 'AUDITOR'), async (req
     // Get all balance sessions (closed balances)
     const sessions = await prisma.openingBalance.findMany({
       where: { isClosed: true },
-      orderBy: { closedAt: 'desc' },
-      include: {
-        salesInvoices: {
-          select: { id: true }
-        },
-        procOrders: {
-          select: { id: true }
-        },
-        expenses: {
-          select: { id: true }
-        }
-      }
+      orderBy: { closedAt: 'desc' }
     });
 
     // Calculate summary for each session
