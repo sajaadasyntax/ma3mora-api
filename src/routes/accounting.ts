@@ -52,7 +52,27 @@ router.get('/expenses', async (req: AuthRequest, res) => {
   }
 });
 
-router.post('/expenses', requireRole('ACCOUNTANT'), createAuditLog('Expense'), async (req: AuthRequest, res) => {
+// Middleware to check if balance is closed
+async function checkBalanceOpen(req: AuthRequest, res: any, next: any) {
+  try {
+    const openBalance = await prisma.openingBalance.findFirst({
+      where: { isClosed: false },
+    });
+
+    if (!openBalance) {
+      return res.status(400).json({ 
+        error: 'الحساب مغلق. يرجى فتح حساب جديد قبل إجراء أي معاملات.' 
+      });
+    }
+
+    next();
+  } catch (error) {
+    console.error('Check balance error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+}
+
+router.post('/expenses', requireRole('ACCOUNTANT'), checkBalanceOpen, createAuditLog('Expense'), async (req: AuthRequest, res) => {
   try {
     const data = createExpenseSchema.parse(req.body);
 
@@ -316,6 +336,62 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR'), async (req: Aut
     });
   } catch (error) {
     console.error('Get liquid cash error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
+router.post('/balance/close', requireRole('ACCOUNTANT'), async (req: AuthRequest, res) => {
+  try {
+    // Close all opening balances
+    await prisma.openingBalance.updateMany({
+      where: { isClosed: false },
+      data: {
+        isClosed: true,
+        closedAt: new Date(),
+      },
+    });
+
+    res.json({ message: 'تم إقفال الحساب بنجاح' });
+  } catch (error) {
+    console.error('Close balance error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
+router.post('/balance/open', requireRole('ACCOUNTANT'), async (req: AuthRequest, res) => {
+  try {
+    const { amount, notes } = req.body;
+
+    // Create new opening balance
+    const openingBalance = await prisma.openingBalance.create({
+      data: {
+        scope: 'CASHBOX',
+        amount: new Prisma.Decimal(amount),
+        notes: notes || 'رصيد افتتاحي جديد',
+      },
+    });
+
+    res.json({ message: 'تم فتح حساب جديد بنجاح', balance: openingBalance });
+  } catch (error) {
+    console.error('Open balance error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
+router.get('/balance/status', requireRole('ACCOUNTANT', 'AUDITOR'), async (req: AuthRequest, res) => {
+  try {
+    // Check if any balance is open
+    const openBalance = await prisma.openingBalance.findFirst({
+      where: { isClosed: false },
+      orderBy: { openedAt: 'desc' },
+    });
+
+    res.json({
+      isOpen: !!openBalance,
+      lastBalance: openBalance,
+    });
+  } catch (error) {
+    console.error('Get balance status error:', error);
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
 });

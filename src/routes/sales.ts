@@ -11,6 +11,26 @@ const prisma = new PrismaClient();
 router.use(requireAuth);
 router.use(blockAuditorWrites);
 
+// Middleware to check if balance is closed
+async function checkBalanceOpen(req: AuthRequest, res: any, next: any) {
+  try {
+    const openBalance = await prisma.openingBalance.findFirst({
+      where: { isClosed: false },
+    });
+
+    if (!openBalance) {
+      return res.status(400).json({ 
+        error: 'الحساب مغلق. يرجى فتح حساب جديد قبل إجراء أي معاملات.' 
+      });
+    }
+
+    next();
+  } catch (error) {
+    console.error('Check balance error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+}
+
 const invoiceItemSchema = z.object({
   itemId: z.string(),
   quantity: z.number().positive(),
@@ -88,7 +108,7 @@ router.get('/invoices', async (req: AuthRequest, res) => {
   }
 });
 
-router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY'), createAuditLog('SalesInvoice'), async (req: AuthRequest, res) => {
+router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY'), checkBalanceOpen, createAuditLog('SalesInvoice'), async (req: AuthRequest, res) => {
   try {
     const data = createInvoiceSchema.parse(req.body);
 
@@ -230,7 +250,7 @@ router.get('/invoices/:id', async (req: AuthRequest, res) => {
   }
 });
 
-router.post('/invoices/:id/payments', requireRole('ACCOUNTANT', 'SALES_GROCERY', 'SALES_BAKERY'), createAuditLog('SalesPayment'), async (req: AuthRequest, res) => {
+router.post('/invoices/:id/payments', requireRole('ACCOUNTANT', 'SALES_GROCERY', 'SALES_BAKERY'), checkBalanceOpen, createAuditLog('SalesPayment'), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
     const paymentData = paymentSchema.parse(req.body);

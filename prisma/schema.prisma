@@ -327,6 +327,8 @@ model OpeningBalance {
   refId      String?
   amount     Decimal      @db.Decimal(10, 2)
   openedAt   DateTime     @default(now())
+  closedAt   DateTime?
+  isClosed   Boolean      @default(false)
   notes      String?
 
   customer Customer? @relation(fields: [refId], references: [id], map: "opening_balance_customer_fkey")

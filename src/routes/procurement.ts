@@ -11,6 +11,26 @@ const prisma = new PrismaClient();
 router.use(requireAuth);
 router.use(blockAuditorWrites);
 
+// Middleware to check if balance is closed
+async function checkBalanceOpen(req: AuthRequest, res: any, next: any) {
+  try {
+    const openBalance = await prisma.openingBalance.findFirst({
+      where: { isClosed: false },
+    });
+
+    if (!openBalance) {
+      return res.status(400).json({ 
+        error: 'الحساب مغلق. يرجى فتح حساب جديد قبل إجراء أي معاملات.' 
+      });
+    }
+
+    next();
+  } catch (error) {
+    console.error('Check balance error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+}
+
 const orderItemSchema = z.object({
   itemId: z.string(),
   quantity: z.number().positive(),
@@ -77,7 +97,7 @@ router.get('/orders', async (req: AuthRequest, res) => {
   }
 });
 
-router.post('/orders', requireRole('PROCUREMENT'), createAuditLog('ProcOrder'), async (req: AuthRequest, res) => {
+router.post('/orders', requireRole('PROCUREMENT'), checkBalanceOpen, createAuditLog('ProcOrder'), async (req: AuthRequest, res) => {
   try {
     const data = createOrderSchema.parse(req.body);
 
