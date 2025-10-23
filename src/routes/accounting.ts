@@ -215,6 +215,111 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR'), async (req:
   }
 });
 
+router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR'), async (req: AuthRequest, res) => {
+  try {
+    const { inventoryId, section } = req.query;
+
+    // Get all payments grouped by method
+    const payments = await prisma.salesPayment.findMany({
+      where: {
+        invoice: {
+          ...(inventoryId ? { inventoryId: inventoryId as string } : {}),
+          ...(section ? { section: section as any } : {}),
+        }
+      },
+      include: {
+        invoice: {
+          include: {
+            inventory: true
+          }
+        }
+      }
+    });
+
+    // Calculate totals by payment method
+    const cashTotal = payments
+      .filter(p => p.method === 'CASH')
+      .reduce((sum, p) => sum.add(p.amount), new Prisma.Decimal(0));
+
+    const bankTotal = payments
+      .filter(p => p.method === 'BANK')
+      .reduce((sum, p) => sum.add(p.amount), new Prisma.Decimal(0));
+
+    const bankNileTotal = payments
+      .filter(p => p.method === 'BANK_NILE')
+      .reduce((sum, p) => sum.add(p.amount), new Prisma.Decimal(0));
+
+    const totalLiquid = cashTotal.add(bankTotal).add(bankNileTotal);
+
+    // Get expenses by method
+    const expenses = await prisma.expense.findMany({
+      where: {
+        ...(inventoryId ? { inventoryId: inventoryId as string } : {}),
+        ...(section ? { section: section as any } : {}),
+      }
+    });
+
+    const cashExpenses = expenses
+      .filter(e => e.method === 'CASH')
+      .reduce((sum, e) => sum.add(e.amount), new Prisma.Decimal(0));
+
+    const bankExpenses = expenses
+      .filter(e => e.method === 'BANK')
+      .reduce((sum, e) => sum.add(e.amount), new Prisma.Decimal(0));
+
+    const bankNileExpenses = expenses
+      .filter(e => e.method === 'BANK_NILE')
+      .reduce((sum, e) => sum.add(e.amount), new Prisma.Decimal(0));
+
+    // Calculate net liquid cash
+    const netCash = cashTotal.sub(cashExpenses);
+    const netBank = bankTotal.sub(bankExpenses);
+    const netBankNile = bankNileTotal.sub(bankNileExpenses);
+    const netTotal = netCash.add(netBank).add(netBankNile);
+
+    res.json({
+      payments: {
+        cash: {
+          total: cashTotal.toFixed(2),
+          count: payments.filter(p => p.method === 'CASH').length
+        },
+        bank: {
+          total: bankTotal.toFixed(2),
+          count: payments.filter(p => p.method === 'BANK').length
+        },
+        bankNile: {
+          total: bankNileTotal.toFixed(2),
+          count: payments.filter(p => p.method === 'BANK_NILE').length
+        },
+        total: totalLiquid.toFixed(2)
+      },
+      expenses: {
+        cash: {
+          total: cashExpenses.toFixed(2),
+          count: expenses.filter(e => e.method === 'CASH').length
+        },
+        bank: {
+          total: bankExpenses.toFixed(2),
+          count: expenses.filter(e => e.method === 'BANK').length
+        },
+        bankNile: {
+          total: bankNileExpenses.toFixed(2),
+          count: expenses.filter(e => e.method === 'BANK_NILE').length
+        }
+      },
+      net: {
+        cash: netCash.toFixed(2),
+        bank: netBank.toFixed(2),
+        bankNile: netBankNile.toFixed(2),
+        total: netTotal.toFixed(2)
+      }
+    });
+  } catch (error) {
+    console.error('Get liquid cash error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
 router.get('/audit', requireRole('AUDITOR', 'ACCOUNTANT'), async (req: AuthRequest, res) => {
   try {
     const { entity, entityId, userId } = req.query;
