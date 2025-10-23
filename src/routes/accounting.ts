@@ -362,16 +362,31 @@ router.post('/balance/open', requireRole('ACCOUNTANT'), async (req: AuthRequest,
   try {
     const { amount, notes } = req.body;
 
-    // Create new opening balance
-    const openingBalance = await prisma.openingBalance.create({
-      data: {
-        scope: 'CASHBOX',
-        amount: new Prisma.Decimal(amount),
-        notes: notes || 'رصيد افتتاحي جديد',
-      },
+    // Clear all financial data when opening new balance
+    await prisma.$transaction(async (tx) => {
+      // Delete all sales invoices and related data
+      await tx.salesPayment.deleteMany({});
+      await tx.salesInvoice.deleteMany({});
+      
+      // Delete all procurement orders
+      await tx.procurementOrder.deleteMany({});
+      
+      // Delete all expenses
+      await tx.expense.deleteMany({});
+      
+      // Create new opening balance
+      const openingBalance = await tx.openingBalance.create({
+        data: {
+          scope: 'CASHBOX',
+          amount: new Prisma.Decimal(amount),
+          notes: notes || 'رصيد افتتاحي جديد',
+        },
+      });
+      
+      return openingBalance;
     });
 
-    res.json({ message: 'تم فتح حساب جديد بنجاح', balance: openingBalance });
+    res.json({ message: 'تم فتح حساب جديد بنجاح وتم مسح جميع البيانات المالية السابقة' });
   } catch (error) {
     console.error('Open balance error:', error);
     res.status(500).json({ error: 'خطأ في الخادم' });
@@ -392,6 +407,109 @@ router.get('/balance/status', requireRole('ACCOUNTANT', 'AUDITOR'), async (req: 
     });
   } catch (error) {
     console.error('Get balance status error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
+router.get('/balance/sessions', requireRole('ACCOUNTANT', 'AUDITOR'), async (req: AuthRequest, res) => {
+  try {
+    // Get all balance sessions (closed balances)
+    const sessions = await prisma.openingBalance.findMany({
+      where: { isClosed: true },
+      orderBy: { closedAt: 'desc' },
+      include: {
+        _count: {
+          select: {
+            salesInvoices: true,
+            procurementOrders: true,
+            expenses: true,
+          }
+        }
+      }
+    });
+
+    // Calculate summary for each session
+    const sessionsWithSummary = await Promise.all(
+      sessions.map(async (session) => {
+        // Get sales data for this session
+        const salesInvoices = await prisma.salesInvoice.findMany({
+          where: {
+            createdAt: {
+              gte: session.openedAt,
+              lte: session.closedAt || new Date(),
+            }
+          },
+          include: {
+            payments: true,
+          }
+        });
+
+        const totalSales = salesInvoices.reduce((sum, inv) => 
+          sum.add(inv.total), new Prisma.Decimal(0)
+        );
+        const totalReceived = salesInvoices.reduce((sum, inv) => 
+          sum.add(inv.payments.reduce((pSum, p) => pSum.add(p.amount), new Prisma.Decimal(0))), 
+          new Prisma.Decimal(0)
+        );
+        const totalDebt = totalSales.sub(totalReceived);
+
+        // Get procurement data for this session
+        const procurementOrders = await prisma.procurementOrder.findMany({
+          where: {
+            createdAt: {
+              gte: session.openedAt,
+              lte: session.closedAt || new Date(),
+            }
+          }
+        });
+
+        const totalProcurement = procurementOrders.reduce((sum, order) => 
+          sum.add(order.total), new Prisma.Decimal(0)
+        );
+
+        // Get expenses data for this session
+        const expenses = await prisma.expense.findMany({
+          where: {
+            createdAt: {
+              gte: session.openedAt,
+              lte: session.closedAt || new Date(),
+            }
+          }
+        });
+
+        const totalExpenses = expenses.reduce((sum, exp) => 
+          sum.add(exp.amount), new Prisma.Decimal(0)
+        );
+
+        const profit = totalReceived.sub(totalProcurement).sub(totalExpenses);
+
+        return {
+          ...session,
+          summary: {
+            sales: {
+              total: totalSales.toFixed(2),
+              received: totalReceived.toFixed(2),
+              debt: totalDebt.toFixed(2),
+              count: salesInvoices.length,
+            },
+            procurement: {
+              total: totalProcurement.toFixed(2),
+              count: procurementOrders.length,
+            },
+            expenses: {
+              total: totalExpenses.toFixed(2),
+              count: expenses.length,
+            },
+            profit: profit.toFixed(2),
+            netBalance: session.amount.add(profit).toFixed(2),
+          }
+        };
+      })
+    );
+
+    res.json(sessionsWithSummary);
+  } catch (error) {
+    console.error('Get balance sessions error:', error);
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
 });
