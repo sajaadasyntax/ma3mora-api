@@ -369,7 +369,7 @@ router.post('/balance/open', requireRole('ACCOUNTANT'), async (req: AuthRequest,
       await tx.salesInvoice.deleteMany({});
       
       // Delete all procurement orders
-      await tx.procurementOrder.deleteMany({});
+      await tx.procOrder.deleteMany({});
       
       // Delete all expenses
       await tx.expense.deleteMany({});
@@ -418,12 +418,14 @@ router.get('/balance/sessions', requireRole('ACCOUNTANT', 'AUDITOR'), async (req
       where: { isClosed: true },
       orderBy: { closedAt: 'desc' },
       include: {
-        _count: {
-          select: {
-            salesInvoices: true,
-            procurementOrders: true,
-            expenses: true,
-          }
+        salesInvoices: {
+          select: { id: true }
+        },
+        procOrders: {
+          select: { id: true }
+        },
+        expenses: {
+          select: { id: true }
         }
       }
     });
@@ -454,7 +456,7 @@ router.get('/balance/sessions', requireRole('ACCOUNTANT', 'AUDITOR'), async (req
         const totalDebt = totalSales.sub(totalReceived);
 
         // Get procurement data for this session
-        const procurementOrders = await prisma.procurementOrder.findMany({
+        const procurementOrders = await prisma.procOrder.findMany({
           where: {
             createdAt: {
               gte: session.openedAt,
@@ -463,7 +465,7 @@ router.get('/balance/sessions', requireRole('ACCOUNTANT', 'AUDITOR'), async (req
           }
         });
 
-        const totalProcurement = procurementOrders.reduce((sum, order) => 
+        const totalProcurement = procurementOrders.reduce((sum: Prisma.Decimal, order: any) => 
           sum.add(order.total), new Prisma.Decimal(0)
         );
 
