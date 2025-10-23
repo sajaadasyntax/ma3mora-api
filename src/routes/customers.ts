@@ -19,7 +19,7 @@ const createCustomerSchema = z.object({
   address: z.string().optional(),
 });
 
-router.get('/', async (req: AuthRequest, res) => {
+router.get('/', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'ACCOUNTANT', 'AUDITOR'), async (req: AuthRequest, res) => {
   try {
     const { type, division } = req.query;
     const where: any = {};
@@ -57,7 +57,7 @@ router.post('/', requireRole('SALES_GROCERY', 'SALES_BAKERY'), createAuditLog('C
   }
 });
 
-router.get('/:id', async (req: AuthRequest, res) => {
+router.get('/:id', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'ACCOUNTANT', 'AUDITOR'), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
 

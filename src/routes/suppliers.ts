@@ -17,7 +17,7 @@ const createSupplierSchema = z.object({
   address: z.string().optional(),
 });
 
-router.get('/', async (req: AuthRequest, res) => {
+router.get('/', requireRole('PROCUREMENT', 'ACCOUNTANT', 'AUDITOR'), async (req: AuthRequest, res) => {
   try {
     const suppliers = await prisma.supplier.findMany({
       orderBy: { name: 'asc' },
@@ -48,7 +48,7 @@ router.post('/', requireRole('PROCUREMENT'), createAuditLog('Supplier'), async (
   }
 });
 
-router.get('/:id/orders', async (req: AuthRequest, res) => {
+router.get('/:id/orders', requireRole('PROCUREMENT', 'ACCOUNTANT', 'AUDITOR'), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
 

@@ -51,7 +51,7 @@ async function generateOrderNumber(): Promise<string> {
   return `PO-${String(count + 1).padStart(6, '0')}`;
 }
 
-router.get('/orders', async (req: AuthRequest, res) => {
+router.get('/orders', requireRole('PROCUREMENT', 'ACCOUNTANT', 'AUDITOR'), async (req: AuthRequest, res) => {
   try {
     const { status, inventoryId, section } = req.query;
     const where: any = {};
@@ -155,7 +155,7 @@ router.post('/orders', requireRole('PROCUREMENT'), checkBalanceOpen, createAudit
   }
 });
 
-router.get('/orders/:id', async (req: AuthRequest, res) => {
+router.get('/orders/:id', requireRole('PROCUREMENT', 'ACCOUNTANT', 'AUDITOR'), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
 

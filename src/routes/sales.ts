@@ -60,7 +60,7 @@ async function generateInvoiceNumber(): Promise<string> {
   return `INV-${String(count + 1).padStart(6, '0')}`;
 }
 
-router.get('/invoices', async (req: AuthRequest, res) => {
+router.get('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'ACCOUNTANT', 'AUDITOR'), async (req: AuthRequest, res) => {
   try {
     const { status, inventoryId, section, deliveryStatus, paymentStatus } = req.query;
     const where: any = {};
@@ -201,7 +201,7 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY'), checkBala
   }
 });
 
-router.get('/invoices/:id', async (req: AuthRequest, res) => {
+router.get('/invoices/:id', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'ACCOUNTANT', 'AUDITOR'), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
 
