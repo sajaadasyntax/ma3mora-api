@@ -48,5 +48,42 @@ router.post('/', requireRole('PROCUREMENT'), createAuditLog('Supplier'), async (
   }
 });
 
+router.get('/:id/orders', async (req: AuthRequest, res) => {
+  try {
+    const { id } = req.params;
+
+    const orders = await prisma.procOrder.findMany({
+      where: { supplierId: id },
+      include: {
+        inventory: true,
+        creator: {
+          select: { id: true, username: true },
+        },
+        paymentConfirmedByUser: {
+          select: { id: true, username: true },
+        },
+        items: {
+          include: {
+            item: true,
+          },
+        },
+        receipts: {
+          include: {
+            receivedByUser: {
+              select: { id: true, username: true },
+            },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    res.json(orders);
+  } catch (error) {
+    console.error('Get supplier orders error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
 export default router;
 

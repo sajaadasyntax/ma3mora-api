@@ -199,10 +199,9 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR'), async (req:
       where: { scope: 'CASHBOX' },
     });
 
-    const totalOpeningBalance = openingBalances.reduce(
-      (sum, bal) => sum.add(bal.amount),
-      new Prisma.Decimal(0)
-    );
+    // Get only the current open balance (not all balances)
+    const currentOpeningBalance = openingBalances.find(bal => !bal.isClosed);
+    const totalOpeningBalance = currentOpeningBalance ? currentOpeningBalance.amount : new Prisma.Decimal(0);
 
     const netBalance = totalOpeningBalance
       .add(totalReceived)
