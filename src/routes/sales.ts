@@ -21,7 +21,7 @@ const createInvoiceSchema = z.object({
   inventoryId: z.string(),
   section: z.enum(['GROCERY', 'BAKERY']),
   customerId: z.string(),
-  paymentMethod: z.enum(['CASH', 'BANK']),
+  paymentMethod: z.enum(['CASH', 'BANK', 'BANK_NILE']),
   discount: z.number().min(0).default(0),
   items: z.array(invoiceItemSchema).min(1),
   notes: z.string().optional(),
@@ -29,8 +29,9 @@ const createInvoiceSchema = z.object({
 
 const paymentSchema = z.object({
   amount: z.number().positive(),
-  method: z.enum(['CASH', 'BANK']),
+  method: z.enum(['CASH', 'BANK', 'BANK_NILE']),
   notes: z.string().optional(),
+  receiptUrl: z.string().optional(),
 });
 
 // Generate invoice number
@@ -255,6 +256,7 @@ router.post('/invoices/:id/payments', requireRole('ACCOUNTANT', 'SALES_GROCERY',
         method: paymentData.method,
         recordedBy: req.user!.id,
         notes: paymentData.notes,
+        receiptUrl: paymentData.receiptUrl,
       },
     });
 

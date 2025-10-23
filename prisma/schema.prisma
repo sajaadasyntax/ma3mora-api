@@ -29,6 +29,7 @@ enum CustomerType {
 enum PaymentMethod {
   CASH
   BANK
+  BANK_NILE
 }
 
 enum PaymentStatus {
@@ -229,6 +230,7 @@ model SalesPayment {
   paidAt    DateTime      @default(now())
   recordedBy String
   notes     String?
+  receiptUrl String?
 
   invoice    SalesInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   recordedByUser User     @relation(fields: [recordedBy], references: [id])
