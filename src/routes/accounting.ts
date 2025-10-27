@@ -607,7 +607,7 @@ router.get('/daily-report', requireRole('AUDITOR', 'MANAGER'), async (req: AuthR
         total: totalSales,
         received: totalSalesReceived,
         pending: totalSales.sub(totalSalesReceived),
-        invoices: salesInvoices.map(inv => ({
+        invoiceList: salesInvoices.map(inv => ({
           number: inv.invoiceNumber,
           customer: inv.customer.name,
           total: inv.total,
@@ -620,7 +620,7 @@ router.get('/daily-report', requireRole('AUDITOR', 'MANAGER'), async (req: AuthR
         total: totalProcurement,
         paid: totalProcurementPaid,
         pending: totalProcurement.sub(totalProcurementPaid),
-        orders: procOrders.map(order => ({
+        orderList: procOrders.map(order => ({
           number: order.orderNumber,
           supplier: order.supplier.name,
           total: order.total,

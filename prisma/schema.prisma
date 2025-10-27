@@ -280,6 +280,7 @@ model ProcOrder {
 
   items    ProcOrderItem[]
   payments ProcOrderPayment[]
+  returns  ProcOrderReturn[]
   receipts InventoryReceipt[]
 
   @@map("proc_orders")
@@ -311,6 +312,22 @@ model ProcOrderReturn {
   returnedByUser User     @relation(fields: [returnedBy], references: [id])
 
   @@map("proc_order_returns")
+}
+
+model ProcOrderPayment {
+  id        String        @id @default(cuid())
+  orderId   String
+  amount    Decimal       @db.Decimal(10, 2)
+  method    PaymentMethod
+  paidAt    DateTime      @default(now())
+  recordedBy String
+  notes     String?
+  receiptUrl String?
+
+  order    ProcOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  recordedByUser User     @relation(fields: [recordedBy], references: [id])
+
+  @@map("proc_order_payments")
 }
 
 model InventoryReceipt {

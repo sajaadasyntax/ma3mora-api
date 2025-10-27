@@ -436,7 +436,7 @@ router.post('/orders/:id/return', requireRole('MANAGER'), createAuditLog('ProcOr
     }
 
     // Check if order is already paid
-    if (order.paidAmount > 0) {
+    if (order.paidAmount.greaterThan(0)) {
       return res.status(400).json({ error: 'لا يمكن إرجاع أمر الشراء بعد الدفع' });
     }
 
