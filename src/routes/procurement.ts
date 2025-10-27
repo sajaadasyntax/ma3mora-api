@@ -175,6 +175,14 @@ router.get('/orders/:id', requireRole('PROCUREMENT', 'ACCOUNTANT', 'AUDITOR', 'M
             item: true,
           },
         },
+        payments: {
+          include: {
+            recordedByUser: {
+              select: { id: true, username: true },
+            },
+          },
+          orderBy: { paidAt: 'desc' },
+        },
         receipts: {
           include: {
             receivedByUser: {
@@ -197,7 +205,7 @@ router.get('/orders/:id', requireRole('PROCUREMENT', 'ACCOUNTANT', 'AUDITOR', 'M
   }
 });
 
-router.post('/orders/:id/confirm-payment', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('ProcOrder'), async (req: AuthRequest, res) => {
+router.post('/orders/:id/confirm-payment', requireRole('MANAGER'), createAuditLog('ProcOrder'), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
 
@@ -331,6 +339,72 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
   } catch (error) {
     console.error('Receive order error:', error);
     res.status(500).json({ error: error instanceof Error ? error.message : 'خطأ في الخادم' });
+  }
+});
+
+const paymentSchema = z.object({
+  amount: z.number().positive(),
+  method: z.enum(['CASH', 'BANK', 'BANK_NILE']),
+  notes: z.string().optional(),
+  receiptUrl: z.string().optional(),
+});
+
+// Add payment to procurement order
+router.post('/orders/:id/payments', requireRole('MANAGER'), checkBalanceOpen, createAuditLog('ProcOrderPayment'), async (req: AuthRequest, res) => {
+  try {
+    const { id } = req.params;
+    const paymentData = paymentSchema.parse(req.body);
+
+    const order = await prisma.procOrder.findUnique({
+      where: { id },
+    });
+
+    if (!order) {
+      return res.status(404).json({ error: 'أمر الشراء غير موجود' });
+    }
+
+    const newPaidAmount = new Prisma.Decimal(order.paidAmount).add(paymentData.amount);
+
+    if (newPaidAmount.greaterThan(order.total)) {
+      return res.status(400).json({ error: 'المبلغ المدفوع يتجاوز إجمالي أمر الشراء' });
+    }
+
+    const payment = await prisma.procOrderPayment.create({
+      data: {
+        orderId: id,
+        amount: paymentData.amount,
+        method: paymentData.method,
+        recordedBy: req.user!.id,
+        notes: paymentData.notes,
+        receiptUrl: paymentData.receiptUrl
+      },
+    });
+
+    // Update order paid amount
+    const updatedOrder = await prisma.procOrder.update({
+      where: { id },
+      data: {
+        paidAmount: newPaidAmount,
+      },
+      include: {
+        payments: {
+          include: {
+            recordedByUser: {
+              select: { id: true, username: true },
+            },
+          },
+          orderBy: { paidAt: 'desc' },
+        },
+      },
+    });
+
+    res.json({ payment, order: updatedOrder });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: 'بيانات غير صالحة', details: error.errors });
+    }
+    console.error('Create procurement payment error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
   }
 });
 

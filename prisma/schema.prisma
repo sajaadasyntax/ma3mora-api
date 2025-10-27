@@ -75,6 +75,7 @@ model User {
   inventoryReceipt       InventoryReceipt[]
   paymentConfirmedOrders ProcOrder[]          @relation("PaymentConfirmer")
   paymentConfirmedInvoices SalesInvoice[]     @relation("InvoicePaymentConfirmer")
+  procOrderPayments      ProcOrderPayment[]
   salaries               Salary[]
   advances               Advance[]
 
@@ -263,6 +264,7 @@ model ProcOrder {
   supplierId         String
   status             ProcOrderStatus  @default(CREATED)
   total              Decimal          @db.Decimal(10, 2)
+  paidAmount         Decimal          @default(0) @db.Decimal(10, 2)
   paymentConfirmed   Boolean          @default(false)
   paymentConfirmedBy String?
   paymentConfirmedAt DateTime?
@@ -276,6 +278,7 @@ model ProcOrder {
   paymentConfirmedByUser User?    @relation("PaymentConfirmer", fields: [paymentConfirmedBy], references: [id])
 
   items    ProcOrderItem[]
+  payments ProcOrderPayment[]
   receipts InventoryReceipt[]
 
   @@map("proc_orders")
@@ -293,6 +296,22 @@ model ProcOrderItem {
   item  Item      @relation(fields: [itemId], references: [id])
 
   @@map("proc_order_items")
+}
+
+model ProcOrderPayment {
+  id        String        @id @default(cuid())
+  orderId   String
+  amount    Decimal       @db.Decimal(10, 2)
+  method    PaymentMethod
+  paidAt    DateTime      @default(now())
+  recordedBy String
+  notes     String?
+  receiptUrl String?
+
+  order    ProcOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  recordedByUser User     @relation(fields: [recordedBy], references: [id])
+
+  @@map("proc_order_payments")
 }
 
 model InventoryReceipt {
