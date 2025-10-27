@@ -76,6 +76,7 @@ model User {
   paymentConfirmedOrders ProcOrder[]          @relation("PaymentConfirmer")
   paymentConfirmedInvoices SalesInvoice[]     @relation("InvoicePaymentConfirmer")
   procOrderPayments      ProcOrderPayment[]
+  procOrderReturns       ProcOrderReturn[]
   salaries               Salary[]
   advances               Advance[]
 
@@ -298,20 +299,18 @@ model ProcOrderItem {
   @@map("proc_order_items")
 }
 
-model ProcOrderPayment {
-  id        String        @id @default(cuid())
-  orderId   String
-  amount    Decimal       @db.Decimal(10, 2)
-  method    PaymentMethod
-  paidAt    DateTime      @default(now())
-  recordedBy String
-  notes     String?
-  receiptUrl String?
+model ProcOrderReturn {
+  id         String   @id @default(cuid())
+  orderId    String
+  reason     String
+  returnedBy String
+  returnedAt DateTime @default(now())
+  notes      String?
 
   order    ProcOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  recordedByUser User     @relation(fields: [recordedBy], references: [id])
+  returnedByUser User     @relation(fields: [returnedBy], references: [id])
 
-  @@map("proc_order_payments")
+  @@map("proc_order_returns")
 }
 
 model InventoryReceipt {

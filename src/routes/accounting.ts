@@ -531,5 +531,125 @@ router.get('/audit', requireRole('AUDITOR', 'ACCOUNTANT', 'MANAGER'), async (req
   }
 });
 
+// Daily Report endpoint for mobile app
+router.get('/daily-report', requireRole('AUDITOR', 'MANAGER'), async (req: AuthRequest, res) => {
+  try {
+    const { date } = req.query;
+    const targetDate = date ? new Date(date as string) : new Date();
+    
+    // Set date range for the day
+    const startOfDay = new Date(targetDate);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(targetDate);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    // Get sales data
+    const salesInvoices = await prisma.salesInvoice.findMany({
+      where: {
+        createdAt: {
+          gte: startOfDay,
+          lte: endOfDay,
+        },
+      },
+      include: {
+        customer: true,
+        inventory: true,
+        items: {
+          include: {
+            item: true,
+          },
+        },
+        payments: true,
+      },
+    });
+
+    // Get procurement data
+    const procOrders = await prisma.procOrder.findMany({
+      where: {
+        createdAt: {
+          gte: startOfDay,
+          lte: endOfDay,
+        },
+      },
+      include: {
+        supplier: true,
+        inventory: true,
+        items: {
+          include: {
+            item: true,
+          },
+        },
+        payments: true,
+      },
+    });
+
+    // Get expenses
+    const expenses = await prisma.expense.findMany({
+      where: {
+        createdAt: {
+          gte: startOfDay,
+          lte: endOfDay,
+        },
+      },
+    });
+
+    // Calculate totals
+    const totalSales = salesInvoices.reduce((sum, inv) => sum.add(inv.total), new Prisma.Decimal(0));
+    const totalSalesReceived = salesInvoices.reduce((sum, inv) => sum.add(inv.paidAmount), new Prisma.Decimal(0));
+    const totalProcurement = procOrders.reduce((sum, order) => sum.add(order.total), new Prisma.Decimal(0));
+    const totalProcurementPaid = procOrders.reduce((sum, order) => sum.add(order.paidAmount), new Prisma.Decimal(0));
+    const totalExpenses = expenses.reduce((sum, exp) => sum.add(exp.amount), new Prisma.Decimal(0));
+
+    const report = {
+      date: targetDate.toISOString().split('T')[0],
+      sales: {
+        invoices: salesInvoices.length,
+        total: totalSales,
+        received: totalSalesReceived,
+        pending: totalSales.sub(totalSalesReceived),
+        invoices: salesInvoices.map(inv => ({
+          number: inv.invoiceNumber,
+          customer: inv.customer.name,
+          total: inv.total,
+          paid: inv.paidAmount,
+          status: inv.paymentStatus,
+        })),
+      },
+      procurement: {
+        orders: procOrders.length,
+        total: totalProcurement,
+        paid: totalProcurementPaid,
+        pending: totalProcurement.sub(totalProcurementPaid),
+        orders: procOrders.map(order => ({
+          number: order.orderNumber,
+          supplier: order.supplier.name,
+          total: order.total,
+          paid: order.paidAmount,
+          status: order.paymentConfirmed ? 'CONFIRMED' : 'PENDING',
+        })),
+      },
+      expenses: {
+        count: expenses.length,
+        total: totalExpenses,
+        items: expenses.map(exp => ({
+          description: exp.description,
+          amount: exp.amount,
+          method: exp.method,
+        })),
+      },
+      summary: {
+        netCashFlow: totalSalesReceived.sub(totalProcurementPaid).sub(totalExpenses),
+        totalRevenue: totalSales,
+        totalCosts: totalProcurement.add(totalExpenses),
+      },
+    };
+
+    res.json(report);
+  } catch (error) {
+    console.error('Daily report error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
 export default router;
 

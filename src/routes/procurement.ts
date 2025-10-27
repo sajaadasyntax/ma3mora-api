@@ -183,6 +183,14 @@ router.get('/orders/:id', requireRole('PROCUREMENT', 'ACCOUNTANT', 'AUDITOR', 'M
           },
           orderBy: { paidAt: 'desc' },
         },
+        returns: {
+          include: {
+            returnedByUser: {
+              select: { id: true, username: true },
+            },
+          },
+          orderBy: { returnedAt: 'desc' },
+        },
         receipts: {
           include: {
             receivedByUser: {
@@ -404,6 +412,63 @@ router.post('/orders/:id/payments', requireRole('MANAGER'), checkBalanceOpen, cr
       return res.status(400).json({ error: 'بيانات غير صالحة', details: error.errors });
     }
     console.error('Create procurement payment error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
+const returnSchema = z.object({
+  reason: z.string().min(1, 'السبب مطلوب'),
+  notes: z.string().optional(),
+});
+
+// Return procurement order (only if not paid)
+router.post('/orders/:id/return', requireRole('MANAGER'), createAuditLog('ProcOrderReturn'), async (req: AuthRequest, res) => {
+  try {
+    const { id } = req.params;
+    const returnData = returnSchema.parse(req.body);
+
+    const order = await prisma.procOrder.findUnique({
+      where: { id },
+    });
+
+    if (!order) {
+      return res.status(404).json({ error: 'أمر الشراء غير موجود' });
+    }
+
+    // Check if order is already paid
+    if (order.paidAmount > 0) {
+      return res.status(400).json({ error: 'لا يمكن إرجاع أمر الشراء بعد الدفع' });
+    }
+
+    // Check if order is already returned
+    const existingReturn = await prisma.procOrderReturn.findFirst({
+      where: { orderId: id },
+    });
+
+    if (existingReturn) {
+      return res.status(400).json({ error: 'تم إرجاع هذا الأمر مسبقاً' });
+    }
+
+    const orderReturn = await prisma.procOrderReturn.create({
+      data: {
+        orderId: id,
+        reason: returnData.reason,
+        returnedBy: req.user!.id,
+        notes: returnData.notes,
+      },
+      include: {
+        returnedByUser: {
+          select: { id: true, username: true },
+        },
+      },
+    });
+
+    res.status(201).json(orderReturn);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: 'بيانات غير صالحة', details: error.errors });
+    }
+    console.error('Return procurement order error:', error);
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
 });
