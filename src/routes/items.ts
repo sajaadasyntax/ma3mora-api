@@ -59,7 +59,7 @@ router.get('/', async (req: AuthRequest, res) => {
   }
 });
 
-router.post('/', requireRole('PROCUREMENT'), createAuditLog('Item'), async (req: AuthRequest, res) => {
+router.post('/', requireRole('PROCUREMENT', 'MANAGER'), createAuditLog('Item'), async (req: AuthRequest, res) => {
   try {
     const { name, section, wholesalePrice, retailPrice } = createItemSchema.parse(req.body);
 
@@ -119,7 +119,7 @@ router.get('/:id/prices', async (req: AuthRequest, res) => {
   }
 });
 
-router.put('/:id/prices', requireRole('ACCOUNTANT'), createAuditLog('ItemPrice'), async (req: AuthRequest, res) => {
+router.put('/:id/prices', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('ItemPrice'), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
     const { wholesalePrice, retailPrice } = updatePriceSchema.parse(req.body);
@@ -162,7 +162,7 @@ router.put('/:id/prices', requireRole('ACCOUNTANT'), createAuditLog('ItemPrice')
   }
 });
 
-router.delete('/:id', requireRole('PROCUREMENT'), createAuditLog('Item'), async (req: AuthRequest, res) => {
+router.delete('/:id', requireRole('PROCUREMENT', 'MANAGER'), createAuditLog('Item'), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
 

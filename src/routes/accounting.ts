@@ -72,7 +72,7 @@ async function checkBalanceOpen(req: AuthRequest, res: any, next: any) {
   }
 }
 
-router.post('/expenses', requireRole('ACCOUNTANT'), checkBalanceOpen, createAuditLog('Expense'), async (req: AuthRequest, res) => {
+router.post('/expenses', requireRole('ACCOUNTANT', 'MANAGER'), checkBalanceOpen, createAuditLog('Expense'), async (req: AuthRequest, res) => {
   try {
     const data = createExpenseSchema.parse(req.body);
 
@@ -119,7 +119,7 @@ router.get('/opening-balances', async (req: AuthRequest, res) => {
   }
 });
 
-router.post('/opening-balances', requireRole('ACCOUNTANT'), createAuditLog('OpeningBalance'), async (req: AuthRequest, res) => {
+router.post('/opening-balances', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('OpeningBalance'), async (req: AuthRequest, res) => {
   try {
     const data = createOpeningBalanceSchema.parse(req.body);
 
@@ -141,7 +141,7 @@ router.post('/opening-balances', requireRole('ACCOUNTANT'), createAuditLog('Open
   }
 });
 
-router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR'), async (req: AuthRequest, res) => {
+router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (req: AuthRequest, res) => {
   try {
     const { inventoryId, section } = req.query;
 
@@ -234,7 +234,7 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR'), async (req:
   }
 });
 
-router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR'), async (req: AuthRequest, res) => {
+router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (req: AuthRequest, res) => {
   try {
     const { inventoryId, section } = req.query;
 
@@ -339,7 +339,7 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR'), async (req: Aut
   }
 });
 
-router.post('/balance/close', requireRole('ACCOUNTANT'), async (req: AuthRequest, res) => {
+router.post('/balance/close', requireRole('ACCOUNTANT', 'MANAGER'), async (req: AuthRequest, res) => {
   try {
     // Close all opening balances
     await prisma.openingBalance.updateMany({
@@ -357,7 +357,7 @@ router.post('/balance/close', requireRole('ACCOUNTANT'), async (req: AuthRequest
   }
 });
 
-router.post('/balance/open', requireRole('ACCOUNTANT'), async (req: AuthRequest, res) => {
+router.post('/balance/open', requireRole('ACCOUNTANT', 'MANAGER'), async (req: AuthRequest, res) => {
   try {
     const { amount, notes } = req.body;
 
@@ -392,7 +392,7 @@ router.post('/balance/open', requireRole('ACCOUNTANT'), async (req: AuthRequest,
   }
 });
 
-router.get('/balance/status', requireRole('ACCOUNTANT', 'AUDITOR'), async (req: AuthRequest, res) => {
+router.get('/balance/status', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (req: AuthRequest, res) => {
   try {
     // Check if any balance is open
     const openBalance = await prisma.openingBalance.findFirst({
@@ -410,7 +410,7 @@ router.get('/balance/status', requireRole('ACCOUNTANT', 'AUDITOR'), async (req: 
   }
 });
 
-router.get('/balance/sessions', requireRole('ACCOUNTANT', 'AUDITOR'), async (req: AuthRequest, res) => {
+router.get('/balance/sessions', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (req: AuthRequest, res) => {
   try {
     // Get all balance sessions (closed balances)
     const sessions = await prisma.openingBalance.findMany({
@@ -504,7 +504,7 @@ router.get('/balance/sessions', requireRole('ACCOUNTANT', 'AUDITOR'), async (req
   }
 });
 
-router.get('/audit', requireRole('AUDITOR', 'ACCOUNTANT'), async (req: AuthRequest, res) => {
+router.get('/audit', requireRole('AUDITOR', 'ACCOUNTANT', 'MANAGER'), async (req: AuthRequest, res) => {
   try {
     const { entity, entityId, userId } = req.query;
     const where: any = {};

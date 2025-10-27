@@ -51,7 +51,7 @@ async function generateOrderNumber(): Promise<string> {
   return `PO-${String(count + 1).padStart(6, '0')}`;
 }
 
-router.get('/orders', requireRole('PROCUREMENT', 'ACCOUNTANT', 'AUDITOR'), async (req: AuthRequest, res) => {
+router.get('/orders', requireRole('PROCUREMENT', 'ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (req: AuthRequest, res) => {
   try {
     const { status, inventoryId, section } = req.query;
     const where: any = {};
@@ -97,7 +97,7 @@ router.get('/orders', requireRole('PROCUREMENT', 'ACCOUNTANT', 'AUDITOR'), async
   }
 });
 
-router.post('/orders', requireRole('PROCUREMENT'), checkBalanceOpen, createAuditLog('ProcOrder'), async (req: AuthRequest, res) => {
+router.post('/orders', requireRole('PROCUREMENT', 'MANAGER'), checkBalanceOpen, createAuditLog('ProcOrder'), async (req: AuthRequest, res) => {
   try {
     const data = createOrderSchema.parse(req.body);
 
@@ -155,7 +155,7 @@ router.post('/orders', requireRole('PROCUREMENT'), checkBalanceOpen, createAudit
   }
 });
 
-router.get('/orders/:id', requireRole('PROCUREMENT', 'ACCOUNTANT', 'AUDITOR'), async (req: AuthRequest, res) => {
+router.get('/orders/:id', requireRole('PROCUREMENT', 'ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
 
@@ -197,7 +197,7 @@ router.get('/orders/:id', requireRole('PROCUREMENT', 'ACCOUNTANT', 'AUDITOR'), a
   }
 });
 
-router.post('/orders/:id/confirm-payment', requireRole('ACCOUNTANT'), createAuditLog('ProcOrder'), async (req: AuthRequest, res) => {
+router.post('/orders/:id/confirm-payment', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('ProcOrder'), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
 
@@ -239,7 +239,7 @@ router.post('/orders/:id/confirm-payment', requireRole('ACCOUNTANT'), createAudi
   }
 });
 
-router.post('/orders/:id/receive', requireRole('INVENTORY'), createAuditLog('InventoryReceipt'), async (req: AuthRequest, res) => {
+router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAuditLog('InventoryReceipt'), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
     const { notes, partial } = req.body;
@@ -331,6 +331,200 @@ router.post('/orders/:id/receive', requireRole('INVENTORY'), createAuditLog('Inv
   } catch (error) {
     console.error('Receive order error:', error);
     res.status(500).json({ error: error instanceof Error ? error.message : 'خطأ في الخادم' });
+  }
+});
+
+// Procurement Reports endpoint
+router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (req: AuthRequest, res) => {
+  try {
+    const { 
+      startDate, 
+      endDate, 
+      period = 'daily', 
+      inventoryId, 
+      section,
+      status,
+      groupBy = 'date'
+    } = req.query;
+
+    const where: any = {};
+    
+    // Date filtering
+    if (startDate && endDate) {
+      where.createdAt = {
+        gte: new Date(startDate as string),
+        lte: new Date(endDate as string),
+      };
+    } else if (startDate) {
+      where.createdAt = {
+        gte: new Date(startDate as string),
+      };
+    } else if (endDate) {
+      where.createdAt = {
+        lte: new Date(endDate as string),
+      };
+    }
+
+    // Additional filters
+    if (inventoryId) where.inventoryId = inventoryId;
+    if (section) where.section = section;
+    if (status) where.status = status;
+
+    // Get orders with detailed information
+    const orders = await prisma.procOrder.findMany({
+      where,
+      include: {
+        supplier: true,
+        inventory: true,
+        creator: {
+          select: { id: true, username: true },
+        },
+        items: {
+          include: {
+            item: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // Group data based on period
+    let groupedData: any = {};
+    
+    if (period === 'daily') {
+      orders.forEach(order => {
+        const date = order.createdAt.toISOString().split('T')[0];
+        if (!groupedData[date]) {
+          groupedData[date] = {
+            date,
+            orders: [],
+            totalAmount: 0,
+            orderCount: 0,
+            statuses: {},
+            suppliers: {},
+            items: {},
+          };
+        }
+        
+        groupedData[date].orders.push(order);
+        groupedData[date].totalAmount += parseFloat(order.total.toString());
+        groupedData[date].orderCount += 1;
+        
+        // Group by status
+        const status = order.status;
+        if (!groupedData[date].statuses[status]) {
+          groupedData[date].statuses[status] = {
+            count: 0,
+            amount: 0,
+          };
+        }
+        groupedData[date].statuses[status].count += 1;
+        groupedData[date].statuses[status].amount += parseFloat(order.total.toString());
+        
+        // Group by suppliers
+        const supplierName = order.supplier.name;
+        if (!groupedData[date].suppliers[supplierName]) {
+          groupedData[date].suppliers[supplierName] = {
+            count: 0,
+            amount: 0,
+          };
+        }
+        groupedData[date].suppliers[supplierName].count += 1;
+        groupedData[date].suppliers[supplierName].amount += parseFloat(order.total.toString());
+        
+        // Group by items
+        order.items.forEach(item => {
+          const itemName = item.item.name;
+          if (!groupedData[date].items[itemName]) {
+            groupedData[date].items[itemName] = {
+              quantity: 0,
+              totalAmount: 0,
+              unitCost: parseFloat(item.unitCost.toString()),
+            };
+          }
+          groupedData[date].items[itemName].quantity += parseFloat(item.quantity.toString());
+          groupedData[date].items[itemName].totalAmount += parseFloat(item.lineTotal.toString());
+        });
+      });
+    } else if (period === 'monthly') {
+      orders.forEach(order => {
+        const month = order.createdAt.toISOString().substring(0, 7); // YYYY-MM
+        if (!groupedData[month]) {
+          groupedData[month] = {
+            month,
+            orders: [],
+            totalAmount: 0,
+            orderCount: 0,
+            statuses: {},
+            suppliers: {},
+            items: {},
+          };
+        }
+        
+        groupedData[month].orders.push(order);
+        groupedData[month].totalAmount += parseFloat(order.total.toString());
+        groupedData[month].orderCount += 1;
+        
+        // Group by status
+        const status = order.status;
+        if (!groupedData[month].statuses[status]) {
+          groupedData[month].statuses[status] = {
+            count: 0,
+            amount: 0,
+          };
+        }
+        groupedData[month].statuses[status].count += 1;
+        groupedData[month].statuses[status].amount += parseFloat(order.total.toString());
+        
+        // Group by suppliers
+        const supplierName = order.supplier.name;
+        if (!groupedData[month].suppliers[supplierName]) {
+          groupedData[month].suppliers[supplierName] = {
+            count: 0,
+            amount: 0,
+          };
+        }
+        groupedData[month].suppliers[supplierName].count += 1;
+        groupedData[month].suppliers[supplierName].amount += parseFloat(order.total.toString());
+        
+        // Group by items
+        order.items.forEach(item => {
+          const itemName = item.item.name;
+          if (!groupedData[month].items[itemName]) {
+            groupedData[month].items[itemName] = {
+              quantity: 0,
+              totalAmount: 0,
+              unitCost: parseFloat(item.unitCost.toString()),
+            };
+          }
+          groupedData[month].items[itemName].quantity += parseFloat(item.quantity.toString());
+          groupedData[month].items[itemName].totalAmount += parseFloat(item.lineTotal.toString());
+        });
+      });
+    }
+
+    // Convert to array and sort
+    const reportData = Object.values(groupedData).sort((a: any, b: any) => {
+      if (period === 'daily') {
+        return new Date(b.date).getTime() - new Date(a.date).getTime();
+      } else {
+        return b.month.localeCompare(a.month);
+      }
+    });
+
+    res.json({
+      period,
+      data: reportData,
+      summary: {
+        totalOrders: orders.length,
+        totalAmount: orders.reduce((sum, order) => sum + parseFloat(order.total.toString()), 0),
+        paidOrders: orders.filter(order => order.paymentConfirmed).length,
+        unpaidOrders: orders.filter(order => !order.paymentConfirmed).length,
+      },
+    });
+  } catch (error) {
+    console.error('Procurement reports error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
   }
 });
 

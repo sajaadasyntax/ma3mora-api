@@ -103,7 +103,17 @@ async function main() {
     },
   });
 
-  console.log('✅ Created 6 users');
+  const manager = await prisma.user.upsert({
+    where: { username: 'manager' },
+    update: {},
+    create: {
+      username: 'manager',
+      passwordHash: hashedPassword,
+      role: Role.MANAGER,
+    },
+  });
+
+  console.log('✅ Created 7 users');
 
   // Create sample items for Grocery section
   console.log('Creating sample items...');
@@ -217,6 +227,25 @@ async function main() {
 
   console.log('✅ Created 2 sample suppliers');
 
+  // Create sample employees
+  console.log('Creating sample employees...');
+  const employees = [
+    { name: 'أحمد محمد', position: 'مدير المبيعات', phone: '+964770123456', salary: 500000 },
+    { name: 'فاطمة علي', position: 'محاسب', phone: '+964771234567', salary: 400000 },
+    { name: 'محمد حسن', position: 'أمين مخزن', phone: '+964772345678', salary: 350000 },
+    { name: 'عائشة أحمد', position: 'موظف مبيعات', phone: '+964773456789', salary: 300000 },
+  ];
+
+  await Promise.all(
+    employees.map((employee) =>
+      prisma.employee.create({
+        data: employee,
+      })
+    )
+  );
+
+  console.log('✅ Created 4 sample employees');
+
   console.log('🎉 Seed completed successfully!');
   console.log('\n📝 Login credentials:');
   console.log('  Accountant: accountant / password123');
@@ -225,6 +254,7 @@ async function main() {
   console.log('  Inventory: inventory / password123');
   console.log('  Procurement: procurement / password123');
   console.log('  Auditor: auditor / password123');
+  console.log('  Manager: manager / password123');
 }
 
 main()

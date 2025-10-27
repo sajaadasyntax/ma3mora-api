@@ -60,7 +60,7 @@ async function generateInvoiceNumber(): Promise<string> {
   return `INV-${String(count + 1).padStart(6, '0')}`;
 }
 
-router.get('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'ACCOUNTANT', 'AUDITOR'), async (req: AuthRequest, res) => {
+router.get('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (req: AuthRequest, res) => {
   try {
     const { status, inventoryId, section, deliveryStatus, paymentStatus } = req.query;
     const where: any = {};
@@ -108,7 +108,7 @@ router.get('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'ACCOUNTANT
   }
 });
 
-router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY'), checkBalanceOpen, createAuditLog('SalesInvoice'), async (req: AuthRequest, res) => {
+router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'MANAGER'), checkBalanceOpen, createAuditLog('SalesInvoice'), async (req: AuthRequest, res) => {
   try {
     const data = createInvoiceSchema.parse(req.body);
 
@@ -201,7 +201,7 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY'), checkBala
   }
 });
 
-router.get('/invoices/:id', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'ACCOUNTANT', 'AUDITOR'), async (req: AuthRequest, res) => {
+router.get('/invoices/:id', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
 
@@ -250,7 +250,7 @@ router.get('/invoices/:id', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'ACCOUN
   }
 });
 
-router.post('/invoices/:id/payments', requireRole('ACCOUNTANT', 'SALES_GROCERY', 'SALES_BAKERY'), checkBalanceOpen, createAuditLog('SalesPayment'), async (req: AuthRequest, res) => {
+router.post('/invoices/:id/payments', requireRole('ACCOUNTANT', 'SALES_GROCERY', 'SALES_BAKERY', 'MANAGER'), checkBalanceOpen, createAuditLog('SalesPayment'), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
     const paymentData = paymentSchema.parse(req.body);
@@ -309,7 +309,7 @@ router.post('/invoices/:id/payments', requireRole('ACCOUNTANT', 'SALES_GROCERY',
   }
 });
 
-router.post('/invoices/:id/confirm-payment', requireRole('ACCOUNTANT'), createAuditLog('SalesInvoice'), async (req: AuthRequest, res) => {
+router.post('/invoices/:id/confirm-payment', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('SalesInvoice'), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
 
@@ -351,7 +351,7 @@ router.post('/invoices/:id/confirm-payment', requireRole('ACCOUNTANT'), createAu
   }
 });
 
-router.post('/invoices/:id/deliver', requireRole('INVENTORY'), createAuditLog('InventoryDelivery'), async (req: AuthRequest, res) => {
+router.post('/invoices/:id/deliver', requireRole('INVENTORY', 'MANAGER'), createAuditLog('InventoryDelivery'), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
     const { notes } = req.body;
@@ -446,6 +446,181 @@ router.post('/invoices/:id/deliver', requireRole('INVENTORY'), createAuditLog('I
   } catch (error) {
     console.error('Deliver invoice error:', error);
     res.status(500).json({ error: error instanceof Error ? error.message : 'خطأ في الخادم' });
+  }
+});
+
+// Sales Reports endpoint
+router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (req: AuthRequest, res) => {
+  try {
+    const { 
+      startDate, 
+      endDate, 
+      period = 'daily', 
+      inventoryId, 
+      section,
+      paymentMethod,
+      groupBy = 'date'
+    } = req.query;
+
+    const where: any = {};
+    
+    // Date filtering
+    if (startDate && endDate) {
+      where.createdAt = {
+        gte: new Date(startDate as string),
+        lte: new Date(endDate as string),
+      };
+    } else if (startDate) {
+      where.createdAt = {
+        gte: new Date(startDate as string),
+      };
+    } else if (endDate) {
+      where.createdAt = {
+        lte: new Date(endDate as string),
+      };
+    }
+
+    // Additional filters
+    if (inventoryId) where.inventoryId = inventoryId;
+    if (section) where.section = section;
+    if (paymentMethod) where.paymentMethod = paymentMethod;
+
+    // Get invoices with detailed information
+    const invoices = await prisma.salesInvoice.findMany({
+      where,
+      include: {
+        customer: true,
+        inventory: true,
+        salesUser: {
+          select: { id: true, username: true },
+        },
+        items: {
+          include: {
+            item: true,
+          },
+        },
+        payments: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // Group data based on period
+    let groupedData: any = {};
+    
+    if (period === 'daily') {
+      invoices.forEach(invoice => {
+        const date = invoice.createdAt.toISOString().split('T')[0];
+        if (!groupedData[date]) {
+          groupedData[date] = {
+            date,
+            invoices: [],
+            totalSales: 0,
+            totalPaid: 0,
+            invoiceCount: 0,
+            paymentMethods: {},
+            items: {},
+          };
+        }
+        
+        groupedData[date].invoices.push(invoice);
+        groupedData[date].totalSales += parseFloat(invoice.total.toString());
+        groupedData[date].totalPaid += parseFloat(invoice.paidAmount.toString());
+        groupedData[date].invoiceCount += 1;
+        
+        // Group by payment method
+        const paymentMethod = invoice.paymentMethod;
+        if (!groupedData[date].paymentMethods[paymentMethod]) {
+          groupedData[date].paymentMethods[paymentMethod] = {
+            count: 0,
+            amount: 0,
+          };
+        }
+        groupedData[date].paymentMethods[paymentMethod].count += 1;
+        groupedData[date].paymentMethods[paymentMethod].amount += parseFloat(invoice.total.toString());
+        
+        // Group by items
+        invoice.items.forEach(item => {
+          const itemName = item.item.name;
+          if (!groupedData[date].items[itemName]) {
+            groupedData[date].items[itemName] = {
+              quantity: 0,
+              totalAmount: 0,
+              unitPrice: parseFloat(item.unitPrice.toString()),
+            };
+          }
+          groupedData[date].items[itemName].quantity += parseFloat(item.quantity.toString());
+          groupedData[date].items[itemName].totalAmount += parseFloat(item.lineTotal.toString());
+        });
+      });
+    } else if (period === 'monthly') {
+      invoices.forEach(invoice => {
+        const month = invoice.createdAt.toISOString().substring(0, 7); // YYYY-MM
+        if (!groupedData[month]) {
+          groupedData[month] = {
+            month,
+            invoices: [],
+            totalSales: 0,
+            totalPaid: 0,
+            invoiceCount: 0,
+            paymentMethods: {},
+            items: {},
+          };
+        }
+        
+        groupedData[month].invoices.push(invoice);
+        groupedData[month].totalSales += parseFloat(invoice.total.toString());
+        groupedData[month].totalPaid += parseFloat(invoice.paidAmount.toString());
+        groupedData[month].invoiceCount += 1;
+        
+        // Group by payment method
+        const paymentMethod = invoice.paymentMethod;
+        if (!groupedData[month].paymentMethods[paymentMethod]) {
+          groupedData[month].paymentMethods[paymentMethod] = {
+            count: 0,
+            amount: 0,
+          };
+        }
+        groupedData[month].paymentMethods[paymentMethod].count += 1;
+        groupedData[month].paymentMethods[paymentMethod].amount += parseFloat(invoice.total.toString());
+        
+        // Group by items
+        invoice.items.forEach(item => {
+          const itemName = item.item.name;
+          if (!groupedData[month].items[itemName]) {
+            groupedData[month].items[itemName] = {
+              quantity: 0,
+              totalAmount: 0,
+              unitPrice: parseFloat(item.unitPrice.toString()),
+            };
+          }
+          groupedData[month].items[itemName].quantity += parseFloat(item.quantity.toString());
+          groupedData[month].items[itemName].totalAmount += parseFloat(item.lineTotal.toString());
+        });
+      });
+    }
+
+    // Convert to array and sort
+    const reportData = Object.values(groupedData).sort((a: any, b: any) => {
+      if (period === 'daily') {
+        return new Date(b.date).getTime() - new Date(a.date).getTime();
+      } else {
+        return b.month.localeCompare(a.month);
+      }
+    });
+
+    res.json({
+      period,
+      data: reportData,
+      summary: {
+        totalInvoices: invoices.length,
+        totalSales: invoices.reduce((sum, inv) => sum + parseFloat(inv.total.toString()), 0),
+        totalPaid: invoices.reduce((sum, inv) => sum + parseFloat(inv.paidAmount.toString()), 0),
+        totalOutstanding: invoices.reduce((sum, inv) => sum + parseFloat(inv.total.toString()) - parseFloat(inv.paidAmount.toString()), 0),
+      },
+    });
+  } catch (error) {
+    console.error('Sales reports error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
   }
 });
 

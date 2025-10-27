@@ -10,6 +10,7 @@ import suppliersRoutes from './routes/suppliers';
 import salesRoutes from './routes/sales';
 import procurementRoutes from './routes/procurement';
 import accountingRoutes from './routes/accounting';
+import employeesRoutes from './routes/employees';
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -32,6 +33,7 @@ app.use('/api/suppliers', suppliersRoutes);
 app.use('/api/sales', salesRoutes);
 app.use('/api/procurement', procurementRoutes);
 app.use('/api/accounting', accountingRoutes);
+app.use('/api/employees', employeesRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

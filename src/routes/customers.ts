@@ -19,7 +19,7 @@ const createCustomerSchema = z.object({
   address: z.string().optional(),
 });
 
-router.get('/', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'ACCOUNTANT', 'AUDITOR'), async (req: AuthRequest, res) => {
+router.get('/', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (req: AuthRequest, res) => {
   try {
     const { type, division } = req.query;
     const where: any = {};
@@ -39,7 +39,7 @@ router.get('/', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'ACCOUNTANT', 'AUDI
   }
 });
 
-router.post('/', requireRole('SALES_GROCERY', 'SALES_BAKERY'), createAuditLog('Customer'), async (req: AuthRequest, res) => {
+router.post('/', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'MANAGER'), createAuditLog('Customer'), async (req: AuthRequest, res) => {
   try {
     const data = createCustomerSchema.parse(req.body);
 
@@ -57,7 +57,7 @@ router.post('/', requireRole('SALES_GROCERY', 'SALES_BAKERY'), createAuditLog('C
   }
 });
 
-router.get('/:id', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'ACCOUNTANT', 'AUDITOR'), async (req: AuthRequest, res) => {
+router.get('/:id', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
 

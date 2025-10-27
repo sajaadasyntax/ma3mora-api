@@ -14,6 +14,7 @@ enum Role {
   PROCUREMENT
   ACCOUNTANT
   AUDITOR
+  MANAGER
 }
 
 enum Section {
@@ -74,6 +75,8 @@ model User {
   inventoryReceipt       InventoryReceipt[]
   paymentConfirmedOrders ProcOrder[]          @relation("PaymentConfirmer")
   paymentConfirmedInvoices SalesInvoice[]     @relation("InvoicePaymentConfirmer")
+  salaries               Salary[]
+  advances               Advance[]
 
   @@map("users")
 }
@@ -352,5 +355,56 @@ model AuditLog {
   @@index([entity, entityId])
   @@index([userId])
   @@map("audit_logs")
+}
+
+model Employee {
+  id        String   @id @default(cuid())
+  name      String
+  position  String
+  phone     String?
+  address   String?
+  salary    Decimal  @db.Decimal(10, 2)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  salaries Salary[]
+  advances Advance[]
+
+  @@map("employees")
+}
+
+model Salary {
+  id         String   @id @default(cuid())
+  employeeId String
+  amount     Decimal  @db.Decimal(10, 2)
+  month      Int
+  year       Int
+  paidAt     DateTime?
+  notes      String?
+  createdBy  String
+  createdAt  DateTime @default(now())
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  creator  User     @relation(fields: [createdBy], references: [id])
+
+  @@unique([employeeId, month, year])
+  @@map("salaries")
+}
+
+model Advance {
+  id         String   @id @default(cuid())
+  employeeId String
+  amount     Decimal  @db.Decimal(10, 2)
+  reason     String
+  paidAt     DateTime?
+  notes      String?
+  createdBy  String
+  createdAt  DateTime @default(now())
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  creator  User     @relation(fields: [createdBy], references: [id])
+
+  @@map("advances")
 }
 

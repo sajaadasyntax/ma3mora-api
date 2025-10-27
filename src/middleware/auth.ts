@@ -51,8 +51,8 @@ export function requireAccess(inventoryId?: string, section?: string) {
       return res.status(401).json({ error: 'غير مصرح' });
     }
 
-    // ACCOUNTANT, INVENTORY, PROCUREMENT, and AUDITOR have access to all
-    if (['ACCOUNTANT', 'INVENTORY', 'PROCUREMENT', 'AUDITOR'].includes(req.user.role)) {
+    // ACCOUNTANT, INVENTORY, PROCUREMENT, AUDITOR, and MANAGER have access to all
+    if (['ACCOUNTANT', 'INVENTORY', 'PROCUREMENT', 'AUDITOR', 'MANAGER'].includes(req.user.role)) {
       return next();
     }
 
