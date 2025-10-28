@@ -213,6 +213,79 @@ router.get('/orders/:id', requireRole('PROCUREMENT', 'ACCOUNTANT', 'AUDITOR', 'M
   }
 });
 
+const addGiftsSchema = z.object({
+  gifts: z.array(z.object({
+    itemId: z.string(),
+    giftQty: z.number().min(0),
+  })).min(1),
+});
+
+// Add gifts to order items after payment confirmation
+router.post('/orders/:id/add-gifts', requireRole('MANAGER'), createAuditLog('ProcOrder'), async (req: AuthRequest, res) => {
+  try {
+    const { id } = req.params;
+    const { gifts } = addGiftsSchema.parse(req.body);
+
+    const order = await prisma.procOrder.findUnique({
+      where: { id },
+      include: {
+        items: true,
+      },
+    });
+
+    if (!order) {
+      return res.status(404).json({ error: 'أمر الشراء غير موجود' });
+    }
+
+    if (!order.paymentConfirmed) {
+      return res.status(400).json({ error: 'يجب تأكيد الدفع أولاً قبل إضافة الهدايا' });
+    }
+
+    if (order.status === 'CANCELLED') {
+      return res.status(400).json({ error: 'لا يمكن إضافة هدايا لأمر شراء ملغي' });
+    }
+
+    // Update gift quantities
+    await prisma.$transaction(async (tx) => {
+      for (const gift of gifts) {
+        const orderItem = order.items.find(item => item.itemId === gift.itemId);
+        if (!orderItem) {
+          throw new Error(`الصنف ${gift.itemId} غير موجود في أمر الشراء`);
+        }
+
+        await tx.procOrderItem.update({
+          where: { id: orderItem.id },
+          data: {
+            giftQty: new Prisma.Decimal(gift.giftQty),
+          },
+        });
+      }
+    });
+
+    // Reload order with updated data
+    const updatedOrder = await prisma.procOrder.findUnique({
+      where: { id },
+      include: {
+        items: {
+          include: {
+            item: true,
+          },
+        },
+        supplier: true,
+        inventory: true,
+      },
+    });
+
+    res.json(updatedOrder);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: 'بيانات غير صالحة', details: error.errors });
+    }
+    console.error('Add gifts error:', error);
+    res.status(500).json({ error: error instanceof Error ? error.message : 'خطأ في الخادم' });
+  }
+});
+
 router.post('/orders/:id/confirm-payment', requireRole('MANAGER'), createAuditLog('ProcOrder'), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
@@ -255,10 +328,23 @@ router.post('/orders/:id/confirm-payment', requireRole('MANAGER'), createAuditLo
   }
 });
 
+const batchItemSchema = z.object({
+  itemId: z.string(),
+  quantity: z.number().positive(),
+  expiryDate: z.string().optional().nullable(), // ISO date string or null
+  notes: z.string().optional(),
+});
+
+const receiveOrderSchema = z.object({
+  notes: z.string().optional(),
+  partial: z.boolean().optional(),
+  batches: z.array(batchItemSchema).optional(), // Optional batches with expiry dates
+});
+
 router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAuditLog('InventoryReceipt'), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
-    const { notes, partial } = req.body;
+    const { notes, partial, batches } = receiveOrderSchema.parse(req.body);
 
     const order = await prisma.procOrder.findUnique({
       where: { id },
@@ -285,36 +371,6 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
 
     // Use transaction to ensure atomicity
     const result = await prisma.$transaction(async (tx) => {
-      // Increase stock
-      for (const item of order.items) {
-        const stock = await tx.inventoryStock.findUnique({
-          where: {
-            inventoryId_itemId: {
-              inventoryId: order.inventoryId,
-              itemId: item.itemId,
-            },
-          },
-        });
-
-        if (!stock) {
-          throw new Error(`المخزون غير موجود للصنف ${item.itemId}`);
-        }
-
-        await tx.inventoryStock.update({
-          where: {
-            inventoryId_itemId: {
-              inventoryId: order.inventoryId,
-              itemId: item.itemId,
-            },
-          },
-          data: {
-            quantity: {
-              increment: item.quantity,
-            },
-          },
-        });
-      }
-
       // Create receipt record
       const receipt = await tx.inventoryReceipt.create({
         data: {
@@ -323,6 +379,103 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
           notes,
         },
       });
+
+      // If batches are provided, use them; otherwise create default batches
+      if (batches && batches.length > 0) {
+        // Process batches with expiry dates
+        for (const batch of batches) {
+          // Verify this item exists in the order
+          const orderItem = order.items.find((oi) => oi.itemId === batch.itemId);
+          if (!orderItem) {
+            throw new Error(`الصنف ${batch.itemId} غير موجود في أمر الشراء`);
+          }
+
+          const stock = await tx.inventoryStock.findUnique({
+            where: {
+              inventoryId_itemId: {
+                inventoryId: order.inventoryId,
+                itemId: batch.itemId,
+              },
+            },
+          });
+
+          if (!stock) {
+            throw new Error(`المخزون غير موجود للصنف ${batch.itemId}`);
+          }
+
+          // Get order item to include gift quantity
+          const orderItem = order.items.find((oi) => oi.itemId === batch.itemId);
+          const totalQuantity = new Prisma.Decimal(batch.quantity).add(orderItem?.giftQty || 0);
+
+          // Create stock batch with expiry date (including gift quantity)
+          await tx.stockBatch.create({
+            data: {
+              inventoryId: order.inventoryId,
+              itemId: batch.itemId,
+              quantity: totalQuantity,
+              expiryDate: batch.expiryDate ? new Date(batch.expiryDate) : null,
+              receiptId: receipt.id,
+              notes: batch.notes || (orderItem?.giftQty && orderItem.giftQty.gt(0) ? `يشمل ${orderItem.giftQty.toString()} هدية` : undefined),
+            },
+          });
+
+          // Update stock quantity (including gift quantity)
+          await tx.inventoryStock.update({
+            where: {
+              inventoryId_itemId: {
+                inventoryId: order.inventoryId,
+                itemId: batch.itemId,
+              },
+            },
+            data: {
+              quantity: {
+                increment: totalQuantity,
+              },
+            },
+          });
+        }
+      } else {
+        // Default behavior: create batches without expiry dates
+        for (const item of order.items) {
+          const stock = await tx.inventoryStock.findUnique({
+            where: {
+              inventoryId_itemId: {
+                inventoryId: order.inventoryId,
+                itemId: item.itemId,
+              },
+            },
+          });
+
+          if (!stock) {
+            throw new Error(`المخزون غير موجود للصنف ${item.itemId}`);
+          }
+
+          // Create stock batch without expiry date
+          await tx.stockBatch.create({
+            data: {
+              inventoryId: order.inventoryId,
+              itemId: item.itemId,
+              quantity: item.quantity,
+              receiptId: receipt.id,
+            },
+          });
+
+          // Update stock quantity
+          await tx.inventoryStock.update({
+            where: {
+              inventoryId_itemId: {
+                inventoryId: order.inventoryId,
+                itemId: item.itemId,
+              },
+            },
+            data: {
+              quantity: {
+                increment: item.quantity,
+              },
+            },
+          });
+        }
+      }
 
       // Update order status
       const updatedOrder = await tx.procOrder.update({
@@ -345,6 +498,9 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
 
     res.json(result);
   } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: 'بيانات غير صالحة', details: error.errors });
+    }
     console.error('Receive order error:', error);
     res.status(500).json({ error: error instanceof Error ? error.message : 'خطأ في الخادم' });
   }

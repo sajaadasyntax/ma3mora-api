@@ -52,6 +52,16 @@ const paymentSchema = z.object({
   method: z.enum(['CASH', 'BANK', 'BANK_NILE']),
   notes: z.string().optional(),
   receiptUrl: z.string().optional(),
+  receiptNumber: z.string().optional(),
+}).refine((data) => {
+  // If method is BANK or BANK_NILE, receiptNumber is required
+  if (data.method !== 'CASH' && !data.receiptNumber) {
+    return false;
+  }
+  return true;
+}, {
+  message: 'رقم الإيصال مطلوب لطرق الدفع البنكية',
+  path: ['receiptNumber'],
 });
 
 // Generate invoice number
@@ -269,6 +279,70 @@ router.post('/invoices/:id/payments', requireRole('ACCOUNTANT', 'SALES_GROCERY',
       return res.status(400).json({ error: 'المبلغ المدفوع يتجاوز إجمالي الفاتورة' });
     }
 
+    // Check receipt number uniqueness if provided (required for bank payments)
+    if (paymentData.receiptNumber) {
+      // Check if receipt number exists in sales payments
+      const existingPayment = await prisma.salesPayment.findUnique({
+        where: { receiptNumber: paymentData.receiptNumber },
+        include: {
+          invoice: {
+            include: {
+              customer: true,
+            },
+          },
+          recordedByUser: {
+            select: { id: true, username: true },
+          },
+        },
+      });
+
+      if (existingPayment) {
+        return res.status(400).json({ 
+          error: 'رقم الإيصال مستخدم بالفعل',
+          existingTransaction: {
+            id: existingPayment.id,
+            invoiceId: existingPayment.invoiceId,
+            invoiceNumber: existingPayment.invoice.invoiceNumber,
+            customer: existingPayment.invoice.customer.name,
+            amount: existingPayment.amount.toString(),
+            method: existingPayment.method,
+            receiptNumber: existingPayment.receiptNumber,
+            receiptUrl: existingPayment.receiptUrl,
+            paidAt: existingPayment.paidAt,
+            recordedBy: existingPayment.recordedByUser.username,
+            notes: existingPayment.notes,
+          }
+        });
+      }
+
+      // Check if receipt number exists in cash exchanges
+      const existingExchange = await prisma.cashExchange.findUnique({
+        where: { receiptNumber: paymentData.receiptNumber },
+        include: {
+          createdByUser: {
+            select: { id: true, username: true },
+          },
+        },
+      });
+
+      if (existingExchange) {
+        return res.status(400).json({ 
+          error: 'رقم الإيصال مستخدم بالفعل في صرف نقدي',
+          existingTransaction: {
+            id: existingExchange.id,
+            amount: existingExchange.amount.toString(),
+            fromMethod: existingExchange.fromMethod,
+            toMethod: existingExchange.toMethod,
+            receiptNumber: existingExchange.receiptNumber,
+            receiptUrl: existingExchange.receiptUrl,
+            createdAt: existingExchange.createdAt,
+            createdBy: existingExchange.createdByUser.username,
+            notes: existingExchange.notes,
+          }
+        });
+      }
+    }
+
     const payment = await prisma.salesPayment.create({
       data: {
         invoiceId: id,
@@ -277,6 +351,7 @@ router.post('/invoices/:id/payments', requireRole('ACCOUNTANT', 'SALES_GROCERY',
         recordedBy: req.user!.id,
         notes: paymentData.notes,
         receiptUrl: paymentData.receiptUrl,
+        receiptNumber: paymentData.receiptNumber,
       },
     });
 
@@ -303,6 +378,11 @@ router.post('/invoices/:id/payments', requireRole('ACCOUNTANT', 'SALES_GROCERY',
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: 'بيانات غير صالحة', details: error.errors });
+    }
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === 'P2002') {
+        return res.status(400).json({ error: 'رقم الإيصال مستخدم بالفعل' });
+      }
     }
     console.error('Create payment error:', error);
     res.status(500).json({ error: 'خطأ في الخادم' });
@@ -377,7 +457,7 @@ router.post('/invoices/:id/deliver', requireRole('INVENTORY', 'MANAGER'), create
 
     // Use transaction to ensure atomicity
     const result = await prisma.$transaction(async (tx) => {
-      // Deduct stock
+      // Deduct stock using FIFO (First In First Out) based on expiry dates
       for (const item of invoice.items) {
         const stock = await tx.inventoryStock.findUnique({
           where: {
@@ -399,6 +479,58 @@ router.post('/invoices/:id/deliver', requireRole('INVENTORY', 'MANAGER'), create
           throw new Error(`الكمية غير كافية للصنف ${itemDetails?.name || item.itemId}`);
         }
 
+        // Get available batches for this item
+        const batches = await tx.stockBatch.findMany({
+          where: {
+            inventoryId: invoice.inventoryId,
+            itemId: item.itemId,
+            quantity: {
+              gt: 0,
+            },
+          },
+        });
+
+        // Sort batches: expiry date (earliest first, nulls last), then received date (earliest first)
+        batches.sort((a, b) => {
+          // If both have expiry dates, sort by expiry date
+          if (a.expiryDate && b.expiryDate) {
+            const dateDiff = a.expiryDate.getTime() - b.expiryDate.getTime();
+            if (dateDiff !== 0) return dateDiff;
+          }
+          // If only one has expiry date, prioritize the one with expiry date
+          if (a.expiryDate && !b.expiryDate) return -1;
+          if (!a.expiryDate && b.expiryDate) return 1;
+          // If both null or same expiry, sort by received date
+          return a.receivedAt.getTime() - b.receivedAt.getTime();
+        });
+
+        let remainingQty = totalQty;
+
+        // Consume from batches using FIFO
+        for (const batch of batches) {
+          if (remainingQty.lte(0)) break;
+
+          const batchQty = new Prisma.Decimal(batch.quantity);
+          if (batchQty.lte(0)) continue;
+
+          if (remainingQty.gte(batchQty)) {
+            // Consume entire batch
+            await tx.stockBatch.update({
+              where: { id: batch.id },
+              data: { quantity: 0 },
+            });
+            remainingQty = remainingQty.sub(batchQty);
+          } else {
+            // Consume partial batch
+            await tx.stockBatch.update({
+              where: { id: batch.id },
+              data: { quantity: batchQty.sub(remainingQty) },
+            });
+            remainingQty = new Prisma.Decimal(0);
+          }
+        }
+
+        // Update total stock quantity
         await tx.inventoryStock.update({
           where: {
             inventoryId_itemId: {
@@ -620,6 +752,137 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
     });
   } catch (error) {
     console.error('Sales reports error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
+// Daily Sales Report by Item
+router.get('/reports/daily-by-item', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'INVENTORY', 'MANAGER'), async (req: AuthRequest, res) => {
+  try {
+    const { date, inventoryId, section } = req.query;
+    
+    // Default to today if no date provided
+    const targetDate = date ? new Date(date as string) : new Date();
+    const startOfDay = new Date(targetDate);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(targetDate);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    // Build where clause
+    const where: any = {
+      createdAt: {
+        gte: startOfDay,
+        lte: endOfDay,
+      },
+    };
+
+    if (inventoryId) {
+      where.inventoryId = inventoryId as string;
+    }
+
+    if (section) {
+      where.section = section;
+    }
+
+    // Get all invoices for the day
+    const invoices = await prisma.salesInvoice.findMany({
+      where,
+      include: {
+        inventory: true,
+        customer: true,
+        items: {
+          include: {
+            item: true,
+          },
+        },
+        payments: true,
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    // Aggregate sales by item
+    const itemsMap: any = {};
+    let totalRevenue = new Prisma.Decimal(0);
+    let totalInvoices = invoices.length;
+
+    invoices.forEach(invoice => {
+      totalRevenue = totalRevenue.add(invoice.total);
+      
+      invoice.items.forEach(invoiceItem => {
+        const itemId = invoiceItem.itemId;
+        const itemName = invoiceItem.item.name;
+        
+        if (!itemsMap[itemId]) {
+          itemsMap[itemId] = {
+            itemId,
+            itemName,
+            section: invoiceItem.item.section,
+            totalQuantity: new Prisma.Decimal(0),
+            totalGiftQty: new Prisma.Decimal(0),
+            totalAmount: new Prisma.Decimal(0),
+            invoiceCount: 0,
+            invoices: [],
+            unitPrices: new Set(),
+          };
+        }
+
+        itemsMap[itemId].totalQuantity = itemsMap[itemId].totalQuantity.add(invoiceItem.quantity);
+        itemsMap[itemId].totalGiftQty = itemsMap[itemId].totalGiftQty.add(invoiceItem.giftQty || 0);
+        itemsMap[itemId].totalAmount = itemsMap[itemId].totalAmount.add(invoiceItem.lineTotal);
+        itemsMap[itemId].unitPrices.add(parseFloat(invoiceItem.unitPrice.toString()));
+        
+        // Track which invoices include this item
+        itemsMap[itemId].invoices.push({
+          invoiceId: invoice.id,
+          invoiceNumber: invoice.invoiceNumber,
+          customerName: invoice.customer.name,
+          quantity: invoiceItem.quantity.toString(),
+          giftQty: (invoiceItem.giftQty || 0).toString(),
+          unitPrice: invoiceItem.unitPrice.toString(),
+          lineTotal: invoiceItem.lineTotal.toString(),
+          createdAt: invoice.createdAt,
+        });
+      });
+    });
+
+    // Convert to array and format
+    const itemsReport = Object.values(itemsMap).map((item: any) => ({
+      itemId: item.itemId,
+      itemName: item.itemName,
+      section: item.section,
+      totalQuantity: item.totalQuantity.toString(),
+      totalGiftQty: item.totalGiftQty.toString(),
+      totalAmount: item.totalAmount.toString(),
+      averageUnitPrice: item.totalQuantity.greaterThan(0) 
+        ? item.totalAmount.div(item.totalQuantity).toFixed(2)
+        : '0.00',
+      unitPriceRange: Array.from(item.unitPrices).sort((a: number, b: number) => a - b).join(', '),
+      invoiceCount: item.invoices.length,
+      invoices: item.invoices.sort((a: any, b: any) => 
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      ),
+    }));
+
+    // Sort by total amount descending
+    itemsReport.sort((a: any, b: any) => 
+      parseFloat(b.totalAmount) - parseFloat(a.totalAmount)
+    );
+
+    res.json({
+      date: targetDate.toISOString().split('T')[0],
+      inventory: inventoryId ? invoices[0]?.inventory : null,
+      section: section || null,
+      summary: {
+        totalInvoices,
+        totalRevenue: totalRevenue.toString(),
+        totalItems: itemsReport.length,
+        totalQuantity: itemsReport.reduce((sum, item) => sum + parseFloat(item.totalQuantity), 0).toFixed(2),
+        totalAmount: itemsReport.reduce((sum, item) => sum + parseFloat(item.totalAmount), 0).toFixed(2),
+      },
+      items: itemsReport,
+    });
+  } catch (error) {
+    console.error('Daily sales by item report error:', error);
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
 });

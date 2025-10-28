@@ -24,6 +24,7 @@ const salarySchema = z.object({
   amount: z.number().positive('المبلغ يجب أن يكون موجب'),
   month: z.number().min(1).max(12, 'الشهر يجب أن يكون بين 1 و 12'),
   year: z.number().min(2020, 'السنة غير صالحة'),
+  paymentMethod: z.enum(['CASH', 'BANK', 'BANK_NILE']).default('CASH'),
   notes: z.string().optional(),
 });
 
@@ -31,6 +32,7 @@ const advanceSchema = z.object({
   employeeId: z.string().min(1, 'الموظف مطلوب'),
   amount: z.number().positive('المبلغ يجب أن يكون موجب'),
   reason: z.string().min(1, 'السبب مطلوب'),
+  paymentMethod: z.enum(['CASH', 'BANK', 'BANK_NILE']).default('CASH'),
   notes: z.string().optional(),
 });
 
@@ -155,6 +157,7 @@ router.post('/salaries', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('S
       data: {
         ...data,
         amount: data.amount,
+        paymentMethod: data.paymentMethod || 'CASH',
         createdBy: req.user!.id,
       },
       include: {
@@ -233,6 +236,7 @@ router.post('/advances', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('A
       data: {
         ...data,
         amount: data.amount,
+        paymentMethod: data.paymentMethod || 'CASH',
         createdBy: req.user!.id,
       },
       include: {

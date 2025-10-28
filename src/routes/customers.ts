@@ -65,8 +65,17 @@ router.get('/:id', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'ACCOUNTANT', 'A
       where: { id },
       include: {
         salesInvoices: {
+          include: {
+            items: {
+              include: {
+                item: true
+              }
+            },
+            payments: {
+              orderBy: { paidAt: 'desc' }
+            }
+          },
           orderBy: { createdAt: 'desc' },
-          take: 10,
         },
       },
     });

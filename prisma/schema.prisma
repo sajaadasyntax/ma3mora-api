@@ -77,8 +77,10 @@ model User {
   paymentConfirmedInvoices SalesInvoice[]     @relation("InvoicePaymentConfirmer")
   procOrderPayments      ProcOrderPayment[]
   procOrderReturns       ProcOrderReturn[]
+  inventoryTransfers     InventoryTransfer[]
   salaries               Salary[]
   advances               Advance[]
+  cashExchanges          CashExchange[]
 
   @@map("users")
 }
@@ -88,11 +90,15 @@ model Inventory {
   name   String  @unique
   isMain Boolean @default(false)
 
-  accesses      UserInventoryAccess[]
-  stocks        InventoryStock[]
-  salesInvoices SalesInvoice[]
-  procOrders    ProcOrder[]
-  expenses      Expense[]
+  accesses          UserInventoryAccess[]
+  stocks            InventoryStock[]
+  batches           StockBatch[]
+  salesInvoices     SalesInvoice[]
+  procOrders        ProcOrder[]
+  expenses          Expense[]
+  transfersFrom     InventoryTransfer[] @relation("FromInventory")
+  transfersTo       InventoryTransfer[] @relation("ToInventory")
+  stockMovements    StockMovement[]
 
   @@map("inventories")
 }
@@ -118,6 +124,9 @@ model Item {
 
   prices            ItemPrice[]
   stocks            InventoryStock[]
+  batches           StockBatch[]
+  transfers         InventoryTransfer[]
+  movements         StockMovement[]
   salesInvoiceItems SalesInvoiceItem[]
   procOrderItems    ProcOrderItem[]
 
@@ -144,9 +153,78 @@ model InventoryStock {
 
   inventory Inventory @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
   item      Item      @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  batches   StockBatch[]
 
   @@id([inventoryId, itemId])
   @@map("inventory_stocks")
+}
+
+model StockBatch {
+  id           String   @id @default(cuid())
+  inventoryId  String
+  itemId       String
+  quantity     Decimal  @db.Decimal(10, 2)
+  expiryDate   DateTime?
+  receivedAt   DateTime @default(now())
+  receiptId    String?
+  notes        String?
+
+  inventory       Inventory       @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+  item            Item            @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  inventoryStock  InventoryStock? @relation(fields: [inventoryId, itemId], references: [inventoryId, itemId], onDelete: Cascade)
+  receipt         InventoryReceipt? @relation(fields: [receiptId], references: [id], onDelete: SetNull)
+
+  @@index([inventoryId, itemId])
+  @@index([expiryDate])
+  @@index([receiptId])
+  @@map("stock_batches")
+}
+
+model InventoryTransfer {
+  id         String   @id @default(cuid())
+  fromInventoryId String
+  toInventoryId   String
+  itemId          String
+  quantity        Decimal @db.Decimal(10, 2)
+  transferredBy   String
+  transferredAt   DateTime @default(now())
+  notes           String?
+
+  fromInventory Inventory @relation("FromInventory", fields: [fromInventoryId], references: [id])
+  toInventory   Inventory @relation("ToInventory", fields: [toInventoryId], references: [id])
+  item          Item      @relation(fields: [itemId], references: [id])
+  transferredByUser User  @relation(fields: [transferredBy], references: [id])
+
+  @@map("inventory_transfers")
+}
+
+// Stock Movement Daily Report Model
+// Tracks daily stock movements for inventory items
+// Fields: openingBalance (stock at start of day), incoming (from procurement), 
+// outgoing (sold and delivered), pendingOutgoing (sold but not delivered),
+// incomingGifts (gifts received), outgoingGifts (gifts given), closingBalance (stock at end of day)
+model StockMovement {
+  id            String   @id @default(cuid())
+  inventoryId   String
+  itemId        String
+  movementDate  DateTime @db.Date
+  openingBalance Decimal @db.Decimal(10, 2)  // Opening stock balance at start of day
+  incoming      Decimal  @default(0) @db.Decimal(10, 2)  // Stock received from procurement
+  outgoing      Decimal  @default(0) @db.Decimal(10, 2)  // Stock sold and delivered
+  pendingOutgoing Decimal @default(0) @db.Decimal(10, 2)  // Stock sold but not yet delivered
+  incomingGifts Decimal  @default(0) @db.Decimal(10, 2)  // Gifts received (from procurement)
+  outgoingGifts Decimal  @default(0) @db.Decimal(10, 2)  // Gifts given (from sales)
+  closingBalance Decimal @db.Decimal(10, 2)  // Closing stock balance at end of day
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  inventory Inventory @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+  item      Item      @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@unique([inventoryId, itemId, movementDate])
+  @@index([movementDate])
+  @@index([inventoryId, itemId])
+  @@map("stock_movements")
 }
 
 model Customer {
@@ -236,6 +314,7 @@ model SalesPayment {
   recordedBy String
   notes     String?
   receiptUrl String?
+  receiptNumber String?   @unique
 
   invoice    SalesInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   recordedByUser User     @relation(fields: [recordedBy], references: [id])
@@ -291,6 +370,7 @@ model ProcOrderItem {
   orderId  String
   itemId   String
   quantity Decimal @db.Decimal(10, 2)
+  giftQty  Decimal @default(0) @db.Decimal(10, 2)
   unitCost Decimal @db.Decimal(10, 2)
   lineTotal Decimal @db.Decimal(10, 2)
 
@@ -339,6 +419,7 @@ model InventoryReceipt {
 
   order         ProcOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
   receivedByUser User     @relation(fields: [receivedBy], references: [id])
+  batches       StockBatch[]
 
   @@map("inventory_receipts")
 }
@@ -360,18 +441,20 @@ model Expense {
 }
 
 model OpeningBalance {
-  id         String       @id @default(cuid())
-  scope      BalanceScope
-  refId      String?
-  amount     Decimal      @db.Decimal(10, 2)
-  openedAt   DateTime     @default(now())
-  closedAt   DateTime?
-  isClosed   Boolean      @default(false)
-  notes      String?
+  id            String        @id @default(cuid())
+  scope         BalanceScope
+  refId         String?
+  amount        Decimal       @db.Decimal(10, 2)
+  paymentMethod PaymentMethod @default(CASH)  // Track which payment method this balance is for (CASH, BANK, BANK_NILE)
+  openedAt      DateTime      @default(now())
+  closedAt      DateTime?
+  isClosed      Boolean       @default(false)
+  notes         String?
 
   customer Customer? @relation(fields: [refId], references: [id], map: "opening_balance_customer_fkey")
   supplier Supplier? @relation(fields: [refId], references: [id], map: "opening_balance_supplier_fkey")
 
+  @@index([scope, isClosed, paymentMethod])
   @@map("opening_balances")
 }
 
@@ -410,15 +493,16 @@ model Employee {
 }
 
 model Salary {
-  id         String   @id @default(cuid())
-  employeeId String
-  amount     Decimal  @db.Decimal(10, 2)
-  month      Int
-  year       Int
-  paidAt     DateTime?
-  notes      String?
-  createdBy  String
-  createdAt  DateTime @default(now())
+  id            String        @id @default(cuid())
+  employeeId    String
+  amount        Decimal       @db.Decimal(10, 2)
+  month         Int
+  year          Int
+  paymentMethod PaymentMethod @default(CASH)
+  paidAt        DateTime?
+  notes         String?
+  createdBy     String
+  createdAt     DateTime      @default(now())
 
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   creator  User     @relation(fields: [createdBy], references: [id])
@@ -428,18 +512,35 @@ model Salary {
 }
 
 model Advance {
-  id         String   @id @default(cuid())
-  employeeId String
-  amount     Decimal  @db.Decimal(10, 2)
-  reason     String
-  paidAt     DateTime?
-  notes      String?
-  createdBy  String
-  createdAt  DateTime @default(now())
+  id            String        @id @default(cuid())
+  employeeId    String
+  amount        Decimal       @db.Decimal(10, 2)
+  reason        String
+  paymentMethod PaymentMethod @default(CASH)
+  paidAt        DateTime?
+  notes         String?
+  createdBy     String
+  createdAt     DateTime      @default(now())
 
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   creator  User     @relation(fields: [createdBy], references: [id])
 
   @@map("advances")
+}
+
+model CashExchange {
+  id            String        @id @default(cuid())
+  amount        Decimal       @db.Decimal(10, 2)
+  fromMethod    PaymentMethod
+  toMethod      PaymentMethod
+  receiptNumber String        @unique
+  receiptUrl    String?
+  notes         String?
+  createdBy     String
+  createdAt     DateTime      @default(now())
+
+  createdByUser User          @relation(fields: [createdBy], references: [id])
+
+  @@map("cash_exchanges")
 }
 
