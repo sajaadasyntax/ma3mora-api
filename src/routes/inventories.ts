@@ -56,10 +56,6 @@ router.get('/:id/stocks', requireRole('INVENTORY', 'MANAGER', 'ACCOUNTANT', 'AUD
                       select: { name: true },
                     },
                   },
-                  select: {
-                    orderNumber: true,
-                    supplier: true,
-                  },
                 },
               },
             },
@@ -90,97 +86,167 @@ router.get('/:id/stocks', requireRole('INVENTORY', 'MANAGER', 'ACCOUNTANT', 'AUD
 
     // Add expiry information to each stock item
     const stocksWithExpiry = stocks.map((stock) => {
-      let batches = stock.batches || [];
-      
-      // Sort batches: expiry date (earliest first, nulls last), then received date
-      batches = [...batches].sort((a, b) => {
-        const aExpiry = parseDate(a.expiryDate);
-        const bExpiry = parseDate(b.expiryDate);
-        if (aExpiry && bExpiry) {
-          const dateDiff = aExpiry.getTime() - bExpiry.getTime();
-          if (dateDiff !== 0) return dateDiff;
-        }
-        if (aExpiry && !bExpiry) return -1;
-        if (!aExpiry && bExpiry) return 1;
-        const aReceived = parseDate(a.receivedAt);
-        const bReceived = parseDate(b.receivedAt);
-        if (aReceived && bReceived) {
-          return aReceived.getTime() - bReceived.getTime();
-        }
-        return 0;
-      });
-      
-      const now = new Date();
-      const expiredBatches = batches.filter((batch) => {
-        const expiryDate = parseDate(batch.expiryDate);
-        return expiryDate !== null && expiryDate < now;
-      });
-      
-      const expiringSoonBatches = batches.filter((batch) => {
-        const expiryDate = parseDate(batch.expiryDate);
-        if (!expiryDate) return false;
-        const daysUntilExpiry = Math.ceil((expiryDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-        return daysUntilExpiry > 0 && daysUntilExpiry <= 30; // Within 30 days
-      });
-      
-      const earliestExpiry = batches
-        .map((b) => parseDate(b.expiryDate))
-        .filter((d): d is Date => d !== null)
-        .sort((a, b) => a.getTime() - b.getTime())[0] || null;
-
-      return {
-        ...stock,
-        batches: batches.map((b: any) => {
-          const expiryDate = parseDate(b.expiryDate);
-          const receivedAtDate = parseDate(b.receivedAt);
-          
-          const batchData: any = {
-            id: b.id,
-            inventoryId: b.inventoryId,
-            itemId: b.itemId,
-            quantity: b.quantity,
-            expiryDate: expiryDate ? expiryDate.toISOString() : null,
-            receivedAt: receivedAtDate ? receivedAtDate.toISOString() : new Date().toISOString(),
-            receiptId: b.receiptId,
-            notes: b.notes,
-            item: b.item,
-          };
-          
-          // Safely handle receipt with null checks
+      try {
+        let batches = stock.batches || [];
+        
+        // Sort batches: expiry date (earliest first, nulls last), then received date
+        batches = [...batches].sort((a, b) => {
           try {
-            if (b.receipt && b.receipt.order) {
-              batchData.receipt = {
-                id: b.receipt.id,
-                orderId: b.receipt.orderId,
-                receivedBy: b.receipt.receivedBy,
-                receivedAt: (() => {
-                  const receiptDate = parseDate(b.receipt.receivedAt);
-                  return receiptDate ? receiptDate.toISOString() : null;
-                })(),
-                notes: b.receipt.notes,
-                order: {
-                  orderNumber: b.receipt.order.orderNumber,
-                  supplier: b.receipt.order.supplier || null,
-                },
-              };
-            } else {
-              batchData.receipt = null;
+            const aExpiry = parseDate(a?.expiryDate);
+            const bExpiry = parseDate(b?.expiryDate);
+            if (aExpiry && bExpiry) {
+              const dateDiff = aExpiry.getTime() - bExpiry.getTime();
+              if (dateDiff !== 0) return dateDiff;
             }
+            if (aExpiry && !bExpiry) return -1;
+            if (!aExpiry && bExpiry) return 1;
+            const aReceived = parseDate(a?.receivedAt);
+            const bReceived = parseDate(b?.receivedAt);
+            if (aReceived && bReceived) {
+              return aReceived.getTime() - bReceived.getTime();
+            }
+            return 0;
           } catch (err) {
-            console.error('Error processing receipt for batch:', b.id, err);
-            batchData.receipt = null;
+            console.error('Error sorting batches:', err);
+            return 0;
           }
-          
-          return batchData;
-        }),
-        expiryInfo: {
-          hasExpired: expiredBatches.length > 0,
-          expiringSoon: expiringSoonBatches.length > 0,
-          earliestExpiry: earliestExpiry ? earliestExpiry.toISOString() : null,
-          expiredQuantity: expiredBatches.reduce((sum, b) => sum + parseFloat(b.quantity.toString()), 0),
-          expiringSoonQuantity: expiringSoonBatches.reduce((sum, b) => sum + parseFloat(b.quantity.toString()), 0),
-        },
-      };
+        });
+        
+        const now = new Date();
+        const expiredBatches = batches.filter((batch) => {
+          try {
+            const expiryDate = parseDate(batch?.expiryDate);
+            return expiryDate !== null && expiryDate < now;
+          } catch (err) {
+            console.error('Error checking expired batch:', err);
+            return false;
+          }
+        });
+        
+        const expiringSoonBatches = batches.filter((batch) => {
+          try {
+            const expiryDate = parseDate(batch?.expiryDate);
+            if (!expiryDate) return false;
+            const daysUntilExpiry = Math.ceil((expiryDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+            return daysUntilExpiry > 0 && daysUntilExpiry <= 30; // Within 30 days
+          } catch (err) {
+            console.error('Error checking expiring soon batch:', err);
+            return false;
+          }
+        });
+        
+        const earliestExpiry = batches
+          .map((b) => {
+            try {
+              return parseDate(b?.expiryDate);
+            } catch {
+              return null;
+            }
+          })
+          .filter((d): d is Date => d !== null)
+          .sort((a, b) => a.getTime() - b.getTime())[0] || null;
+
+        return {
+          ...stock,
+          batches: batches.map((b: any) => {
+            try {
+              const expiryDate = parseDate(b?.expiryDate);
+              const receivedAtDate = parseDate(b?.receivedAt);
+              
+              const batchData: any = {
+                id: b?.id,
+                inventoryId: b?.inventoryId,
+                itemId: b?.itemId,
+                quantity: b?.quantity || 0,
+                expiryDate: expiryDate ? expiryDate.toISOString() : null,
+                receivedAt: receivedAtDate ? receivedAtDate.toISOString() : new Date().toISOString(),
+                receiptId: b?.receiptId || null,
+                notes: b?.notes || null,
+                item: b?.item || null,
+              };
+              
+              // Safely handle receipt with null checks
+              try {
+                if (b?.receipt && b.receipt.order) {
+                  batchData.receipt = {
+                    id: b.receipt.id,
+                    orderId: b.receipt.orderId,
+                    receivedBy: b.receipt.receivedBy,
+                    receivedAt: (() => {
+                      try {
+                        const receiptDate = parseDate(b.receipt?.receivedAt);
+                        return receiptDate ? receiptDate.toISOString() : null;
+                      } catch {
+                        return null;
+                      }
+                    })(),
+                    notes: b.receipt.notes || null,
+                    order: {
+                      orderNumber: b.receipt.order?.orderNumber || null,
+                      supplier: b.receipt.order?.supplier || null,
+                    },
+                  };
+                } else {
+                  batchData.receipt = null;
+                }
+              } catch (err) {
+                console.error('Error processing receipt for batch:', b?.id, err);
+                batchData.receipt = null;
+              }
+              
+              return batchData;
+            } catch (err) {
+              console.error('Error processing batch:', b?.id, err);
+              // Return minimal batch data on error
+              return {
+                id: b?.id || 'unknown',
+                inventoryId: b?.inventoryId,
+                itemId: b?.itemId,
+                quantity: b?.quantity || 0,
+                expiryDate: null,
+                receivedAt: new Date().toISOString(),
+                receiptId: null,
+                notes: null,
+                item: null,
+                receipt: null,
+              };
+            }
+          }),
+          expiryInfo: {
+            hasExpired: expiredBatches.length > 0,
+            expiringSoon: expiringSoonBatches.length > 0,
+            earliestExpiry: earliestExpiry ? earliestExpiry.toISOString() : null,
+            expiredQuantity: expiredBatches.reduce((sum, b) => {
+              try {
+                return sum + parseFloat((b?.quantity || 0).toString());
+              } catch {
+                return sum;
+              }
+            }, 0),
+            expiringSoonQuantity: expiringSoonBatches.reduce((sum, b) => {
+              try {
+                return sum + parseFloat((b?.quantity || 0).toString());
+              } catch {
+                return sum;
+              }
+            }, 0),
+          },
+        };
+      } catch (err) {
+        console.error('Error processing stock:', stock?.id, err);
+        // Return minimal stock data on error
+        return {
+          ...stock,
+          batches: [],
+          expiryInfo: {
+            hasExpired: false,
+            expiringSoon: false,
+            earliestExpiry: null,
+            expiredQuantity: 0,
+            expiringSoonQuantity: 0,
+          },
+        };
+      }
     });
 
     res.json(stocksWithExpiry);
@@ -189,8 +255,19 @@ router.get('/:id/stocks', requireRole('INVENTORY', 'MANAGER', 'ACCOUNTANT', 'AUD
     if (error instanceof Error) {
       console.error('Error message:', error.message);
       console.error('Error stack:', error.stack);
+      // Log more details for debugging
+      if ('code' in error) {
+        console.error('Error code:', (error as any).code);
+      }
+      if ('meta' in error) {
+        console.error('Error meta:', (error as any).meta);
+      }
     }
-    res.status(500).json({ error: 'خطأ في الخادم', details: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ 
+      error: 'خطأ في الخادم', 
+      details: error instanceof Error ? error.message : String(error),
+      stack: process.env.NODE_ENV === 'development' && error instanceof Error ? error.stack : undefined
+    });
   }
 });
 
