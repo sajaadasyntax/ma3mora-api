@@ -75,17 +75,22 @@ router.get('/:id/stocks', requireRole('INVENTORY', 'MANAGER', 'ACCOUNTANT', 'AUD
       },
     });
 
+    // Helper function to safely parse dates (defined once for reuse)
+    const parseDate = (dateValue: any): Date | null => {
+      if (!dateValue) return null;
+      if (dateValue instanceof Date) return dateValue;
+      try {
+        const parsed = new Date(dateValue);
+        return isNaN(parsed.getTime()) ? null : parsed;
+      } catch (error) {
+        console.error('Error parsing date:', dateValue, error);
+        return null;
+      }
+    };
+
     // Add expiry information to each stock item
     const stocksWithExpiry = stocks.map((stock) => {
       let batches = stock.batches || [];
-      
-      // Helper function to safely parse dates
-      const parseDate = (dateValue: any): Date | null => {
-        if (!dateValue) return null;
-        if (dateValue instanceof Date) return dateValue;
-        const parsed = new Date(dateValue);
-        return isNaN(parsed.getTime()) ? null : parsed;
-      };
       
       // Sort batches: expiry date (earliest first, nulls last), then received date
       batches = [...batches].sort((a, b) => {
@@ -126,14 +131,6 @@ router.get('/:id/stocks', requireRole('INVENTORY', 'MANAGER', 'ACCOUNTANT', 'AUD
       return {
         ...stock,
         batches: batches.map((b: any) => {
-          // Safely parse dates
-          const parseDate = (dateValue: any): Date | null => {
-            if (!dateValue) return null;
-            if (dateValue instanceof Date) return dateValue;
-            const parsed = new Date(dateValue);
-            return isNaN(parsed.getTime()) ? null : parsed;
-          };
-          
           const expiryDate = parseDate(b.expiryDate);
           const receivedAtDate = parseDate(b.receivedAt);
           
