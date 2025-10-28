@@ -79,41 +79,71 @@ router.get('/:id/stocks', requireRole('INVENTORY', 'MANAGER', 'ACCOUNTANT', 'AUD
     const stocksWithExpiry = stocks.map((stock) => {
       let batches = stock.batches || [];
       
+      // Helper function to safely parse dates
+      const parseDate = (dateValue: any): Date | null => {
+        if (!dateValue) return null;
+        if (dateValue instanceof Date) return dateValue;
+        const parsed = new Date(dateValue);
+        return isNaN(parsed.getTime()) ? null : parsed;
+      };
+      
       // Sort batches: expiry date (earliest first, nulls last), then received date
       batches = [...batches].sort((a, b) => {
-        if (a.expiryDate && b.expiryDate) {
-          const dateDiff = new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime();
+        const aExpiry = parseDate(a.expiryDate);
+        const bExpiry = parseDate(b.expiryDate);
+        if (aExpiry && bExpiry) {
+          const dateDiff = aExpiry.getTime() - bExpiry.getTime();
           if (dateDiff !== 0) return dateDiff;
         }
-        if (a.expiryDate && !b.expiryDate) return -1;
-        if (!a.expiryDate && b.expiryDate) return 1;
-        return new Date(a.receivedAt).getTime() - new Date(b.receivedAt).getTime();
+        if (aExpiry && !bExpiry) return -1;
+        if (!aExpiry && bExpiry) return 1;
+        const aReceived = parseDate(a.receivedAt);
+        const bReceived = parseDate(b.receivedAt);
+        if (aReceived && bReceived) {
+          return aReceived.getTime() - bReceived.getTime();
+        }
+        return 0;
       });
-      const expiredBatches = batches.filter((batch) => 
-        batch.expiryDate && new Date(batch.expiryDate) < new Date()
-      );
+      
+      const now = new Date();
+      const expiredBatches = batches.filter((batch) => {
+        const expiryDate = parseDate(batch.expiryDate);
+        return expiryDate !== null && expiryDate < now;
+      });
+      
       const expiringSoonBatches = batches.filter((batch) => {
-        if (!batch.expiryDate) return false;
-        const expiryDate = new Date(batch.expiryDate);
-        const now = new Date();
+        const expiryDate = parseDate(batch.expiryDate);
+        if (!expiryDate) return false;
         const daysUntilExpiry = Math.ceil((expiryDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
         return daysUntilExpiry > 0 && daysUntilExpiry <= 30; // Within 30 days
       });
+      
       const earliestExpiry = batches
-        .filter((b) => b.expiryDate)
-        .map((b) => new Date(b.expiryDate!))
-        .sort((a, b) => a.getTime() - b.getTime())[0];
+        .map((b) => parseDate(b.expiryDate))
+        .filter((d): d is Date => d !== null)
+        .sort((a, b) => a.getTime() - b.getTime())[0] || null;
 
       return {
         ...stock,
         batches: batches.map((b: any) => {
+          // Safely parse dates
+          const parseDate = (dateValue: any): Date | null => {
+            if (!dateValue) return null;
+            if (dateValue instanceof Date) return dateValue;
+            const parsed = new Date(dateValue);
+            return isNaN(parsed.getTime()) ? null : parsed;
+          };
+          
+          const expiryDate = parseDate(b.expiryDate);
+          const receivedAtDate = parseDate(b.receivedAt);
+          
           const batchData: any = {
             id: b.id,
             inventoryId: b.inventoryId,
             itemId: b.itemId,
             quantity: b.quantity,
-            expiryDate: b.expiryDate ? new Date(b.expiryDate).toISOString() : null,
-            receivedAt: new Date(b.receivedAt).toISOString(),
+            expiryDate: expiryDate ? expiryDate.toISOString() : null,
+            receivedAt: receivedAtDate ? receivedAtDate.toISOString() : new Date().toISOString(),
             receiptId: b.receiptId,
             notes: b.notes,
             item: b.item,
@@ -126,7 +156,10 @@ router.get('/:id/stocks', requireRole('INVENTORY', 'MANAGER', 'ACCOUNTANT', 'AUD
                 id: b.receipt.id,
                 orderId: b.receipt.orderId,
                 receivedBy: b.receipt.receivedBy,
-                receivedAt: b.receipt.receivedAt ? new Date(b.receipt.receivedAt).toISOString() : null,
+                receivedAt: (() => {
+                  const receiptDate = parseDate(b.receipt.receivedAt);
+                  return receiptDate ? receiptDate.toISOString() : null;
+                })(),
                 notes: b.receipt.notes,
                 order: {
                   orderNumber: b.receipt.order.orderNumber,
