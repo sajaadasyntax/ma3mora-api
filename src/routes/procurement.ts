@@ -56,10 +56,6 @@ router.get('/orders', requireRole('PROCUREMENT', 'ACCOUNTANT', 'AUDITOR', 'MANAG
     const { status, inventoryId, section } = req.query;
     const where: any = {};
 
-    if (status) where.status = status;
-    if (inventoryId) where.inventoryId = inventoryId;
-    if (section) where.section = section;
-
     // Procurement users can only see their own orders
     if (req.user?.role === 'PROCUREMENT') {
       where.createdBy = req.user.id;
@@ -68,8 +64,19 @@ router.get('/orders', requireRole('PROCUREMENT', 'ACCOUNTANT', 'AUDITOR', 'MANAG
     // Inventory users can only see payment-confirmed orders that are not cancelled
     if (req.user?.role === 'INVENTORY') {
       where.paymentConfirmed = true;
-      where.status = { not: 'CANCELLED' };
+      // If status filter is provided and it's CANCELLED, ignore it for inventory users
+      if (status && status !== 'CANCELLED') {
+        where.status = status;
+      } else if (!status) {
+        where.status = { not: 'CANCELLED' };
+      }
+    } else {
+      // For other roles, apply status filter normally
+      if (status) where.status = status;
     }
+
+    if (inventoryId) where.inventoryId = inventoryId;
+    if (section) where.section = section;
 
     const orders = await prisma.procOrder.findMany({
       where,
@@ -231,7 +238,7 @@ const addGiftsSchema = z.object({
   })).min(1),
 });
 
-// Add gifts to order items after payment confirmation
+// Add gifts to order items (before payment confirmation)
 router.post('/orders/:id/add-gifts', requireRole('MANAGER'), createAuditLog('ProcOrder'), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
@@ -248,12 +255,16 @@ router.post('/orders/:id/add-gifts', requireRole('MANAGER'), createAuditLog('Pro
       return res.status(404).json({ error: 'أمر الشراء غير موجود' });
     }
 
-    if (!order.paymentConfirmed) {
-      return res.status(400).json({ error: 'يجب تأكيد الدفع أولاً قبل إضافة الهدايا' });
+    if (order.paymentConfirmed) {
+      return res.status(400).json({ error: 'لا يمكن إضافة هدايا بعد تأكيد الدفع' });
     }
 
     if (order.status === 'CANCELLED') {
       return res.status(400).json({ error: 'لا يمكن إضافة هدايا لأمر شراء ملغي' });
+    }
+
+    if (order.status === 'RECEIVED') {
+      return res.status(400).json({ error: 'لا يمكن إضافة هدايا لأمر شراء مستلم بالفعل' });
     }
 
     // Update gift quantities
@@ -344,6 +355,55 @@ const batchItemSchema = z.object({
   quantity: z.number().positive(),
   expiryDate: z.string().optional().nullable(), // ISO date string or null
   notes: z.string().optional(),
+});
+
+// Cancel procurement order (manager can cancel any order) - placed before more specific routes
+router.post('/orders/:id/cancel', requireRole('MANAGER'), createAuditLog('ProcOrder'), async (req: AuthRequest, res) => {
+  try {
+    const { id } = req.params;
+    const { reason, notes } = req.body;
+
+    const order = await prisma.procOrder.findUnique({
+      where: { id },
+    });
+
+    if (!order) {
+      return res.status(404).json({ error: 'أمر الشراء غير موجود' });
+    }
+
+    if (order.status === 'CANCELLED') {
+      return res.status(400).json({ error: 'أمر الشراء ملغي بالفعل' });
+    }
+
+    if (order.status === 'RECEIVED') {
+      return res.status(400).json({ error: 'لا يمكن إلغاء أمر شراء مستلم بالفعل' });
+    }
+
+    const updatedOrder = await prisma.procOrder.update({
+      where: { id },
+      data: {
+        status: 'CANCELLED',
+        notes: notes || reason ? `${order.notes || ''}\n[ملغي - ${reason || 'بدون سبب'}]`.trim() : order.notes,
+      },
+      include: {
+        supplier: true,
+        inventory: true,
+        creator: {
+          select: { id: true, username: true },
+        },
+        items: {
+          include: {
+            item: true,
+          },
+        },
+      },
+    });
+
+    res.json(updatedOrder);
+  } catch (error) {
+    console.error('Cancel procurement order error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
 });
 
 const receiveOrderSchema = z.object({
@@ -585,55 +645,6 @@ router.post('/orders/:id/payments', requireRole('MANAGER'), checkBalanceOpen, cr
 const returnSchema = z.object({
   reason: z.string().min(1, 'السبب مطلوب'),
   notes: z.string().optional(),
-});
-
-// Cancel procurement order (manager can cancel any order)
-router.post('/orders/:id/cancel', requireRole('MANAGER'), createAuditLog('ProcOrder'), async (req: AuthRequest, res) => {
-  try {
-    const { id } = req.params;
-    const { reason, notes } = req.body;
-
-    const order = await prisma.procOrder.findUnique({
-      where: { id },
-    });
-
-    if (!order) {
-      return res.status(404).json({ error: 'أمر الشراء غير موجود' });
-    }
-
-    if (order.status === 'CANCELLED') {
-      return res.status(400).json({ error: 'أمر الشراء ملغي بالفعل' });
-    }
-
-    if (order.status === 'RECEIVED') {
-      return res.status(400).json({ error: 'لا يمكن إلغاء أمر شراء مستلم بالفعل' });
-    }
-
-    const updatedOrder = await prisma.procOrder.update({
-      where: { id },
-      data: {
-        status: 'CANCELLED',
-        notes: notes || reason ? `${order.notes || ''}\n[ملغي - ${reason || 'بدون سبب'}]`.trim() : order.notes,
-      },
-      include: {
-        supplier: true,
-        inventory: true,
-        creator: {
-          select: { id: true, username: true },
-        },
-        items: {
-          include: {
-            item: true,
-          },
-        },
-      },
-    });
-
-    res.json(updatedOrder);
-  } catch (error) {
-    console.error('Cancel procurement order error:', error);
-    res.status(500).json({ error: 'خطأ في الخادم' });
-  }
 });
 
 // Return procurement order (only if not paid)
