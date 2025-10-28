@@ -233,7 +233,7 @@ router.get('/:id/stocks', requireRole('INVENTORY', 'MANAGER', 'ACCOUNTANT', 'AUD
           },
         };
       } catch (err) {
-        console.error('Error processing stock:', stock?.id, err);
+        console.error('Error processing stock:', stock?.inventoryId, stock?.itemId, err);
         // Return minimal stock data on error
         return {
           ...stock,
