@@ -540,7 +540,7 @@ model CashExchange {
   amount        Decimal       @db.Decimal(10, 2)
   fromMethod    PaymentMethod
   toMethod      PaymentMethod
-  receiptNumber String        @unique
+  receiptNumber String?       @unique
   receiptUrl    String?
   notes         String?
   createdBy     String

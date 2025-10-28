@@ -47,6 +47,23 @@ router.get('/:id/stocks', async (req: AuthRequest, res) => {
               gt: 0,
             },
           },
+          include: {
+            receipt: {
+              include: {
+                order: {
+                  include: {
+                    supplier: {
+                      select: { name: true },
+                    },
+                  },
+                  select: {
+                    orderNumber: true,
+                    supplier: true,
+                  },
+                },
+              },
+            },
+          },
           orderBy: {
             receivedAt: 'asc',
           },

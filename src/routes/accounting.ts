@@ -29,10 +29,30 @@ const createOpeningBalanceSchema = z.object({
 
 const createCashExchangeSchema = z.object({
   amount: z.number().positive(),
-  toMethod: z.enum(['BANK', 'BANK_NILE']),
-  receiptNumber: z.string().min(1),
+  fromMethod: z.enum(['CASH', 'BANK', 'BANK_NILE']),
+  toMethod: z.enum(['CASH', 'BANK', 'BANK_NILE']),
+  receiptNumber: z.string().optional(),
   receiptUrl: z.string().optional(),
   notes: z.string().optional(),
+}).refine((data) => {
+  // fromMethod and toMethod must be different
+  return data.fromMethod !== data.toMethod;
+}, {
+  message: 'من و إلى يجب أن يكونا مختلفين',
+  path: ['toMethod'],
+}).refine((data) => {
+  // Receipt number is required when exchanging TO a bank (fromMethod is CASH and toMethod is BANK/BANK_NILE)
+  // OR when exchanging FROM a bank (fromMethod is BANK/BANK_NILE and toMethod is CASH)
+  const exchangingToBank = data.fromMethod === 'CASH' && (data.toMethod === 'BANK' || data.toMethod === 'BANK_NILE');
+  const exchangingFromBank = (data.fromMethod === 'BANK' || data.fromMethod === 'BANK_NILE') && data.toMethod === 'CASH';
+  
+  if (exchangingToBank || exchangingFromBank) {
+    return !!data.receiptNumber && data.receiptNumber.length > 0;
+  }
+  return true; // Receipt number optional when exchanging between banks
+}, {
+  message: 'رقم الإيصال مطلوب عند صرف نقد إلى بنك أو استرجاع من بنك',
+  path: ['receiptNumber'],
 });
 
 router.get('/expenses', async (req: AuthRequest, res) => {
@@ -902,72 +922,76 @@ router.post('/cash-exchanges', requireRole('ACCOUNTANT', 'MANAGER'), checkBalanc
   try {
     const data = createCashExchangeSchema.parse(req.body);
 
-    // Check if receipt number already exists in cash exchanges
-    const existingExchange = await prisma.cashExchange.findUnique({
-      where: { receiptNumber: data.receiptNumber },
-      include: {
-        createdByUser: {
-          select: { id: true, username: true },
-        },
-      },
-    });
-
-    if (existingExchange) {
-      return res.status(400).json({ 
-        error: 'رقم الإيصال مستخدم بالفعل',
-        existingTransaction: {
-          id: existingExchange.id,
-          amount: existingExchange.amount.toString(),
-          toMethod: existingExchange.toMethod,
-          receiptNumber: existingExchange.receiptNumber,
-          receiptUrl: existingExchange.receiptUrl,
-          createdAt: existingExchange.createdAt,
-          createdBy: existingExchange.createdByUser.username,
-          notes: existingExchange.notes,
-        }
-      });
-    }
-
-    // Check if receipt number exists in sales payments
-    const existingPayment = await prisma.salesPayment.findUnique({
-      where: { receiptNumber: data.receiptNumber },
-      include: {
-        invoice: {
-          include: {
-            customer: true,
+    // Check receipt number uniqueness only if provided
+    if (data.receiptNumber) {
+      // Check if receipt number already exists in cash exchanges
+      const existingExchange = await prisma.cashExchange.findUnique({
+        where: { receiptNumber: data.receiptNumber },
+        include: {
+          createdByUser: {
+            select: { id: true, username: true },
           },
         },
-        recordedByUser: {
-          select: { id: true, username: true },
-        },
-      },
-    });
-
-    if (existingPayment) {
-      return res.status(400).json({ 
-        error: 'رقم الإيصال مستخدم بالفعل في دفعة مبيعات',
-        existingTransaction: {
-          id: existingPayment.id,
-          invoiceId: existingPayment.invoiceId,
-          invoiceNumber: existingPayment.invoice.invoiceNumber,
-          customer: existingPayment.invoice.customer.name,
-          amount: existingPayment.amount.toString(),
-          method: existingPayment.method,
-          receiptNumber: existingPayment.receiptNumber,
-          receiptUrl: existingPayment.receiptUrl,
-          paidAt: existingPayment.paidAt,
-          recordedBy: existingPayment.recordedByUser.username,
-          notes: existingPayment.notes,
-        }
       });
+
+      if (existingExchange) {
+        return res.status(400).json({ 
+          error: 'رقم الإيصال مستخدم بالفعل',
+          existingTransaction: {
+            id: existingExchange.id,
+            amount: existingExchange.amount.toString(),
+            fromMethod: existingExchange.fromMethod,
+            toMethod: existingExchange.toMethod,
+            receiptNumber: existingExchange.receiptNumber,
+            receiptUrl: existingExchange.receiptUrl,
+            createdAt: existingExchange.createdAt,
+            createdBy: existingExchange.createdByUser.username,
+            notes: existingExchange.notes,
+          }
+        });
+      }
+
+      // Check if receipt number exists in sales payments
+      const existingPayment = await prisma.salesPayment.findUnique({
+        where: { receiptNumber: data.receiptNumber },
+        include: {
+          invoice: {
+            include: {
+              customer: true,
+            },
+          },
+          recordedByUser: {
+            select: { id: true, username: true },
+          },
+        },
+      });
+
+      if (existingPayment) {
+        return res.status(400).json({ 
+          error: 'رقم الإيصال مستخدم بالفعل في دفعة مبيعات',
+          existingTransaction: {
+            id: existingPayment.id,
+            invoiceId: existingPayment.invoiceId,
+            invoiceNumber: existingPayment.invoice.invoiceNumber,
+            customer: existingPayment.invoice.customer.name,
+            amount: existingPayment.amount.toString(),
+            method: existingPayment.method,
+            receiptNumber: existingPayment.receiptNumber,
+            receiptUrl: existingPayment.receiptUrl,
+            paidAt: existingPayment.paidAt,
+            recordedBy: existingPayment.recordedByUser.username,
+            notes: existingPayment.notes,
+          }
+        });
+      }
     }
 
     const exchange = await prisma.cashExchange.create({
       data: {
         amount: data.amount,
-        fromMethod: 'CASH',
+        fromMethod: data.fromMethod,
         toMethod: data.toMethod,
-        receiptNumber: data.receiptNumber,
+        receiptNumber: data.receiptNumber || null,
         receiptUrl: data.receiptUrl,
         notes: data.notes,
         createdBy: req.user!.id,
