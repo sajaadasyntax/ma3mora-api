@@ -403,9 +403,8 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
             throw new Error(`المخزون غير موجود للصنف ${batch.itemId}`);
           }
 
-          // Get order item to include gift quantity
-          const orderItem = order.items.find((oi) => oi.itemId === batch.itemId);
-          const totalQuantity = new Prisma.Decimal(batch.quantity).add(orderItem?.giftQty || 0);
+          // Include gift quantity in total
+          const totalQuantity = new Prisma.Decimal(batch.quantity).add(orderItem.giftQty || 0);
 
           // Create stock batch with expiry date (including gift quantity)
           await tx.stockBatch.create({

@@ -489,7 +489,7 @@ router.get('/stock-movements', requireRole('INVENTORY', 'SALES_GROCERY', 'SALES_
             const dateEnd = new Date(date);
             dateEnd.setHours(23, 59, 59, 999);
 
-            const openingBalance = previousClosingBalance || new Prisma.Decimal(0);
+            const openingBalance: Prisma.Decimal = previousClosingBalance || new Prisma.Decimal(0);
 
             // Get incoming from procurement receipts (InventoryReceipt) on this date
             const receipts = await prisma.inventoryReceipt.findMany({
@@ -597,7 +597,7 @@ router.get('/stock-movements', requireRole('INVENTORY', 'SALES_GROCERY', 'SALES_
             const incomingGifts = new Prisma.Decimal(0);
 
             // Calculate closing balance
-            const closingBalance = openingBalance
+            const closingBalance: Prisma.Decimal = openingBalance
               .add(totalIncoming)
               .sub(totalOutgoing)
               .sub(totalPendingOutgoing)

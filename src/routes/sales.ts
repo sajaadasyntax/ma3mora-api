@@ -856,7 +856,7 @@ router.get('/reports/daily-by-item', requireRole('SALES_GROCERY', 'SALES_BAKERY'
       averageUnitPrice: item.totalQuantity.greaterThan(0) 
         ? item.totalAmount.div(item.totalQuantity).toFixed(2)
         : '0.00',
-      unitPriceRange: Array.from(item.unitPrices).sort((a: number, b: number) => a - b).join(', '),
+      unitPriceRange: Array.from<number>(item.unitPrices).sort((a, b) => a - b).join(', '),
       invoiceCount: item.invoices.length,
       invoices: item.invoices.sort((a: any, b: any) => 
         new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
