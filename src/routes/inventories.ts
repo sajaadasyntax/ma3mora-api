@@ -23,7 +23,7 @@ router.get('/', async (req: AuthRequest, res) => {
   }
 });
 
-router.get('/:id/stocks', async (req: AuthRequest, res) => {
+router.get('/:id/stocks', requireRole('INVENTORY', 'MANAGER', 'ACCOUNTANT', 'AUDITOR', 'PROCUREMENT', 'SALES_GROCERY', 'SALES_BAKERY'), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
     const { section } = req.query;
@@ -64,6 +64,7 @@ router.get('/:id/stocks', async (req: AuthRequest, res) => {
               },
             },
           },
+          // Ensure we get all batches even if receiptId is null
           orderBy: {
             receivedAt: 'asc',
           },
@@ -105,15 +106,32 @@ router.get('/:id/stocks', async (req: AuthRequest, res) => {
 
       return {
         ...stock,
-        batches: batches.map((b) => ({
-          ...b,
-          expiryDate: b.expiryDate ? new Date(b.expiryDate).toISOString() : null,
-          receivedAt: new Date(b.receivedAt).toISOString(),
-          receipt: b.receipt ? {
-            ...b.receipt,
-            order: b.receipt.order ? b.receipt.order : null,
-          } : null,
-        })),
+        batches: batches.map((b) => {
+          const batchData: any = {
+            ...b,
+            expiryDate: b.expiryDate ? new Date(b.expiryDate).toISOString() : null,
+            receivedAt: new Date(b.receivedAt).toISOString(),
+          };
+          
+          // Safely handle receipt with null checks
+          if (b.receipt && b.receipt.order) {
+            batchData.receipt = {
+              id: b.receipt.id,
+              orderId: b.receipt.orderId,
+              receivedBy: b.receipt.receivedBy,
+              receivedAt: b.receipt.receivedAt ? new Date(b.receipt.receivedAt).toISOString() : null,
+              notes: b.receipt.notes,
+              order: {
+                orderNumber: b.receipt.order.orderNumber,
+                supplier: b.receipt.order.supplier,
+              },
+            };
+          } else {
+            batchData.receipt = null;
+          }
+          
+          return batchData;
+        }),
         expiryInfo: {
           hasExpired: expiredBatches.length > 0,
           expiringSoon: expiringSoonBatches.length > 0,
@@ -127,7 +145,11 @@ router.get('/:id/stocks', async (req: AuthRequest, res) => {
     res.json(stocksWithExpiry);
   } catch (error) {
     console.error('Get stocks error:', error);
-    res.status(500).json({ error: 'خطأ في الخادم' });
+    if (error instanceof Error) {
+      console.error('Error message:', error.message);
+      console.error('Error stack:', error.stack);
+    }
+    res.status(500).json({ error: 'خطأ في الخادم', details: error instanceof Error ? error.message : String(error) });
   }
 });
 
