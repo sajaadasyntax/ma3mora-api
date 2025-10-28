@@ -265,8 +265,10 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
 
     const totalSalesDebt = totalSales.sub(totalReceived);
 
-    // Procurement summary
-    const procWhere: any = {};
+    // Procurement summary - exclude cancelled orders
+    const procWhere: any = {
+      status: { not: 'CANCELLED' }
+    };
     if (inventoryId) procWhere.inventoryId = inventoryId;
     if (section) procWhere.section = section;
 
@@ -274,7 +276,23 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
       where: procWhere,
     });
 
+    // Get cancelled orders separately for reporting
+    const cancelledProcWhere: any = {
+      status: 'CANCELLED'
+    };
+    if (inventoryId) cancelledProcWhere.inventoryId = inventoryId;
+    if (section) cancelledProcWhere.section = section;
+
+    const cancelledProcOrders = await prisma.procOrder.findMany({
+      where: cancelledProcWhere,
+    });
+
     const totalProcurement = procOrders.reduce(
+      (sum, order) => sum.add(order.total),
+      new Prisma.Decimal(0)
+    );
+
+    const totalCancelledProcurement = cancelledProcOrders.reduce(
       (sum, order) => sum.add(order.total),
       new Prisma.Decimal(0)
     );
@@ -326,6 +344,10 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
       procurement: {
         total: totalProcurement.toFixed(2),
         count: procOrders.length,
+        cancelled: {
+          total: totalCancelledProcurement.toFixed(2),
+          count: cancelledProcOrders.length,
+        },
       },
       expenses: {
         total: totalExpenses.toFixed(2),
@@ -410,9 +432,10 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), asyn
       .filter(e => e.method === 'BANK_NILE')
       .reduce((sum, e) => sum.add(e.amount), new Prisma.Decimal(0));
 
-    // Get procurement orders with items for expenses tracking
+    // Get procurement orders with items for expenses tracking - exclude cancelled orders
     const procOrders = await prisma.procOrder.findMany({
       where: {
+        status: { not: 'CANCELLED' },
         ...(inventoryId ? { inventoryId: inventoryId as string } : {}),
         ...(section ? { section: section as any } : {}),
       },
@@ -776,17 +799,33 @@ router.get('/balance/sessions', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'),
         );
         const totalDebt = totalSales.sub(totalReceived);
 
-        // Get procurement data for this session
+        // Get procurement data for this session - exclude cancelled orders
         const procurementOrders = await prisma.procOrder.findMany({
           where: {
             createdAt: {
               gte: session.openedAt,
               lte: session.closedAt || new Date(),
-            }
+            },
+            status: { not: 'CANCELLED' }
+          }
+        });
+
+        // Get cancelled orders separately
+        const cancelledProcOrders = await prisma.procOrder.findMany({
+          where: {
+            createdAt: {
+              gte: session.openedAt,
+              lte: session.closedAt || new Date(),
+            },
+            status: 'CANCELLED'
           }
         });
 
         const totalProcurement = procurementOrders.reduce((sum: Prisma.Decimal, order: any) => 
+          sum.add(order.total), new Prisma.Decimal(0)
+        );
+
+        const totalCancelledProcurement = cancelledProcOrders.reduce((sum: Prisma.Decimal, order: any) => 
           sum.add(order.total), new Prisma.Decimal(0)
         );
 
@@ -818,6 +857,10 @@ router.get('/balance/sessions', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'),
             procurement: {
               total: totalProcurement.toFixed(2),
               count: procurementOrders.length,
+              cancelled: {
+                total: totalCancelledProcurement.toFixed(2),
+                count: cancelledProcOrders.length,
+              },
             },
             expenses: {
               total: totalExpenses.toFixed(2),

@@ -81,6 +81,7 @@ model User {
   salaries               Salary[]
   advances               Advance[]
   cashExchanges          CashExchange[]
+  refundedOrders         ProcOrder[]         @relation("OrderRefunder")
 
   @@map("users")
 }
@@ -348,6 +349,11 @@ model ProcOrder {
   paymentConfirmed   Boolean          @default(false)
   paymentConfirmedBy String?
   paymentConfirmedAt DateTime?
+  refundMethod       PaymentMethod?
+  refundAmount       Decimal?         @db.Decimal(10, 2)
+  refundNotes        String?
+  refundedBy         String?
+  refundedAt         DateTime?
   notes              String?
   createdAt          DateTime         @default(now())
   updatedAt          DateTime         @updatedAt
@@ -356,6 +362,7 @@ model ProcOrder {
   creator               User      @relation(fields: [createdBy], references: [id])
   supplier              Supplier  @relation(fields: [supplierId], references: [id])
   paymentConfirmedByUser User?    @relation("PaymentConfirmer", fields: [paymentConfirmedBy], references: [id])
+  refundedByUser        User?     @relation("OrderRefunder", fields: [refundedBy], references: [id])
 
   items    ProcOrderItem[]
   payments ProcOrderPayment[]

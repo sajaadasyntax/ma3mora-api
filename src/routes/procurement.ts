@@ -178,6 +178,9 @@ router.get('/orders/:id', requireRole('PROCUREMENT', 'ACCOUNTANT', 'AUDITOR', 'M
         paymentConfirmedByUser: {
           select: { id: true, username: true },
         },
+        refundedByUser: {
+          select: { id: true, username: true },
+        },
         items: {
           include: {
             item: true,
@@ -357,14 +360,34 @@ const batchItemSchema = z.object({
   notes: z.string().optional(),
 });
 
+const cancelOrderSchema = z.object({
+  reason: z.string().optional(),
+  notes: z.string().optional(),
+  refundMethod: z.enum(['CASH', 'BANK', 'BANK_NILE']).optional(),
+  refundAmount: z.number().optional(),
+  refundNotes: z.string().optional(),
+}).refine((data) => {
+  // If refundMethod is provided, refundAmount must also be provided
+  if (data.refundMethod && !data.refundAmount) {
+    return false;
+  }
+  return true;
+}, {
+  message: 'يجب تحديد مبلغ الاسترجاع عند تحديد طريقة الاسترجاع',
+  path: ['refundAmount'],
+});
+
 // Cancel procurement order (manager can cancel any order) - placed before more specific routes
 router.post('/orders/:id/cancel', requireRole('MANAGER'), createAuditLog('ProcOrder'), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
-    const { reason, notes } = req.body;
+    const cancelData = cancelOrderSchema.parse(req.body);
 
     const order = await prisma.procOrder.findUnique({
       where: { id },
+      include: {
+        payments: true,
+      },
     });
 
     if (!order) {
@@ -379,11 +402,36 @@ router.post('/orders/:id/cancel', requireRole('MANAGER'), createAuditLog('ProcOr
       return res.status(400).json({ error: 'لا يمكن إلغاء أمر شراء مستلم بالفعل' });
     }
 
+    // Check if order has payments - require refund information
+    const hasPayments = order.paidAmount && order.paidAmount.greaterThan(0);
+    if (hasPayments) {
+      if (!cancelData.refundMethod || !cancelData.refundAmount) {
+        return res.status(400).json({ 
+          error: 'يجب تحديد طريقة ومبلغ استرجاع المبلغ لأن الأمر مدفوع',
+          required: ['refundMethod', 'refundAmount']
+        });
+      }
+
+      // Validate refund amount matches paid amount (or can be partial)
+      if (new Prisma.Decimal(cancelData.refundAmount).greaterThan(order.paidAmount)) {
+        return res.status(400).json({ 
+          error: `مبلغ الاسترجاع (${cancelData.refundAmount}) أكبر من المبلغ المدفوع (${order.paidAmount})` 
+        });
+      }
+    }
+
     const updatedOrder = await prisma.procOrder.update({
       where: { id },
       data: {
         status: 'CANCELLED',
-        notes: notes || reason ? `${order.notes || ''}\n[ملغي - ${reason || 'بدون سبب'}]`.trim() : order.notes,
+        notes: cancelData.notes || cancelData.reason 
+          ? `${order.notes || ''}\n[ملغي - ${cancelData.reason || 'بدون سبب'}]`.trim() 
+          : order.notes,
+        refundMethod: cancelData.refundMethod || null,
+        refundAmount: cancelData.refundAmount ? new Prisma.Decimal(cancelData.refundAmount) : null,
+        refundNotes: cancelData.refundNotes || null,
+        refundedBy: hasPayments ? req.user!.id : null,
+        refundedAt: hasPayments ? new Date() : null,
       },
       include: {
         supplier: true,
@@ -391,16 +439,30 @@ router.post('/orders/:id/cancel', requireRole('MANAGER'), createAuditLog('ProcOr
         creator: {
           select: { id: true, username: true },
         },
+        refundedByUser: {
+          select: { id: true, username: true },
+        },
         items: {
           include: {
             item: true,
           },
+        },
+        payments: {
+          include: {
+            recordedByUser: {
+              select: { id: true, username: true },
+            },
+          },
+          orderBy: { paidAt: 'desc' },
         },
       },
     });
 
     res.json(updatedOrder);
   } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: 'بيانات غير صالحة', details: error.errors });
+    }
     console.error('Cancel procurement order error:', error);
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
