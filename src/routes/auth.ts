@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import { z } from 'zod';
 
 const router = Router();
@@ -31,8 +32,17 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'اسم المستخدم أو كلمة المرور غير صحيحة' });
     }
 
+    // Generate a new session token to invalidate all previous sessions
+    const sessionToken = crypto.randomBytes(32).toString('hex');
+    
+    // Update user with new session token
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { sessionToken },
+    });
+
     const token = jwt.sign(
-      { userId: user.id, username: user.username, role: user.role },
+      { userId: user.id, username: user.username, role: user.role, sessionToken },
       JWT_SECRET,
       { expiresIn: '7d' }
     );
@@ -59,9 +69,27 @@ router.post('/login', async (req, res) => {
   }
 });
 
-router.post('/logout', (req, res) => {
-  res.clearCookie('token');
-  res.json({ message: 'تم تسجيل الخروج بنجاح' });
+router.post('/logout', async (req, res) => {
+  try {
+    const token = req.cookies?.token;
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET) as any;
+        // Clear session token from database
+        await prisma.user.update({
+          where: { id: decoded.userId },
+          data: { sessionToken: null },
+        });
+      } catch (error) {
+        // Token invalid, ignore
+      }
+    }
+    res.clearCookie('token');
+    res.json({ message: 'تم تسجيل الخروج بنجاح' });
+  } catch (error) {
+    res.clearCookie('token');
+    res.json({ message: 'تم تسجيل الخروج بنجاح' });
+  }
 });
 
 router.get('/me', async (req, res) => {
@@ -81,7 +109,13 @@ router.get('/me', async (req, res) => {
       return res.status(401).json({ error: 'المستخدم غير موجود' });
     }
 
-    const { passwordHash, ...userWithoutPassword } = user;
+    // Verify session token matches
+    if (decoded.sessionToken !== user.sessionToken) {
+      res.clearCookie('token');
+      return res.status(401).json({ error: 'تم إنهاء جلستك بسبب تسجيل الدخول من مكان آخر' });
+    }
+
+    const { passwordHash, sessionToken, ...userWithoutPassword } = user;
     res.json({ user: userWithoutPassword });
   } catch (error) {
     res.status(401).json({ error: 'رمز الوصول غير صالح' });

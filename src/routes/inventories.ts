@@ -106,27 +106,38 @@ router.get('/:id/stocks', requireRole('INVENTORY', 'MANAGER', 'ACCOUNTANT', 'AUD
 
       return {
         ...stock,
-        batches: batches.map((b) => {
+        batches: batches.map((b: any) => {
           const batchData: any = {
-            ...b,
+            id: b.id,
+            inventoryId: b.inventoryId,
+            itemId: b.itemId,
+            quantity: b.quantity,
             expiryDate: b.expiryDate ? new Date(b.expiryDate).toISOString() : null,
             receivedAt: new Date(b.receivedAt).toISOString(),
+            receiptId: b.receiptId,
+            notes: b.notes,
+            item: b.item,
           };
           
           // Safely handle receipt with null checks
-          if (b.receipt && b.receipt.order) {
-            batchData.receipt = {
-              id: b.receipt.id,
-              orderId: b.receipt.orderId,
-              receivedBy: b.receipt.receivedBy,
-              receivedAt: b.receipt.receivedAt ? new Date(b.receipt.receivedAt).toISOString() : null,
-              notes: b.receipt.notes,
-              order: {
-                orderNumber: b.receipt.order.orderNumber,
-                supplier: b.receipt.order.supplier,
-              },
-            };
-          } else {
+          try {
+            if (b.receipt && b.receipt.order) {
+              batchData.receipt = {
+                id: b.receipt.id,
+                orderId: b.receipt.orderId,
+                receivedBy: b.receipt.receivedBy,
+                receivedAt: b.receipt.receivedAt ? new Date(b.receipt.receivedAt).toISOString() : null,
+                notes: b.receipt.notes,
+                order: {
+                  orderNumber: b.receipt.order.orderNumber,
+                  supplier: b.receipt.order.supplier || null,
+                },
+              };
+            } else {
+              batchData.receipt = null;
+            }
+          } catch (err) {
+            console.error('Error processing receipt for batch:', b.id, err);
             batchData.receipt = null;
           }
           

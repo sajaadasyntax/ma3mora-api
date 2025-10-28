@@ -62,6 +62,7 @@ model User {
   username     String   @unique
   passwordHash String
   role         Role
+  sessionToken String?  @unique
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

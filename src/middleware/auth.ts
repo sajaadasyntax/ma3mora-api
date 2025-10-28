@@ -24,6 +24,15 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
       return res.status(401).json({ error: 'المستخدم غير موجود' });
     }
 
+    // Verify session token matches - if not, user logged in from another location
+    if (decoded.sessionToken !== user.sessionToken) {
+      res.clearCookie('token');
+      return res.status(401).json({ 
+        error: 'تم إنهاء جلستك بسبب تسجيل الدخول من مكان آخر',
+        sessionExpired: true 
+      });
+    }
+
     req.user = user;
     next();
   } catch (error) {
