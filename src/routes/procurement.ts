@@ -207,6 +207,11 @@ router.get('/orders/:id', requireRole('PROCUREMENT', 'ACCOUNTANT', 'AUDITOR', 'M
             receivedByUser: {
               select: { id: true, username: true },
             },
+            batches: {
+              include: {
+                item: true,
+              },
+            },
           },
           orderBy: { receivedAt: 'desc' },
         },
