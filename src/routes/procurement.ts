@@ -51,7 +51,7 @@ async function generateOrderNumber(): Promise<string> {
   return `PO-${String(count + 1).padStart(6, '0')}`;
 }
 
-router.get('/orders', requireRole('PROCUREMENT', 'ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (req: AuthRequest, res) => {
+router.get('/orders', requireRole('PROCUREMENT', 'ACCOUNTANT', 'AUDITOR', 'MANAGER', 'INVENTORY'), async (req: AuthRequest, res) => {
   try {
     const { status, inventoryId, section } = req.query;
     const where: any = {};
@@ -65,9 +65,10 @@ router.get('/orders', requireRole('PROCUREMENT', 'ACCOUNTANT', 'AUDITOR', 'MANAG
       where.createdBy = req.user.id;
     }
 
-    // Inventory users can only see payment-confirmed orders
+    // Inventory users can only see payment-confirmed orders that are not cancelled
     if (req.user?.role === 'INVENTORY') {
       where.paymentConfirmed = true;
+      where.status = { not: 'CANCELLED' };
     }
 
     const orders = await prisma.procOrder.findMany({
@@ -155,7 +156,7 @@ router.post('/orders', requireRole('PROCUREMENT', 'MANAGER'), checkBalanceOpen, 
   }
 });
 
-router.get('/orders/:id', requireRole('PROCUREMENT', 'ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (req: AuthRequest, res) => {
+router.get('/orders/:id', requireRole('PROCUREMENT', 'ACCOUNTANT', 'AUDITOR', 'MANAGER', 'INVENTORY'), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
 
@@ -204,6 +205,16 @@ router.get('/orders/:id', requireRole('PROCUREMENT', 'ACCOUNTANT', 'AUDITOR', 'M
 
     if (!order) {
       return res.status(404).json({ error: 'أمر الشراء غير موجود' });
+    }
+
+    // Inventory users can only see payment-confirmed orders
+    if (req.user?.role === 'INVENTORY' && !order.paymentConfirmed) {
+      return res.status(403).json({ error: 'لا يمكنك الوصول إلى هذا الأمر حتى يتم تأكيد الدفع' });
+    }
+
+    // Inventory users cannot see cancelled orders
+    if (req.user?.role === 'INVENTORY' && order.status === 'CANCELLED') {
+      return res.status(403).json({ error: 'لا يمكنك الوصول إلى أمر شراء ملغي' });
     }
 
     res.json(order);
@@ -574,6 +585,55 @@ router.post('/orders/:id/payments', requireRole('MANAGER'), checkBalanceOpen, cr
 const returnSchema = z.object({
   reason: z.string().min(1, 'السبب مطلوب'),
   notes: z.string().optional(),
+});
+
+// Cancel procurement order (manager can cancel any order)
+router.post('/orders/:id/cancel', requireRole('MANAGER'), createAuditLog('ProcOrder'), async (req: AuthRequest, res) => {
+  try {
+    const { id } = req.params;
+    const { reason, notes } = req.body;
+
+    const order = await prisma.procOrder.findUnique({
+      where: { id },
+    });
+
+    if (!order) {
+      return res.status(404).json({ error: 'أمر الشراء غير موجود' });
+    }
+
+    if (order.status === 'CANCELLED') {
+      return res.status(400).json({ error: 'أمر الشراء ملغي بالفعل' });
+    }
+
+    if (order.status === 'RECEIVED') {
+      return res.status(400).json({ error: 'لا يمكن إلغاء أمر شراء مستلم بالفعل' });
+    }
+
+    const updatedOrder = await prisma.procOrder.update({
+      where: { id },
+      data: {
+        status: 'CANCELLED',
+        notes: notes || reason ? `${order.notes || ''}\n[ملغي - ${reason || 'بدون سبب'}]`.trim() : order.notes,
+      },
+      include: {
+        supplier: true,
+        inventory: true,
+        creator: {
+          select: { id: true, username: true },
+        },
+        items: {
+          include: {
+            item: true,
+          },
+        },
+      },
+    });
+
+    res.json(updatedOrder);
+  } catch (error) {
+    console.error('Cancel procurement order error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
 });
 
 // Return procurement order (only if not paid)
