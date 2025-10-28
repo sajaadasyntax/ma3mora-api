@@ -113,7 +113,7 @@ router.get('/expenses', async (req: AuthRequest, res) => {
       type: 'SALARY',
       description: `راتب - ${salary.employee.name} (${salary.month}/${salary.year})`,
       amount: salary.amount.toString(),
-      method: salary.paymentMethod,
+      method: (salary as any).paymentMethod,
       creator: salary.creator,
       createdAt: salary.paidAt || salary.createdAt,
       employee: salary.employee,
@@ -128,7 +128,7 @@ router.get('/expenses', async (req: AuthRequest, res) => {
       type: 'ADVANCE',
       description: `سلفية - ${advance.employee.name}${advance.reason ? ` (${advance.reason})` : ''}`,
       amount: advance.amount.toString(),
-      method: advance.paymentMethod,
+      method: (advance as any).paymentMethod,
       creator: advance.creator,
       createdAt: advance.paidAt || advance.createdAt,
       employee: advance.employee,
@@ -326,10 +326,36 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
       where: expensesWhere,
     });
 
+    // Get paid salaries (only where paidAt is not null)
+    const paidSalaries = await prisma.salary.findMany({
+      where: {
+        paidAt: { not: null },
+      },
+    });
+
+    // Get paid advances (only where paidAt is not null)
+    const paidAdvances = await prisma.advance.findMany({
+      where: {
+        paidAt: { not: null },
+      },
+    });
+
     const totalExpenses = expenses.reduce(
       (sum, exp) => sum.add(exp.amount),
       new Prisma.Decimal(0)
     );
+
+    const totalSalaries = paidSalaries.reduce(
+      (sum, salary) => sum.add(salary.amount),
+      new Prisma.Decimal(0)
+    );
+
+    const totalAdvances = paidAdvances.reduce(
+      (sum, advance) => sum.add(advance.amount),
+      new Prisma.Decimal(0)
+    );
+
+    const totalAllExpenses = totalExpenses.add(totalSalaries).add(totalAdvances);
 
     // Opening balances - optimized query for open balances only
     const openingBalances = await prisma.openingBalance.findMany({
@@ -342,9 +368,9 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
 
     // Calculate total opening balance by payment method
     const openingBalanceByMethod = {
-      CASH: openingBalances.filter(bal => bal.paymentMethod === 'CASH').reduce((sum, bal) => sum.add(bal.amount), new Prisma.Decimal(0)),
-      BANK: openingBalances.filter(bal => bal.paymentMethod === 'BANK').reduce((sum, bal) => sum.add(bal.amount), new Prisma.Decimal(0)),
-      BANK_NILE: openingBalances.filter(bal => bal.paymentMethod === 'BANK_NILE').reduce((sum, bal) => sum.add(bal.amount), new Prisma.Decimal(0)),
+      CASH: openingBalances.filter(bal => (bal as any).paymentMethod === 'CASH').reduce((sum, bal) => sum.add(bal.amount), new Prisma.Decimal(0)),
+      BANK: openingBalances.filter(bal => (bal as any).paymentMethod === 'BANK').reduce((sum, bal) => sum.add(bal.amount), new Prisma.Decimal(0)),
+      BANK_NILE: openingBalances.filter(bal => (bal as any).paymentMethod === 'BANK_NILE').reduce((sum, bal) => sum.add(bal.amount), new Prisma.Decimal(0)),
     };
     
     const totalOpeningBalance = openingBalanceByMethod.CASH.add(openingBalanceByMethod.BANK).add(openingBalanceByMethod.BANK_NILE);
@@ -352,7 +378,7 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
     const netBalance = totalOpeningBalance
       .add(totalReceived)
       .sub(totalProcurement)
-      .sub(totalExpenses);
+      .sub(totalAllExpenses);
 
     res.json({
       sales: {
@@ -370,8 +396,11 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
         },
       },
       expenses: {
-        total: totalExpenses.toFixed(2),
-        count: expenses.length,
+        total: totalAllExpenses.toFixed(2),
+        count: expenses.length + paidSalaries.length + paidAdvances.length,
+        regular: totalExpenses.toFixed(2),
+        salaries: totalSalaries.toFixed(2),
+        advances: totalAdvances.toFixed(2),
       },
       balance: {
         opening: totalOpeningBalance.toFixed(2),
@@ -535,15 +564,15 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), asyn
     });
 
     const openingCash = openingBalances
-      .filter(b => b.paymentMethod === 'CASH')
+      .filter(b => (b as any).paymentMethod === 'CASH')
       .reduce((sum, b) => sum.add(b.amount), new Prisma.Decimal(0));
     
     const openingBank = openingBalances
-      .filter(b => b.paymentMethod === 'BANK')
+      .filter(b => (b as any).paymentMethod === 'BANK')
       .reduce((sum, b) => sum.add(b.amount), new Prisma.Decimal(0));
     
     const openingBankNile = openingBalances
-      .filter(b => b.paymentMethod === 'BANK_NILE')
+      .filter(b => (b as any).paymentMethod === 'BANK_NILE')
       .reduce((sum, b) => sum.add(b.amount), new Prisma.Decimal(0));
 
     // Calculate net liquid cash (opening balance + payments - expenses)
@@ -709,7 +738,7 @@ router.post('/balance/open', requireRole('ACCOUNTANT', 'MANAGER'), async (req: A
       const balances = [];
       
       if (cash > 0) {
-        balances.push(await tx.openingBalance.create({
+        balances.push(await (tx.openingBalance as any).create({
           data: {
             scope: 'CASHBOX',
             amount: new Prisma.Decimal(cash),
@@ -720,7 +749,7 @@ router.post('/balance/open', requireRole('ACCOUNTANT', 'MANAGER'), async (req: A
       }
       
       if (bank > 0) {
-        balances.push(await tx.openingBalance.create({
+        balances.push(await (tx.openingBalance as any).create({
           data: {
             scope: 'CASHBOX',
             amount: new Prisma.Decimal(bank),
@@ -731,7 +760,7 @@ router.post('/balance/open', requireRole('ACCOUNTANT', 'MANAGER'), async (req: A
       }
       
       if (bankNile > 0) {
-        balances.push(await tx.openingBalance.create({
+        balances.push(await (tx.openingBalance as any).create({
           data: {
             scope: 'CASHBOX',
             amount: new Prisma.Decimal(bankNile),
@@ -767,9 +796,9 @@ router.get('/balance/status', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), a
 
     // Group by payment method
     const balancesByMethod = {
-      CASH: openBalances.filter(b => b.paymentMethod === 'CASH').reduce((sum, b) => sum.add(b.amount), new Prisma.Decimal(0)),
-      BANK: openBalances.filter(b => b.paymentMethod === 'BANK').reduce((sum, b) => sum.add(b.amount), new Prisma.Decimal(0)),
-      BANK_NILE: openBalances.filter(b => b.paymentMethod === 'BANK_NILE').reduce((sum, b) => sum.add(b.amount), new Prisma.Decimal(0)),
+      CASH: openBalances.filter(b => (b as any).paymentMethod === 'CASH').reduce((sum, b) => sum.add(b.amount), new Prisma.Decimal(0)),
+      BANK: openBalances.filter(b => (b as any).paymentMethod === 'BANK').reduce((sum, b) => sum.add(b.amount), new Prisma.Decimal(0)),
+      BANK_NILE: openBalances.filter(b => (b as any).paymentMethod === 'BANK_NILE').reduce((sum, b) => sum.add(b.amount), new Prisma.Decimal(0)),
     };
 
     const total = balancesByMethod.CASH.add(balancesByMethod.BANK).add(balancesByMethod.BANK_NILE);
@@ -902,7 +931,7 @@ router.get('/balance/sessions', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'),
 
 router.get('/cash-exchanges', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (req: AuthRequest, res) => {
   try {
-    const exchanges = await prisma.cashExchange.findMany({
+    const exchanges = await (prisma as any).cashExchange.findMany({
       include: {
         createdByUser: {
           select: { id: true, username: true },
@@ -925,7 +954,7 @@ router.post('/cash-exchanges', requireRole('ACCOUNTANT', 'MANAGER'), checkBalanc
     // Check receipt number uniqueness only if provided
     if (data.receiptNumber) {
       // Check if receipt number already exists in cash exchanges
-      const existingExchange = await prisma.cashExchange.findUnique({
+      const existingExchange = await (prisma as any).cashExchange.findUnique({
         where: { receiptNumber: data.receiptNumber },
         include: {
           createdByUser: {
@@ -953,7 +982,7 @@ router.post('/cash-exchanges', requireRole('ACCOUNTANT', 'MANAGER'), checkBalanc
 
       // Check if receipt number exists in sales payments
       const existingPayment = await prisma.salesPayment.findUnique({
-        where: { receiptNumber: data.receiptNumber },
+        where: { receiptNumber: data.receiptNumber } as any,
         include: {
           invoice: {
             include: {
@@ -972,21 +1001,21 @@ router.post('/cash-exchanges', requireRole('ACCOUNTANT', 'MANAGER'), checkBalanc
           existingTransaction: {
             id: existingPayment.id,
             invoiceId: existingPayment.invoiceId,
-            invoiceNumber: existingPayment.invoice.invoiceNumber,
-            customer: existingPayment.invoice.customer.name,
+            invoiceNumber: (existingPayment as any).invoice.invoiceNumber,
+            customer: (existingPayment as any).invoice.customer.name,
             amount: existingPayment.amount.toString(),
             method: existingPayment.method,
-            receiptNumber: existingPayment.receiptNumber,
+            receiptNumber: (existingPayment as any).receiptNumber,
             receiptUrl: existingPayment.receiptUrl,
             paidAt: existingPayment.paidAt,
-            recordedBy: existingPayment.recordedByUser.username,
+            recordedBy: (existingPayment as any).recordedByUser.username,
             notes: existingPayment.notes,
           }
         });
       }
     }
 
-    const exchange = await prisma.cashExchange.create({
+    const exchange = await (prisma as any).cashExchange.create({
       data: {
         amount: data.amount,
         fromMethod: data.fromMethod,
