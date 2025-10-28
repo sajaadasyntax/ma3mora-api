@@ -109,6 +109,10 @@ router.get('/:id/stocks', async (req: AuthRequest, res) => {
           ...b,
           expiryDate: b.expiryDate ? new Date(b.expiryDate).toISOString() : null,
           receivedAt: new Date(b.receivedAt).toISOString(),
+          receipt: b.receipt ? {
+            ...b.receipt,
+            order: b.receipt.order ? b.receipt.order : null,
+          } : null,
         })),
         expiryInfo: {
           hasExpired: expiredBatches.length > 0,
