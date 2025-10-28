@@ -211,7 +211,7 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'MANAGER')
   }
 });
 
-router.get('/invoices/:id', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (req: AuthRequest, res) => {
+router.get('/invoices/:id', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'ACCOUNTANT', 'AUDITOR', 'MANAGER', 'INVENTORY', 'PROCUREMENT'), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
 
@@ -251,6 +251,11 @@ router.get('/invoices/:id', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'ACCOUN
 
     if (!invoice) {
       return res.status(404).json({ error: 'الفاتورة غير موجودة' });
+    }
+
+    // Inventory users can only see payment-confirmed invoices
+    if (req.user?.role === 'INVENTORY' && !invoice.paymentConfirmed) {
+      return res.status(403).json({ error: 'ليس لديك صلاحية للوصول' });
     }
 
     res.json(invoice);
