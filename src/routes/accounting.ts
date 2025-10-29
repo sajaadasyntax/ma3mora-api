@@ -2549,14 +2549,21 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
         BANK_NILE: runningBalances.BANK_NILE,
       };
 
-      const totalIncome = incomeByMethod.CASH.add(incomeByMethod.BANK).add(incomeByMethod.BANK_NILE);
-      const totalLosses = lossesByMethod.CASH.add(lossesByMethod.BANK).add(lossesByMethod.BANK_NILE);
-      const netProfit = totalIncome.sub(totalLosses);
+      // Compute displayed totals from real income/loss only (exclude transfers)
+      const realIncomeTotal = dayData.income.reduce(
+        (sum: Prisma.Decimal, t: any) => sum.add(new Prisma.Decimal(t.amount)),
+        new Prisma.Decimal(0)
+      );
+      const realLossTotal = dayData.losses.reduce(
+        (sum: Prisma.Decimal, t: any) => sum.add(new Prisma.Decimal(t.amount)),
+        new Prisma.Decimal(0)
+      );
+      const netProfit = realIncomeTotal.sub(realLossTotal);
       
       return {
         ...dayData,
-        totalIncome: totalIncome.toString(),
-        totalLosses: totalLosses.toString(),
+        totalIncome: realIncomeTotal.toString(),
+        totalLosses: realLossTotal.toString(),
         netProfit: netProfit.toString(),
         incomeCount: dayData.income.length,
         lossesCount: dayData.losses.length,
