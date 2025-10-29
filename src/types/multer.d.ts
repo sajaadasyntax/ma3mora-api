@@ -48,12 +48,13 @@ declare module 'multer' {
     any(): any;
   }
 
-  interface MulterStatic extends Multer {
+  interface MulterConstructor {
+    (options?: Options): Multer;
     diskStorage(options: DiskStorageOptions): StorageEngine;
   }
 
-  function multer(options?: Options): MulterStatic;
-
+  const multer: MulterConstructor;
+  export default multer;
   export = multer;
   export { File, FileFilterCallback, Options, StorageEngine, Multer, DiskStorageOptions };
 }
