@@ -43,7 +43,18 @@ router.post('/', requireRole('ACCOUNTANT', 'MANAGER', 'INVENTORY', 'PROCUREMENT'
     return res.status(400).json({ error: 'لم يتم رفع أي ملف' });
   }
   const publicPath = `/uploads/${req.file.filename}`;
-  res.json({ url: publicPath, filename: req.file.filename, size: req.file.size, mime: req.file.mimetype });
+  // Prefer explicit PUBLIC_API_URL in production; fallback to request host
+  const configuredBaseUrl = process.env.PUBLIC_API_URL;
+  const inferredBaseUrl = `${req.protocol}://${req.get('host')}`;
+  const baseUrl = configuredBaseUrl && configuredBaseUrl.trim().length > 0 ? configuredBaseUrl : inferredBaseUrl;
+
+  res.json({
+    url: `${baseUrl}${publicPath}`,
+    path: publicPath,
+    filename: req.file.filename,
+    size: req.file.size,
+    mime: req.file.mimetype,
+  });
 });
 
 export default router;
