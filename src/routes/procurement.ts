@@ -34,6 +34,7 @@ async function checkBalanceOpen(req: AuthRequest, res: any, next: any) {
 const orderItemSchema = z.object({
   itemId: z.string(),
   quantity: z.number().positive(),
+  giftQty: z.number().min(0).default(0),
   unitCost: z.number().positive(),
 });
 
@@ -116,6 +117,7 @@ router.post('/orders', requireRole('PROCUREMENT', 'MANAGER'), checkBalanceOpen, 
       return {
         itemId: lineItem.itemId,
         quantity: lineItem.quantity,
+        giftQty: lineItem.giftQty || 0,
         unitCost: lineItem.unitCost,
         lineTotal,
       };
