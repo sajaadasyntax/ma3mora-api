@@ -2742,5 +2742,105 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
   }
 });
 
+// Commission report: procurement payments paid via COMMISSION (treated as profit used to cover orders)
+router.get('/commissions', requireRole('ACCOUNTANT', 'MANAGER'), async (req: AuthRequest, res) => {
+  try {
+    const { startDate, endDate, supplierId, inventoryId, section } = req.query as any;
+
+    let gte: Date | undefined;
+    let lte: Date | undefined;
+    if (startDate) {
+      gte = new Date(startDate);
+      gte.setHours(0, 0, 0, 0);
+    }
+    if (endDate) {
+      lte = new Date(endDate);
+      lte.setHours(23, 59, 59, 999);
+    }
+
+    const commissions = await prisma.procOrderPayment.findMany({
+      where: {
+        method: 'COMMISSION' as any,
+        paidAt: gte || lte ? { gte, lte } as any : undefined,
+        order: {
+          ...(supplierId ? { supplierId } : {}),
+          ...(inventoryId ? { inventoryId } : {}),
+          ...(section ? { section } : {}),
+        },
+      },
+      include: {
+        order: {
+          include: {
+            supplier: { select: { id: true, name: true } },
+            inventory: { select: { id: true, name: true } },
+          },
+        },
+        recordedByUser: { select: { id: true, username: true } },
+      },
+      orderBy: { paidAt: 'desc' },
+    });
+
+    // Transform rows
+    const rows = commissions.map((p) => ({
+      id: p.id,
+      amount: p.amount.toString(),
+      date: p.paidAt,
+      orderId: p.orderId,
+      orderNumber: (p as any).order?.orderNumber || null,
+      supplier: (p as any).order?.supplier?.name || null,
+      supplierId: (p as any).order?.supplier?.id || null,
+      inventory: (p as any).order?.inventory?.name || null,
+      inventoryId: (p as any).order?.inventory?.id || null,
+      section: (p as any).order?.section || null,
+      recordedBy: (p as any).recordedByUser?.username || 'غير محدد',
+      notes: p.notes || null,
+      receiptNumber: (p as any).receiptNumber || null,
+      receiptUrl: p.receiptUrl || null,
+    }));
+
+    // Summaries
+    const total = commissions.reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0));
+
+    const bySupplier: Record<string, { name: string; amount: string; count: number }> = {};
+    const byInventory: Record<string, { name: string; amount: string; count: number }> = {};
+    const byDate: Record<string, { amount: string; count: number }> = {};
+
+    commissions.forEach((p) => {
+      const sup = (p as any).order?.supplier;
+      if (sup) {
+        if (!bySupplier[sup.id]) bySupplier[sup.id] = { name: sup.name, amount: '0', count: 0 };
+        bySupplier[sup.id].amount = new Prisma.Decimal(bySupplier[sup.id].amount).add(p.amount).toString();
+        bySupplier[sup.id].count += 1;
+      }
+      const inv = (p as any).order?.inventory;
+      if (inv) {
+        if (!byInventory[inv.id]) byInventory[inv.id] = { name: inv.name, amount: '0', count: 0 };
+        byInventory[inv.id].amount = new Prisma.Decimal(byInventory[inv.id].amount).add(p.amount).toString();
+        byInventory[inv.id].count += 1;
+      }
+      const dateKey = p.paidAt ? new Date(p.paidAt).toISOString().split('T')[0] : 'غير محدد';
+      if (!byDate[dateKey]) byDate[dateKey] = { amount: '0', count: 0 };
+      byDate[dateKey].amount = new Prisma.Decimal(byDate[dateKey].amount).add(p.amount).toString();
+      byDate[dateKey].count += 1;
+    });
+
+    res.json({
+      summary: {
+        total: total.toString(),
+        count: commissions.length,
+      },
+      breakdown: {
+        bySupplier,
+        byInventory,
+        byDate,
+      },
+      rows,
+    });
+  } catch (error) {
+    console.error('Commission report error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
 export default router;
 
