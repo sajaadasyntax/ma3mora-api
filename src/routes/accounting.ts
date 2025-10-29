@@ -238,8 +238,15 @@ async function getAvailableByMethod() {
     BANK_NILE: paidAdvances.filter((a: any) => a.paymentMethod === 'BANK_NILE').reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0)),
   } as const;
 
-  // Procurement payments (only confirmed orders)
-  const procPays = await prisma.procOrderPayment.findMany({ where: { order: { paymentConfirmed: true } } });
+  // Procurement payments (only confirmed orders, exclude cancelled)
+  const procPays = await prisma.procOrderPayment.findMany({ 
+    where: { 
+      order: { 
+        paymentConfirmed: true,
+        status: { not: 'CANCELLED' }
+      } 
+    } 
+  });
   const procOut = {
     CASH: procPays.filter(p => p.method === 'CASH').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
     BANK: procPays.filter(p => p.method === 'BANK').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
@@ -454,10 +461,45 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
     
     const totalOpeningBalance = openingBalanceByMethod.CASH.add(openingBalanceByMethod.BANK).add(openingBalanceByMethod.BANK_NILE);
 
+    // Get actual procurement payments (not just order totals) - exclude cancelled orders
+    const procPayments = await prisma.procOrderPayment.findMany({
+      where: {
+        order: {
+          status: { not: 'CANCELLED' },
+          paymentConfirmed: true,
+          ...(inventoryId ? { inventoryId: inventoryId as string } : {}),
+          ...(section ? { section: section as any } : {}),
+        }
+      }
+    });
+
+    const totalProcurementPaid = procPayments.reduce(
+      (sum, payment) => sum.add(payment.amount),
+      new Prisma.Decimal(0)
+    );
+
+    // Get cash exchanges impact
+    const cashExchanges = await prisma.cashExchange.findMany();
+    const cashExchangeImpact = {
+      CASH: new Prisma.Decimal(0),
+      BANK: new Prisma.Decimal(0),
+      BANK_NILE: new Prisma.Decimal(0)
+    };
+    cashExchanges.forEach((exchange: any) => {
+      const fromM = exchange.fromMethod as 'CASH'|'BANK'|'BANK_NILE';
+      const toM = exchange.toMethod as 'CASH'|'BANK'|'BANK_NILE';
+      cashExchangeImpact[fromM] = cashExchangeImpact[fromM].sub(exchange.amount);
+      cashExchangeImpact[toM] = cashExchangeImpact[toM].add(exchange.amount);
+    });
+    const totalCashExchangeImpact = cashExchangeImpact.CASH.add(cashExchangeImpact.BANK).add(cashExchangeImpact.BANK_NILE);
+
+    // Calculate net balance: opening + received - procurement payments - expenses + cash exchanges
+    // Note: Cash exchanges between methods cancel out in total, but we include for accuracy
     const netBalance = totalOpeningBalance
       .add(totalReceived)
-      .sub(totalProcurement)
-      .sub(totalAllExpenses);
+      .sub(totalProcurementPaid)
+      .sub(totalAllExpenses)
+      .add(totalCashExchangeImpact);
 
     res.json({
       sales: {
@@ -468,6 +510,8 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
       },
       procurement: {
         total: totalProcurement.toFixed(2),
+        paid: totalProcurementPaid.toFixed(2),
+        pending: totalProcurement.sub(totalProcurementPaid).toFixed(2),
         count: procOrders.length,
         cancelled: {
           total: totalCancelledProcurement.toFixed(2),
