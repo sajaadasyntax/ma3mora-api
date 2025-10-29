@@ -400,7 +400,7 @@ const transferSchema = z.object({
 });
 
 // Get all transfers
-router.get('/transfers', requireRole('INVENTORY', 'MANAGER', 'ACCOUNTANT', 'AUDITOR'), async (req: AuthRequest, res) => {
+router.get('/transfers', requireRole('INVENTORY', 'MANAGER', 'ACCOUNTANT', 'AUDITOR', 'SALES_GROCERY', 'SALES_BAKERY'), async (req: AuthRequest, res) => {
   try {
     const { inventoryId, itemId, startDate, endDate } = req.query;
     
@@ -445,9 +445,29 @@ router.get('/transfers', requireRole('INVENTORY', 'MANAGER', 'ACCOUNTANT', 'AUDI
 });
 
 // Create transfer
-router.post('/transfers', requireRole('INVENTORY', 'MANAGER'), createAuditLog('InventoryTransfer'), async (req: AuthRequest, res) => {
+router.post('/transfers', requireRole('INVENTORY', 'MANAGER', 'SALES_GROCERY', 'SALES_BAKERY'), createAuditLog('InventoryTransfer'), async (req: AuthRequest, res) => {
   try {
     const data = transferSchema.parse(req.body);
+    // SALES users must have access to the source inventory for the item's section
+    if (req.user && (req.user.role === 'SALES_GROCERY' || req.user.role === 'SALES_BAKERY')) {
+      const item = await prisma.item.findUnique({ where: { id: data.itemId } });
+      if (!item) {
+        return res.status(400).json({ error: 'الصنف غير موجود' });
+      }
+      const hasAccess = await prisma.userInventoryAccess.findUnique({
+        where: {
+          userId_inventoryId_section: {
+            userId: req.user.id,
+            inventoryId: data.fromInventoryId,
+            section: item.section,
+          },
+        },
+      });
+      if (!hasAccess) {
+        return res.status(403).json({ error: 'ليست لديك صلاحية نقل أصناف من هذا المخزن لهذا القسم' });
+      }
+    }
+
 
     if (data.fromInventoryId === data.toInventoryId) {
       return res.status(400).json({ error: 'لا يمكن نقل الأصناف من مخزن إلى نفسه' });
