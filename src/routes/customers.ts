@@ -77,6 +77,9 @@ router.get('/:id', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'ACCOUNTANT', 'A
           },
           orderBy: { createdAt: 'desc' },
         },
+        openingBalance: {
+          where: { isClosed: false },
+        },
       },
     });
 
