@@ -1,7 +1,7 @@
 declare module 'multer' {
   import { Request } from 'express';
   
-  interface File {
+  export interface File {
     fieldname: string;
     originalname: string;
     encoding: string;
@@ -13,9 +13,9 @@ declare module 'multer' {
     buffer?: Buffer;
   }
 
-  type FileFilterCallback = (error: Error | null, acceptFile: boolean) => void;
+  export type FileFilterCallback = (error: Error | null, acceptFile?: boolean) => void;
 
-  interface Options {
+  export interface Options {
     dest?: string;
     storage?: StorageEngine;
     fileFilter?: (req: Request, file: File, callback: FileFilterCallback) => void;
@@ -29,12 +29,17 @@ declare module 'multer' {
     };
   }
 
-  interface StorageEngine {
+  export interface StorageEngine {
     _handleFile(req: Request, file: File, callback: (error?: Error | null, info?: Partial<File>) => void): void;
     _removeFile(req: Request, file: File, callback: (error: Error | null) => void): void;
   }
 
-  interface Multer {
+  export interface DiskStorageOptions {
+    destination?: string | ((req: Request, file: File, cb: (error: Error | null, destination: string) => void) => void);
+    filename?: (req: Request, file: File, cb: (error: Error | null, filename: string) => void) => void;
+  }
+
+  export interface Multer {
     (options?: Options): any;
     single(name: string): any;
     array(name: string, maxCount?: number): any;
@@ -43,9 +48,13 @@ declare module 'multer' {
     any(): any;
   }
 
-  function multer(options?: Options): Multer;
+  interface MulterStatic extends Multer {
+    diskStorage(options: DiskStorageOptions): StorageEngine;
+  }
+
+  function multer(options?: Options): MulterStatic;
 
   export = multer;
-  export { File, FileFilterCallback, Options, StorageEngine, Multer };
+  export { File, FileFilterCallback, Options, StorageEngine, Multer, DiskStorageOptions };
 }
 
