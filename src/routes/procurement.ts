@@ -605,15 +605,19 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
               throw new Error(`المخزون غير موجود للهدية: ${orderItem.giftItemId}`);
             }
 
-            // Create stock batch for gift item (use same expiry date if available)
+            // Check if there's a separate batch entry for the gift item
+            const giftBatch = batches.find((b) => b.itemId === orderItem.giftItemId);
+            const giftExpiryDate = giftBatch?.expiryDate ? new Date(giftBatch.expiryDate) : null;
+
+            // Create stock batch for gift item (use its own expiry date if provided, otherwise null)
             await tx.stockBatch.create({
               data: {
                 inventoryId: order.inventoryId,
                 itemId: orderItem.giftItemId,
                 quantity: orderItem.giftQuantity,
-                expiryDate: batch.expiryDate ? new Date(batch.expiryDate) : null,
+                expiryDate: giftExpiryDate,
                 receiptId: receipt.id,
-                notes: batch.notes ? `${batch.notes} - هدية` : 'هدية',
+                notes: giftBatch?.notes ? `${giftBatch.notes} - هدية` : 'هدية',
               },
             });
 
