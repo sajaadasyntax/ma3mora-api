@@ -411,6 +411,7 @@ model ProcOrderPayment {
   recordedBy String
   notes     String?
   receiptUrl String?
+  receiptNumber String? @unique
 
   order    ProcOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
   recordedByUser User     @relation(fields: [recordedBy], references: [id])

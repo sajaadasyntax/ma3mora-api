@@ -648,6 +648,15 @@ const paymentSchema = z.object({
   method: z.enum(['CASH', 'BANK', 'BANK_NILE']),
   notes: z.string().optional(),
   receiptUrl: z.string().optional(),
+  receiptNumber: z.string().optional(),
+}).refine((data) => {
+  if (data.method !== 'CASH' && !data.receiptNumber) {
+    return false;
+  }
+  return true;
+}, {
+  message: 'رقم الإيصال مطلوب لطرق الدفع البنكية',
+  path: ['receiptNumber'],
 });
 
 // Add payment to procurement order
@@ -670,6 +679,90 @@ router.post('/orders/:id/payments', requireRole('MANAGER'), checkBalanceOpen, cr
       return res.status(400).json({ error: 'المبلغ المدفوع يتجاوز إجمالي أمر الشراء' });
     }
 
+    // Enforce cross-app unique receiptNumber if provided
+    if (paymentData.receiptNumber) {
+      // Check existing in procurement payments
+      const existingProcPay = await prisma.procOrderPayment.findUnique({
+        where: { receiptNumber: paymentData.receiptNumber as any },
+        include: {
+          order: {
+            include: { supplier: true },
+          },
+          recordedByUser: {
+            select: { id: true, username: true },
+          },
+        },
+      });
+      if (existingProcPay) {
+        return res.status(400).json({
+          error: 'رقم الإيصال مستخدم بالفعل في دفعة مشتريات',
+          existingTransaction: {
+            id: existingProcPay.id,
+            orderId: existingProcPay.orderId,
+            supplier: existingProcPay.order.supplier.name,
+            amount: existingProcPay.amount.toString(),
+            method: existingProcPay.method,
+            receiptNumber: existingProcPay.receiptNumber,
+            receiptUrl: existingProcPay.receiptUrl,
+            paidAt: existingProcPay.paidAt,
+            recordedBy: existingProcPay.recordedByUser.username,
+            notes: existingProcPay.notes,
+          },
+        });
+      }
+
+      // Check existing in sales payments
+      const existingSalesPayment = await prisma.salesPayment.findUnique({
+        where: { receiptNumber: paymentData.receiptNumber as any },
+        include: {
+          invoice: { include: { customer: true } },
+          recordedByUser: { select: { id: true, username: true } },
+        },
+      });
+      if (existingSalesPayment) {
+        return res.status(400).json({
+          error: 'رقم الإيصال مستخدم بالفعل في دفعة مبيعات',
+          existingTransaction: {
+            id: existingSalesPayment.id,
+            invoiceId: existingSalesPayment.invoiceId,
+            invoiceNumber: (existingSalesPayment as any).invoice.invoiceNumber,
+            customer: (existingSalesPayment as any).invoice.customer.name,
+            amount: existingSalesPayment.amount.toString(),
+            method: existingSalesPayment.method,
+            receiptNumber: (existingSalesPayment as any).receiptNumber,
+            receiptUrl: existingSalesPayment.receiptUrl,
+            paidAt: existingSalesPayment.paidAt,
+            recordedBy: (existingSalesPayment as any).recordedByUser.username,
+            notes: existingSalesPayment.notes,
+          },
+        });
+      }
+
+      // Check existing in cash exchanges
+      const existingExchange = await (prisma as any).cashExchange.findUnique({
+        where: { receiptNumber: paymentData.receiptNumber },
+        include: {
+          createdByUser: { select: { id: true, username: true } },
+        },
+      });
+      if (existingExchange) {
+        return res.status(400).json({
+          error: 'رقم الإيصال مستخدم بالفعل في صرف نقدي',
+          existingTransaction: {
+            id: existingExchange.id,
+            amount: existingExchange.amount.toString(),
+            fromMethod: existingExchange.fromMethod,
+            toMethod: existingExchange.toMethod,
+            receiptNumber: existingExchange.receiptNumber,
+            receiptUrl: existingExchange.receiptUrl,
+            createdAt: existingExchange.createdAt,
+            createdBy: existingExchange.createdByUser.username,
+            notes: existingExchange.notes,
+          },
+        });
+      }
+    }
+
     const payment = await prisma.procOrderPayment.create({
       data: {
         orderId: id,
@@ -677,23 +770,18 @@ router.post('/orders/:id/payments', requireRole('MANAGER'), checkBalanceOpen, cr
         method: paymentData.method,
         recordedBy: req.user!.id,
         notes: paymentData.notes,
-        receiptUrl: paymentData.receiptUrl
+        receiptUrl: paymentData.receiptUrl,
+        receiptNumber: paymentData.receiptNumber || null,
       },
     });
 
     // Update order paid amount
     const updatedOrder = await prisma.procOrder.update({
       where: { id },
-      data: {
-        paidAmount: newPaidAmount,
-      },
+      data: { paidAmount: newPaidAmount },
       include: {
         payments: {
-          include: {
-            recordedByUser: {
-              select: { id: true, username: true },
-            },
-          },
+          include: { recordedByUser: { select: { id: true, username: true } } },
           orderBy: { paidAt: 'desc' },
         },
       },
@@ -703,6 +791,11 @@ router.post('/orders/:id/payments', requireRole('MANAGER'), checkBalanceOpen, cr
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: 'بيانات غير صالحة', details: error.errors });
+    }
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === 'P2002') {
+        return res.status(400).json({ error: 'رقم الإيصال مستخدم بالفعل' });
+      }
     }
     console.error('Create procurement payment error:', error);
     res.status(500).json({ error: 'خطأ في الخادم' });
