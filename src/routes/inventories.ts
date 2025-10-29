@@ -473,7 +473,7 @@ router.post('/transfers', requireRole('INVENTORY', 'MANAGER', 'SALES_GROCERY', '
       return res.status(400).json({ error: 'لا يمكن نقل الأصناف من مخزن إلى نفسه' });
     }
 
-    // Check if source inventory has enough stock
+    // Pre-check if source inventory has stock entry (fast path)
     const sourceStock = await prisma.inventoryStock.findUnique({
       where: {
         inventoryId_itemId: {
@@ -481,12 +481,13 @@ router.post('/transfers', requireRole('INVENTORY', 'MANAGER', 'SALES_GROCERY', '
           itemId: data.itemId,
         },
       },
+      select: { quantity: true },
     });
 
-    if (!sourceStock || sourceStock.quantity.lessThan(data.quantity)) {
+    if (!sourceStock) {
       return res.status(400).json({ 
         error: 'الكمية المتاحة غير كافية',
-        available: sourceStock ? sourceStock.quantity.toFixed(2) : '0',
+        available: '0',
       });
     }
 
@@ -509,12 +510,13 @@ router.post('/transfers', requireRole('INVENTORY', 'MANAGER', 'SALES_GROCERY', '
         },
       });
 
-      // Decrease source inventory stock
-      await tx.inventoryStock.update({
+      // Decrease source inventory stock atomically, ensuring sufficient quantity at write time
+      const decrementResult = await tx.inventoryStock.updateMany({
         where: {
-          inventoryId_itemId: {
-            inventoryId: data.fromInventoryId,
-            itemId: data.itemId,
+          inventoryId: data.fromInventoryId,
+          itemId: data.itemId,
+          quantity: {
+            gte: new Prisma.Decimal(data.quantity),
           },
         },
         data: {
@@ -523,6 +525,13 @@ router.post('/transfers', requireRole('INVENTORY', 'MANAGER', 'SALES_GROCERY', '
           },
         },
       });
+
+      if (decrementResult.count === 0) {
+        // Not enough stock at the moment of transfer (race condition or invalid qty)
+        throw Object.assign(new Error('INSUFFICIENT_STOCK'), {
+          code: 'INSUFFICIENT_STOCK',
+        });
+      }
 
       // Increase destination inventory stock (create if doesn't exist)
       const destStock = await tx.inventoryStock.findUnique({
@@ -565,6 +574,9 @@ router.post('/transfers', requireRole('INVENTORY', 'MANAGER', 'SALES_GROCERY', '
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: 'بيانات غير صالحة', details: error.errors });
+    }
+    if ((error as any)?.code === 'INSUFFICIENT_STOCK') {
+      return res.status(400).json({ error: 'الكمية المتاحة غير كافية' });
     }
     console.error('Create transfer error:', error);
     res.status(500).json({ error: 'خطأ في الخادم' });

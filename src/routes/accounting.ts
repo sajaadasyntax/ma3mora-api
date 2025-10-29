@@ -191,9 +191,88 @@ async function checkBalanceOpen(req: AuthRequest, res: any, next: any) {
   }
 }
 
+// Helper to compute available balance per payment method (CASH, BANK, BANK_NILE)
+async function getAvailableByMethod() {
+  // Opening balances (open cashbox only)
+  const openingBalances = await prisma.openingBalance.findMany({
+    where: { scope: 'CASHBOX', isClosed: false },
+  });
+
+  const opening = {
+    CASH: openingBalances.filter((b: any) => b.paymentMethod === 'CASH').reduce((s, b) => s.add(b.amount), new Prisma.Decimal(0)),
+    BANK: openingBalances.filter((b: any) => b.paymentMethod === 'BANK').reduce((s, b) => s.add(b.amount), new Prisma.Decimal(0)),
+    BANK_NILE: openingBalances.filter((b: any) => b.paymentMethod === 'BANK_NILE').reduce((s, b) => s.add(b.amount), new Prisma.Decimal(0)),
+  } as const;
+
+  // Sales payments (only confirmed invoices)
+  const salesPays = await prisma.salesPayment.findMany({
+    where: { invoice: { paymentConfirmed: true } },
+  });
+  const salesIn = {
+    CASH: salesPays.filter(p => p.method === 'CASH').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
+    BANK: salesPays.filter(p => p.method === 'BANK').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
+    BANK_NILE: salesPays.filter(p => p.method === 'BANK_NILE').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
+  } as const;
+
+  // Expenses
+  const expenses = await prisma.expense.findMany();
+  const expOut = {
+    CASH: expenses.filter(e => e.method === 'CASH').reduce((s, e) => s.add(e.amount), new Prisma.Decimal(0)),
+    BANK: expenses.filter(e => e.method === 'BANK').reduce((s, e) => s.add(e.amount), new Prisma.Decimal(0)),
+    BANK_NILE: expenses.filter(e => e.method === 'BANK_NILE').reduce((s, e) => s.add(e.amount), new Prisma.Decimal(0)),
+  } as const;
+
+  // Salaries (paid)
+  const paidSalaries = await prisma.salary.findMany({ where: { paidAt: { not: null } } });
+  const salOut = {
+    CASH: paidSalaries.filter((s: any) => s.paymentMethod === 'CASH').reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0)),
+    BANK: paidSalaries.filter((s: any) => s.paymentMethod === 'BANK').reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0)),
+    BANK_NILE: paidSalaries.filter((s: any) => s.paymentMethod === 'BANK_NILE').reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0)),
+  } as const;
+
+  // Advances (paid)
+  const paidAdvances = await prisma.advance.findMany({ where: { paidAt: { not: null } } });
+  const advOut = {
+    CASH: paidAdvances.filter((a: any) => a.paymentMethod === 'CASH').reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0)),
+    BANK: paidAdvances.filter((a: any) => a.paymentMethod === 'BANK').reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0)),
+    BANK_NILE: paidAdvances.filter((a: any) => a.paymentMethod === 'BANK_NILE').reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0)),
+  } as const;
+
+  // Procurement payments (only confirmed orders)
+  const procPays = await prisma.procOrderPayment.findMany({ where: { order: { paymentConfirmed: true } } });
+  const procOut = {
+    CASH: procPays.filter(p => p.method === 'CASH').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
+    BANK: procPays.filter(p => p.method === 'BANK').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
+    BANK_NILE: procPays.filter(p => p.method === 'BANK_NILE').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
+  } as const;
+
+  // Cash exchanges
+  const exchanges = await (prisma as any).cashExchange.findMany();
+  const exImpact = { CASH: new Prisma.Decimal(0), BANK: new Prisma.Decimal(0), BANK_NILE: new Prisma.Decimal(0) } as Record<'CASH'|'BANK'|'BANK_NILE', Prisma.Decimal>;
+  exchanges.forEach((e: any) => {
+    const fromM = e.fromMethod as 'CASH'|'BANK'|'BANK_NILE';
+    const toM = e.toMethod as 'CASH'|'BANK'|'BANK_NILE';
+    exImpact[fromM] = exImpact[fromM].sub(e.amount);
+    exImpact[toM] = exImpact[toM].add(e.amount);
+  });
+
+  return {
+    CASH: opening.CASH.add(salesIn.CASH).add(exImpact.CASH).sub(expOut.CASH).sub(salOut.CASH).sub(advOut.CASH).sub(procOut.CASH),
+    BANK: opening.BANK.add(salesIn.BANK).add(exImpact.BANK).sub(expOut.BANK).sub(salOut.BANK).sub(advOut.BANK).sub(procOut.BANK),
+    BANK_NILE: opening.BANK_NILE.add(salesIn.BANK_NILE).add(exImpact.BANK_NILE).sub(expOut.BANK_NILE).sub(salOut.BANK_NILE).sub(advOut.BANK_NILE).sub(procOut.BANK_NILE),
+  };
+}
+
 router.post('/expenses', requireRole('ACCOUNTANT', 'MANAGER'), checkBalanceOpen, createAuditLog('Expense'), async (req: AuthRequest, res) => {
   try {
     const data = createExpenseSchema.parse(req.body);
+
+    // Enforce sufficient balance for chosen payment method
+    const available = await getAvailableByMethod();
+    const method = data.method as 'CASH'|'BANK'|'BANK_NILE';
+    if (available[method].lessThan(data.amount)) {
+      return res.status(400).json({ error: 'الرصيد غير كافٍ لطريقة الدفع المحددة' });
+    }
 
     const expense = await prisma.expense.create({
       data: {
@@ -423,6 +502,7 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), asyn
         invoice: {
           ...(inventoryId ? { inventoryId: inventoryId as string } : {}),
           ...(section ? { section: section as any } : {}),
+          paymentConfirmed: true,
         }
       },
       include: {
@@ -553,6 +633,7 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), asyn
       where: {
         order: {
           status: { not: 'CANCELLED' },
+          paymentConfirmed: true,
           ...(inventoryId ? { inventoryId: inventoryId as string } : {}),
           ...(section ? { section: section as any } : {}),
         }
@@ -1265,6 +1346,13 @@ router.post('/cash-exchanges', requireRole('ACCOUNTANT', 'MANAGER'), checkBalanc
           }
         });
       }
+    }
+
+    // Ensure fromMethod has enough balance
+    const available = await getAvailableByMethod();
+    const fromMethod = data.fromMethod as 'CASH'|'BANK'|'BANK_NILE';
+    if (available[fromMethod].lessThan(data.amount)) {
+      return res.status(400).json({ error: 'الرصيد غير كافٍ في طريقة الدفع المصدر' });
     }
 
     const exchange = await (prisma as any).cashExchange.create({

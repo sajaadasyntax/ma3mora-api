@@ -765,6 +765,72 @@ router.post('/orders/:id/payments', requireRole('MANAGER'), checkBalanceOpen, cr
       }
     }
 
+    // Ensure sufficient balance for selected method before paying
+    // Opening balances (open cashbox only)
+    const openingBalances = await prisma.openingBalance.findMany({ where: { scope: 'CASHBOX', isClosed: false } });
+    const openingByMethod: Record<'CASH'|'BANK'|'BANK_NILE', Prisma.Decimal> = {
+      CASH: openingBalances.filter((b: any) => b.paymentMethod === 'CASH').reduce((s, b) => s.add(b.amount), new Prisma.Decimal(0)),
+      BANK: openingBalances.filter((b: any) => b.paymentMethod === 'BANK').reduce((s, b) => s.add(b.amount), new Prisma.Decimal(0)),
+      BANK_NILE: openingBalances.filter((b: any) => b.paymentMethod === 'BANK_NILE').reduce((s, b) => s.add(b.amount), new Prisma.Decimal(0)),
+    };
+
+    // Sales payments inflow (only confirmed invoices)
+    const salesPays = await prisma.salesPayment.findMany({ where: { invoice: { paymentConfirmed: true } } });
+    const salesIn: Record<'CASH'|'BANK'|'BANK_NILE', Prisma.Decimal> = {
+      CASH: salesPays.filter(p => p.method === 'CASH').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
+      BANK: salesPays.filter(p => p.method === 'BANK').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
+      BANK_NILE: salesPays.filter(p => p.method === 'BANK_NILE').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
+    };
+
+    // Existing procurement payments out (only confirmed orders)
+    const procPays = await prisma.procOrderPayment.findMany({ where: { order: { paymentConfirmed: true } } });
+    const procOut: Record<'CASH'|'BANK'|'BANK_NILE', Prisma.Decimal> = {
+      CASH: procPays.filter(p => p.method === 'CASH').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
+      BANK: procPays.filter(p => p.method === 'BANK').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
+      BANK_NILE: procPays.filter(p => p.method === 'BANK_NILE').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
+    };
+
+    // Expenses out
+    const expenses = await prisma.expense.findMany();
+    const expOut: Record<'CASH'|'BANK'|'BANK_NILE', Prisma.Decimal> = {
+      CASH: expenses.filter(e => e.method === 'CASH').reduce((s, e) => s.add(e.amount), new Prisma.Decimal(0)),
+      BANK: expenses.filter(e => e.method === 'BANK').reduce((s, e) => s.add(e.amount), new Prisma.Decimal(0)),
+      BANK_NILE: expenses.filter(e => e.method === 'BANK_NILE').reduce((s, e) => s.add(e.amount), new Prisma.Decimal(0)),
+    };
+
+    // Salaries & advances out
+    const paidSalaries = await prisma.salary.findMany({ where: { paidAt: { not: null } } });
+    const paidAdvances = await prisma.advance.findMany({ where: { paidAt: { not: null } } });
+    const salOut: Record<'CASH'|'BANK'|'BANK_NILE', Prisma.Decimal> = {
+      CASH: paidSalaries.filter((s: any) => s.paymentMethod === 'CASH').reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0)),
+      BANK: paidSalaries.filter((s: any) => s.paymentMethod === 'BANK').reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0)),
+      BANK_NILE: paidSalaries.filter((s: any) => s.paymentMethod === 'BANK_NILE').reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0)),
+    };
+    const advOut: Record<'CASH'|'BANK'|'BANK_NILE', Prisma.Decimal> = {
+      CASH: paidAdvances.filter((a: any) => a.paymentMethod === 'CASH').reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0)),
+      BANK: paidAdvances.filter((a: any) => a.paymentMethod === 'BANK').reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0)),
+      BANK_NILE: paidAdvances.filter((a: any) => a.paymentMethod === 'BANK_NILE').reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0)),
+    };
+
+    // Cash exchanges impact
+    const exchanges = await (prisma as any).cashExchange.findMany();
+    const exImpact: Record<'CASH'|'BANK'|'BANK_NILE', Prisma.Decimal> = { CASH: new Prisma.Decimal(0), BANK: new Prisma.Decimal(0), BANK_NILE: new Prisma.Decimal(0) };
+    exchanges.forEach((e: any) => {
+      exImpact[e.fromMethod] = exImpact[e.fromMethod].sub(e.amount);
+      exImpact[e.toMethod] = exImpact[e.toMethod].add(e.amount);
+    });
+
+    const available: Record<'CASH'|'BANK'|'BANK_NILE', Prisma.Decimal> = {
+      CASH: openingByMethod.CASH.add(salesIn.CASH).add(exImpact.CASH).sub(expOut.CASH).sub(salOut.CASH).sub(advOut.CASH).sub(procOut.CASH),
+      BANK: openingByMethod.BANK.add(salesIn.BANK).add(exImpact.BANK).sub(expOut.BANK).sub(salOut.BANK).sub(advOut.BANK).sub(procOut.BANK),
+      BANK_NILE: openingByMethod.BANK_NILE.add(salesIn.BANK_NILE).add(exImpact.BANK_NILE).sub(expOut.BANK_NILE).sub(salOut.BANK_NILE).sub(advOut.BANK_NILE).sub(procOut.BANK_NILE),
+    };
+
+    const method = paymentData.method as 'CASH'|'BANK'|'BANK_NILE';
+    if (available[method].lessThan(paymentData.amount)) {
+      return res.status(400).json({ error: 'الرصيد غير كافٍ لطريقة الدفع المحددة' });
+    }
+
     const payment = await prisma.procOrderPayment.create({
       data: {
         orderId: id,
