@@ -47,10 +47,12 @@ router.post('/login', async (req, res) => {
       { expiresIn: '7d' }
     );
 
+    // In production across subdomains, cookies must be SameSite=None and Secure to be sent on cross-site requests (e.g., web on ma3morainventory.cloud, API on api.ma3morainventory.cloud)
+    const isProd = process.env.NODE_ENV === 'production';
     res.cookie('token', token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
+      secure: isProd,
+      sameSite: isProd ? 'none' : 'lax',
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     });
 

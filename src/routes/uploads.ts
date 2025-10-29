@@ -2,9 +2,12 @@ import express, { type Request, type Express } from 'express';
 import multer, { type FileFilterCallback } from 'multer';
 import path from 'path';
 import fs from 'fs';
-import { requireRole } from '../middleware/auth';
+import { requireAuth, requireRole } from '../middleware/auth';
 
 const router = express.Router();
+
+// Require authentication for all upload routes
+router.use(requireAuth);
 
 const uploadsDir = path.join(process.cwd(), 'uploads');
 if (!fs.existsSync(uploadsDir)) {
