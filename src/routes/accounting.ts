@@ -2522,10 +2522,33 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
         lossesByMethod[method] = lossesByMethod[method].add(new Prisma.Decimal(t.amount));
       });
 
-      // Process cash exchanges - subtract from fromMethod, add to toMethod
+      // Calculate REAL income and losses (excluding transfers) for display
+      const realIncomeByMethod = {
+        CASH: new Prisma.Decimal(0),
+        BANK: new Prisma.Decimal(0),
+        BANK_NILE: new Prisma.Decimal(0),
+      };
+      const realLossesByMethod = {
+        CASH: new Prisma.Decimal(0),
+        BANK: new Prisma.Decimal(0),
+        BANK_NILE: new Prisma.Decimal(0),
+      };
+
+      dayData.income.forEach((t: any) => {
+        const method = t.method as 'CASH' | 'BANK' | 'BANK_NILE';
+        realIncomeByMethod[method] = realIncomeByMethod[method].add(new Prisma.Decimal(t.amount));
+      });
+
+      dayData.losses.forEach((t: any) => {
+        const method = t.method as 'CASH' | 'BANK' | 'BANK_NILE';
+        realLossesByMethod[method] = realLossesByMethod[method].add(new Prisma.Decimal(t.amount));
+      });
+
+      // Process cash exchanges - affect balances but NOT income/loss totals
       (dayData.transfers || []).forEach((transfer: any) => {
         const fromM = transfer.fromMethod as 'CASH' | 'BANK' | 'BANK_NILE';
         const toM = transfer.toMethod as 'CASH' | 'BANK' | 'BANK_NILE';
+        // Update incomeByMethod and lossesByMethod for balance calculations only
         lossesByMethod[fromM] = lossesByMethod[fromM].add(new Prisma.Decimal(transfer.amount));
         incomeByMethod[toM] = incomeByMethod[toM].add(new Prisma.Decimal(transfer.amount));
       });
@@ -2537,7 +2560,7 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
         BANK_NILE: runningBalances.BANK_NILE,
       };
 
-      // Update running balances (opening + income - losses)
+      // Update running balances (opening + income - losses including transfers)
       runningBalances.CASH = runningBalances.CASH.add(incomeByMethod.CASH).sub(lossesByMethod.CASH);
       runningBalances.BANK = runningBalances.BANK.add(incomeByMethod.BANK).sub(lossesByMethod.BANK);
       runningBalances.BANK_NILE = runningBalances.BANK_NILE.add(incomeByMethod.BANK_NILE).sub(lossesByMethod.BANK_NILE);
@@ -2549,15 +2572,9 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
         BANK_NILE: runningBalances.BANK_NILE,
       };
 
-      // Compute displayed totals from real income/loss only (exclude transfers)
-      const realIncomeTotal = dayData.income.reduce(
-        (sum: Prisma.Decimal, t: any) => sum.add(new Prisma.Decimal(t.amount)),
-        new Prisma.Decimal(0)
-      );
-      const realLossTotal = dayData.losses.reduce(
-        (sum: Prisma.Decimal, t: any) => sum.add(new Prisma.Decimal(t.amount)),
-        new Prisma.Decimal(0)
-      );
+      // Calculate REAL totals (excluding transfers) for display
+      const realIncomeTotal = realIncomeByMethod.CASH.add(realIncomeByMethod.BANK).add(realIncomeByMethod.BANK_NILE);
+      const realLossTotal = realLossesByMethod.CASH.add(realLossesByMethod.BANK).add(realLossesByMethod.BANK_NILE);
       const netProfit = realIncomeTotal.sub(realLossTotal);
       
       return {
@@ -2580,11 +2597,22 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
           total: closingBalance.CASH.add(closingBalance.BANK).add(closingBalance.BANK_NILE).toString(),
         },
         incomeByMethod: {
+          CASH: realIncomeByMethod.CASH.toString(),
+          BANK: realIncomeByMethod.BANK.toString(),
+          BANK_NILE: realIncomeByMethod.BANK_NILE.toString(),
+        },
+        lossesByMethod: {
+          CASH: realLossesByMethod.CASH.toString(),
+          BANK: realLossesByMethod.BANK.toString(),
+          BANK_NILE: realLossesByMethod.BANK_NILE.toString(),
+        },
+        // Balance calculation fields (include transfers for accurate balance tracking)
+        balanceIncomeByMethod: {
           CASH: incomeByMethod.CASH.toString(),
           BANK: incomeByMethod.BANK.toString(),
           BANK_NILE: incomeByMethod.BANK_NILE.toString(),
         },
-        lossesByMethod: {
+        balanceLossesByMethod: {
           CASH: lossesByMethod.CASH.toString(),
           BANK: lossesByMethod.BANK.toString(),
           BANK_NILE: lossesByMethod.BANK_NILE.toString(),
@@ -2593,12 +2621,26 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
       };
     }).reverse(); // Reverse to show newest first
     
-    // Calculate overall summary
+    // Calculate overall summary with accurate liquid cash per payment method
     const overallTotalIncome = dailyReports.reduce((sum, day) => 
       sum.add(new Prisma.Decimal(day.totalIncome)), new Prisma.Decimal(0));
     const overallTotalLosses = dailyReports.reduce((sum, day) => 
       sum.add(new Prisma.Decimal(day.totalLosses)), new Prisma.Decimal(0));
     const overallNetProfit = overallTotalIncome.sub(overallTotalLosses);
+    
+    // Calculate liquid cash per payment method (opening + income - losses + transfers)
+    // Use closing balance from last day, which already includes all transactions and transfers
+    const liquidCashByMethod = dailyReports.length > 0 
+      ? {
+          CASH: new Prisma.Decimal(dailyReports[dailyReports.length - 1].closingBalance.CASH),
+          BANK: new Prisma.Decimal(dailyReports[dailyReports.length - 1].closingBalance.BANK),
+          BANK_NILE: new Prisma.Decimal(dailyReports[dailyReports.length - 1].closingBalance.BANK_NILE),
+        }
+      : {
+          CASH: openingBalanceByMethod.CASH,
+          BANK: openingBalanceByMethod.BANK,
+          BANK_NILE: openingBalanceByMethod.BANK_NILE,
+        };
     
     // Calculate overall opening and closing balances
     const overallOpeningBalance = {
@@ -2611,6 +2653,19 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
     const overallClosingBalance = dailyReports.length > 0 
       ? dailyReports[dailyReports.length - 1].closingBalance 
       : overallOpeningBalance;
+    
+    // Calculate profit/loss per payment method (real income - real losses, excluding transfers)
+    const profitLossByMethod = {
+      CASH: dailyReports.reduce((sum, day) => 
+        sum.add(new Prisma.Decimal(day.incomeByMethod.CASH)).sub(new Prisma.Decimal(day.lossesByMethod.CASH)), 
+        new Prisma.Decimal(0)),
+      BANK: dailyReports.reduce((sum, day) => 
+        sum.add(new Prisma.Decimal(day.incomeByMethod.BANK)).sub(new Prisma.Decimal(day.lossesByMethod.BANK)), 
+        new Prisma.Decimal(0)),
+      BANK_NILE: dailyReports.reduce((sum, day) => 
+        sum.add(new Prisma.Decimal(day.incomeByMethod.BANK_NILE)).sub(new Prisma.Decimal(day.lossesByMethod.BANK_NILE)), 
+        new Prisma.Decimal(0)),
+    };
 
     res.json({
       startDate: startOfDay.toISOString().split('T')[0],
@@ -2622,6 +2677,31 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
         totalDays: dailyReports.length,
         openingBalance: overallOpeningBalance,
         closingBalance: overallClosingBalance,
+        // Profit/Loss per payment method (real business transactions only)
+        profitLossByMethod: {
+          CASH: profitLossByMethod.CASH.toString(),
+          BANK: profitLossByMethod.BANK.toString(),
+          BANK_NILE: profitLossByMethod.BANK_NILE.toString(),
+          total: profitLossByMethod.CASH.add(profitLossByMethod.BANK).add(profitLossByMethod.BANK_NILE).toString(),
+        },
+        // Liquid cash per payment method (actual cash position including transfers)
+        liquidCashByMethod: {
+          CASH: liquidCashByMethod.CASH.toString(),
+          BANK: liquidCashByMethod.BANK.toString(),
+          BANK_NILE: liquidCashByMethod.BANK_NILE.toString(),
+          total: liquidCashByMethod.CASH.add(liquidCashByMethod.BANK).add(liquidCashByMethod.BANK_NILE).toString(),
+        },
+        // Income and losses breakdown by payment method
+        incomeByMethod: {
+          CASH: dailyReports.reduce((sum, day) => sum.add(new Prisma.Decimal(day.incomeByMethod.CASH)), new Prisma.Decimal(0)).toString(),
+          BANK: dailyReports.reduce((sum, day) => sum.add(new Prisma.Decimal(day.incomeByMethod.BANK)), new Prisma.Decimal(0)).toString(),
+          BANK_NILE: dailyReports.reduce((sum, day) => sum.add(new Prisma.Decimal(day.incomeByMethod.BANK_NILE)), new Prisma.Decimal(0)).toString(),
+        },
+        lossesByMethod: {
+          CASH: dailyReports.reduce((sum, day) => sum.add(new Prisma.Decimal(day.lossesByMethod.CASH)), new Prisma.Decimal(0)).toString(),
+          BANK: dailyReports.reduce((sum, day) => sum.add(new Prisma.Decimal(day.lossesByMethod.BANK)), new Prisma.Decimal(0)).toString(),
+          BANK_NILE: dailyReports.reduce((sum, day) => sum.add(new Prisma.Decimal(day.lossesByMethod.BANK_NILE)), new Prisma.Decimal(0)).toString(),
+        },
       },
       dailyReports,
     });
