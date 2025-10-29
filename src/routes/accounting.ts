@@ -2132,11 +2132,11 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
     // Get paid salaries
     const salaries = await prisma.salary.findMany({
       where: {
-        paidAt: {
-          gte: startOfDay,
-          lte: endOfDay,
-          not: null,
-        },
+        AND: [
+          { paidAt: { gte: startOfDay } },
+          { paidAt: { lte: endOfDay } },
+          { NOT: { paidAt: null } },
+        ],
         paymentMethod: method ? (method as 'CASH' | 'BANK' | 'BANK_NILE') : undefined,
       },
       include: {
@@ -2151,11 +2151,11 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
     // Get paid advances
     const advances = await prisma.advance.findMany({
       where: {
-        paidAt: {
-          gte: startOfDay,
-          lte: endOfDay,
-          not: null,
-        },
+        AND: [
+          { paidAt: { gte: startOfDay } },
+          { paidAt: { lte: endOfDay } },
+          { NOT: { paidAt: null } },
+        ],
         paymentMethod: method ? (method as 'CASH' | 'BANK' | 'BANK_NILE') : undefined,
       },
       include: {
