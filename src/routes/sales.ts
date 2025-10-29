@@ -461,8 +461,28 @@ router.post('/invoices/:id/deliver', requireRole('INVENTORY', 'MANAGER'), create
     }
 
     // Use transaction to ensure atomicity
-    const result = await prisma.$transaction(async (tx) => {
-      // Deduct stock using FIFO (First In First Out) based on expiry dates
+  const result = await prisma.$transaction(async (tx) => {
+      // Compute already delivered per item from previous deliveries
+      const prevDeliveryItems = await tx.inventoryDeliveryItem.findMany({
+        where: { delivery: { invoiceId: id } },
+      });
+      const deliveredSoFar: Record<string, Prisma.Decimal> = {};
+      for (const di of prevDeliveryItems) {
+        const prev = deliveredSoFar[di.itemId] || new Prisma.Decimal(0);
+        deliveredSoFar[di.itemId] = prev.add(di.quantity).add(di.giftQty);
+      }
+
+      // If nothing remains to deliver, prevent duplicate delivery records
+      const allRemainingZero = invoice.items.every((it) => {
+        const totalQty = new Prisma.Decimal(it.quantity).add(it.giftQty);
+        const already = deliveredSoFar[it.itemId] || new Prisma.Decimal(0);
+        return totalQty.sub(already).lte(0);
+      });
+      if (allRemainingZero) {
+        throw new Error('الفاتورة مسلمة بالكامل مسبقًا');
+      }
+
+      // Deduct stock using FIFO (First In First Out) based on expiry dates for remaining quantities only
       for (const item of invoice.items) {
         const stock = await tx.inventoryStock.findUnique({
           where: {
@@ -478,8 +498,13 @@ router.post('/invoices/:id/deliver', requireRole('INVENTORY', 'MANAGER'), create
         }
 
         const totalQty = new Prisma.Decimal(item.quantity).add(item.giftQty);
+        const alreadyDelivered = deliveredSoFar[item.itemId] || new Prisma.Decimal(0);
+        const remainingToDeliver = totalQty.sub(alreadyDelivered);
+        if (remainingToDeliver.lte(0)) {
+          continue; // nothing left for this item
+        }
 
-        if (new Prisma.Decimal(stock.quantity).lessThan(totalQty)) {
+        if (new Prisma.Decimal(stock.quantity).lessThan(remainingToDeliver)) {
           const itemDetails = await tx.item.findUnique({ where: { id: item.itemId } });
           throw new Error(`الكمية غير كافية للصنف ${itemDetails?.name || item.itemId}`);
         }
@@ -509,7 +534,7 @@ router.post('/invoices/:id/deliver', requireRole('INVENTORY', 'MANAGER'), create
           return a.receivedAt.getTime() - b.receivedAt.getTime();
         });
 
-        let remainingQty = totalQty;
+        let remainingQty = remainingToDeliver;
 
         // Consume from batches using FIFO
         for (const batch of batches) {
@@ -535,7 +560,7 @@ router.post('/invoices/:id/deliver', requireRole('INVENTORY', 'MANAGER'), create
           }
         }
 
-        // Update total stock quantity
+        // Update total stock quantity for remaining only
         await tx.inventoryStock.update({
           where: {
             inventoryId_itemId: {
@@ -545,10 +570,11 @@ router.post('/invoices/:id/deliver', requireRole('INVENTORY', 'MANAGER'), create
           },
           data: {
             quantity: {
-              decrement: totalQty,
+              decrement: remainingToDeliver,
             },
           },
         });
+
       }
 
       // Create delivery record
@@ -559,6 +585,24 @@ router.post('/invoices/:id/deliver', requireRole('INVENTORY', 'MANAGER'), create
           notes,
         },
       });
+
+      // Attach created delivery items (those created above need the deliveryId). Since we couldn't set deliveryId earlier within the loop easily,
+      // we will instead create summary items now per remaining items.
+      // Recompute remaining per item to attach to this delivery record.
+      for (const item of invoice.items) {
+        const totalQty = new Prisma.Decimal(item.quantity).add(item.giftQty);
+        const alreadyDelivered = deliveredSoFar[item.itemId] || new Prisma.Decimal(0);
+        const remainingToDeliver = totalQty.sub(alreadyDelivered);
+        if (remainingToDeliver.lte(0)) continue;
+        await tx.inventoryDeliveryItem.create({
+          data: {
+            deliveryId: delivery.id,
+            itemId: item.itemId,
+            quantity: remainingToDeliver,
+            giftQty: new Prisma.Decimal(0),
+          },
+        });
+      }
 
       // Update invoice status
       const updatedInvoice = await tx.salesInvoice.update({
@@ -1042,4 +1086,5 @@ router.get('/reports/daily-by-item', requireRole('SALES_GROCERY', 'SALES_BAKERY'
 });
 
 export default router;
+
 
