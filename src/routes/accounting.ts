@@ -1706,7 +1706,7 @@ router.get('/bank-transactions', requireRole('ACCOUNTANT', 'MANAGER'), async (re
     }
 
     // Filter by payment method if specified
-    const methodFilter = method === 'BANK' ? ['BANK'] : method === 'BANK_NILE' ? ['BANK_NILE'] : ['BANK', 'BANK_NILE'];
+    const methodFilter = method === 'BANK' ? ['BANK' as const] : method === 'BANK_NILE' ? ['BANK_NILE' as const] : ['BANK' as const, 'BANK_NILE' as const];
 
     // Get sales payments (BANK or BANK_NILE)
     const salesPayments = await prisma.salesPayment.findMany({
@@ -1818,7 +1818,7 @@ router.get('/bank-transactions', requireRole('ACCOUNTANT', 'MANAGER'), async (re
     const transactions: any[] = [];
 
     // Sales payments
-    salesPayments.forEach((payment) => {
+    salesPayments.forEach((payment: any) => {
       transactions.push({
         id: payment.id,
         type: 'SALES_PAYMENT',
@@ -1826,12 +1826,12 @@ router.get('/bank-transactions', requireRole('ACCOUNTANT', 'MANAGER'), async (re
         amount: payment.amount.toString(),
         method: payment.method,
         date: payment.paidAt,
-        recordedBy: payment.recordedByUser.username,
+        recordedBy: payment.recordedByUser?.username || 'غير محدد',
         details: {
-          invoiceNumber: payment.invoice.invoiceNumber,
-          customer: payment.invoice.customer?.name || 'غير محدد',
-          inventory: payment.invoice.inventory.name,
-          receiptNumber: (payment as any).receiptNumber || null,
+          invoiceNumber: payment.invoice?.invoiceNumber || 'غير محدد',
+          customer: payment.invoice?.customer?.name || 'غير محدد',
+          inventory: payment.invoice?.inventory?.name || 'غير محدد',
+          receiptNumber: payment.receiptNumber || null,
           receiptUrl: payment.receiptUrl || null,
           notes: payment.notes || null,
         },
@@ -1839,7 +1839,7 @@ router.get('/bank-transactions', requireRole('ACCOUNTANT', 'MANAGER'), async (re
     });
 
     // Procurement payments
-    procPayments.forEach((payment) => {
+    procPayments.forEach((payment: any) => {
       transactions.push({
         id: payment.id,
         type: 'PROCUREMENT_PAYMENT',
@@ -1847,12 +1847,12 @@ router.get('/bank-transactions', requireRole('ACCOUNTANT', 'MANAGER'), async (re
         amount: payment.amount.toString(),
         method: payment.method,
         date: payment.paidAt,
-        recordedBy: payment.recordedByUser.username,
+        recordedBy: payment.recordedByUser?.username || 'غير محدد',
         details: {
-          orderNumber: payment.order.orderNumber,
-          supplier: payment.order.supplier.name,
-          inventory: payment.order.inventory.name,
-          receiptNumber: (payment as any).receiptNumber || null,
+          orderNumber: payment.order?.orderNumber || 'غير محدد',
+          supplier: payment.order?.supplier?.name || 'غير محدد',
+          inventory: payment.order?.inventory?.name || 'غير محدد',
+          receiptNumber: payment.receiptNumber || null,
           receiptUrl: payment.receiptUrl || null,
           notes: payment.notes || null,
         },
@@ -1880,7 +1880,7 @@ router.get('/bank-transactions', requireRole('ACCOUNTANT', 'MANAGER'), async (re
     });
 
     // Expenses
-    expenses.forEach((expense) => {
+    expenses.forEach((expense: any) => {
       transactions.push({
         id: expense.id,
         type: 'EXPENSE',
@@ -1888,7 +1888,7 @@ router.get('/bank-transactions', requireRole('ACCOUNTANT', 'MANAGER'), async (re
         amount: expense.amount.toString(),
         method: expense.method,
         date: expense.createdAt,
-        recordedBy: expense.creator.username,
+        recordedBy: expense.creator?.username || 'غير محدد',
         details: {
           description: expense.description,
           inventory: expense.inventory?.name || null,
@@ -1898,18 +1898,18 @@ router.get('/bank-transactions', requireRole('ACCOUNTANT', 'MANAGER'), async (re
     });
 
     // Salaries
-    salaries.forEach((salary) => {
+    salaries.forEach((salary: any) => {
       transactions.push({
         id: salary.id,
         type: 'SALARY',
         typeLabel: 'راتب',
         amount: salary.amount.toString(),
-        method: (salary as any).paymentMethod,
+        method: salary.paymentMethod,
         date: salary.paidAt || salary.createdAt,
-        recordedBy: salary.creator.username,
+        recordedBy: salary.creator?.username || 'غير محدد',
         details: {
-          employee: salary.employee.name,
-          position: salary.employee.position,
+          employee: salary.employee?.name || 'غير محدد',
+          position: salary.employee?.position || 'غير محدد',
           month: salary.month,
           year: salary.year,
           notes: salary.notes || null,
@@ -1918,18 +1918,18 @@ router.get('/bank-transactions', requireRole('ACCOUNTANT', 'MANAGER'), async (re
     });
 
     // Advances
-    advances.forEach((advance) => {
+    advances.forEach((advance: any) => {
       transactions.push({
         id: advance.id,
         type: 'ADVANCE',
         typeLabel: 'سلفية',
         amount: advance.amount.toString(),
-        method: (advance as any).paymentMethod,
+        method: advance.paymentMethod,
         date: advance.paidAt || advance.createdAt,
-        recordedBy: advance.creator.username,
+        recordedBy: advance.creator?.username || 'غير محدد',
         details: {
-          employee: advance.employee.name,
-          position: advance.employee.position,
+          employee: advance.employee?.name || 'غير محدد',
+          position: advance.employee?.position || 'غير محدد',
           reason: advance.reason,
           notes: advance.notes || null,
         },
