@@ -757,12 +757,13 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
 
 const paymentSchema = z.object({
   amount: z.number().positive(),
-  method: z.enum(['CASH', 'BANK', 'BANK_NILE']),
+  method: z.enum(['CASH', 'BANK', 'BANK_NILE', 'COMMISSION']),
   notes: z.string().optional(),
   receiptUrl: z.string().optional(),
   receiptNumber: z.string().optional(),
 }).refine((data) => {
-  if (data.method !== 'CASH' && !data.receiptNumber) {
+  // COMMISSION doesn't need receipt number (already paid by supplier as gift)
+  if (data.method !== 'CASH' && data.method !== 'COMMISSION' && !data.receiptNumber) {
     return false;
   }
   return true;
@@ -894,11 +895,13 @@ router.post('/orders/:id/payments', requireRole('MANAGER'), checkBalanceOpen, cr
 
     // Existing procurement payments out (only confirmed orders)
     const procPays = await prisma.procOrderPayment.findMany({ where: { order: { paymentConfirmed: true } } });
-    const procOut: Record<'CASH'|'BANK'|'BANK_NILE', Prisma.Decimal> = {
-      CASH: procPays.filter(p => p.method === 'CASH').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
-      BANK: procPays.filter(p => p.method === 'BANK').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
-      BANK_NILE: procPays.filter(p => p.method === 'BANK_NILE').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
-    };
+  // Commission payments are already paid by suppliers as gift, so they don't subtract from liquid assets
+  const procOut: Record<'CASH'|'BANK'|'BANK_NILE', Prisma.Decimal> = {
+    CASH: procPays.filter(p => p.method === 'CASH').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
+    BANK: procPays.filter(p => p.method === 'BANK').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
+    BANK_NILE: procPays.filter(p => p.method === 'BANK_NILE').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
+    // COMMISSION payments are excluded - they don't subtract from liquid assets
+  };
 
     // Expenses out
     const expenses = await prisma.expense.findMany();
@@ -938,9 +941,12 @@ router.post('/orders/:id/payments', requireRole('MANAGER'), checkBalanceOpen, cr
       BANK_NILE: openingByMethod.BANK_NILE.add(salesIn.BANK_NILE).add(exImpact.BANK_NILE).sub(expOut.BANK_NILE).sub(salOut.BANK_NILE).sub(advOut.BANK_NILE).sub(procOut.BANK_NILE),
     };
 
-    const method = paymentData.method as 'CASH'|'BANK'|'BANK_NILE';
-    if (available[method].lessThan(paymentData.amount)) {
-      return res.status(400).json({ error: 'الرصيد غير كافٍ لطريقة الدفع المحددة' });
+    // Commission payments don't need balance check - already paid by supplier as gift
+    if (paymentData.method !== 'COMMISSION') {
+      const method = paymentData.method as 'CASH'|'BANK'|'BANK_NILE';
+      if (available[method].lessThan(paymentData.amount)) {
+        return res.status(400).json({ error: 'الرصيد غير كافٍ لطريقة الدفع المحددة' });
+      }
     }
 
     const payment = await prisma.procOrderPayment.create({

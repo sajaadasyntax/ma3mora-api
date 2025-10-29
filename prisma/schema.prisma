@@ -31,6 +31,7 @@ enum PaymentMethod {
   CASH
   BANK
   BANK_NILE
+  COMMISSION
 }
 
 enum PaymentStatus {

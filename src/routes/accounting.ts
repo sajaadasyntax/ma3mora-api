@@ -473,10 +473,13 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
       }
     });
 
-    const totalProcurementPaid = procPayments.reduce(
-      (sum, payment) => sum.add(payment.amount),
-      new Prisma.Decimal(0)
-    );
+    // Commission payments don't affect liquid assets (already paid by supplier as gift)
+    const totalProcurementPaid = procPayments
+      .filter(p => (p.method as string) !== 'COMMISSION')
+      .reduce(
+        (sum, payment) => sum.add(payment.amount),
+        new Prisma.Decimal(0)
+      );
 
     // Get cash exchanges impact
     const cashExchanges = await prisma.cashExchange.findMany();
