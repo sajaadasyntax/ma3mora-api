@@ -41,6 +41,7 @@ enum PaymentStatus {
 
 enum DeliveryStatus {
   NOT_DELIVERED
+  PARTIAL
   DELIVERED
 }
 
@@ -333,8 +334,35 @@ model InventoryDelivery {
 
   invoice       SalesInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   deliveredByUser User       @relation(fields: [deliveredBy], references: [id])
+  items          InventoryDeliveryItem[]
 
   @@map("inventory_deliveries")
+}
+
+model InventoryDeliveryItem {
+  id           String   @id @default(cuid())
+  deliveryId   String
+  itemId       String
+  quantity     Decimal  @db.Decimal(10, 2)
+  giftQty      Decimal  @default(0) @db.Decimal(10, 2)
+
+  delivery InventoryDelivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  item     Item               @relation(fields: [itemId], references: [id])
+  batches  InventoryDeliveryBatch[]
+
+  @@map("inventory_delivery_items")
+}
+
+model InventoryDeliveryBatch {
+  id              String  @id @default(cuid())
+  deliveryItemId  String
+  batchId         String
+  quantity        Decimal @db.Decimal(10, 2)
+
+  deliveryItem InventoryDeliveryItem @relation(fields: [deliveryItemId], references: [id], onDelete: Cascade)
+  batch        StockBatch             @relation(fields: [batchId], references: [id])
+
+  @@map("inventory_delivery_batches")
 }
 
 model ProcOrder {

@@ -586,6 +586,155 @@ router.post('/invoices/:id/deliver', requireRole('INVENTORY', 'MANAGER'), create
   }
 });
 
+// Partial delivery with explicit batch allocations
+const deliveryAllocationSchema = z.object({
+  itemId: z.string(),
+  allocations: z.array(z.object({ batchId: z.string(), quantity: z.number().positive() })).min(1),
+  giftQty: z.number().min(0).optional(),
+});
+
+const partialDeliverySchema = z.object({
+  notes: z.string().optional(),
+  items: z.array(deliveryAllocationSchema).min(1),
+});
+
+router.post('/invoices/:id/partial-deliver', requireRole('INVENTORY', 'MANAGER'), createAuditLog('InventoryDelivery'), async (req: AuthRequest, res) => {
+  try {
+    const { id } = req.params;
+    const payload = partialDeliverySchema.parse(req.body);
+
+    const invoice = await prisma.salesInvoice.findUnique({
+      where: { id },
+      include: {
+        items: true,
+      },
+    });
+
+    if (!invoice) {
+      return res.status(404).json({ error: 'الفاتورة غير موجودة' });
+    }
+
+    if (!invoice.paymentConfirmed) {
+      return res.status(400).json({ error: 'يجب تأكيد الدفع من المحاسب أولاً' });
+    }
+
+    // Transactionally deduct batches according to allocations, record delivery items/batches
+    const result = await prisma.$transaction(async (tx) => {
+      const delivery = await tx.inventoryDelivery.create({
+        data: {
+          invoiceId: id,
+          deliveredBy: req.user!.id,
+          notes: payload.notes,
+        },
+      });
+
+      // Build a map of ordered quantities per item
+      const orderedByItem: Record<string, { qty: Prisma.Decimal; gift: Prisma.Decimal }> = {} as any;
+      for (const it of invoice.items) {
+        orderedByItem[it.itemId] = {
+          qty: new Prisma.Decimal(it.quantity),
+          gift: new Prisma.Decimal(it.giftQty),
+        };
+      }
+
+      // Compute already delivered per item from previous deliveries
+      const prevDeliveryItems = await tx.inventoryDeliveryItem.findMany({
+        where: { delivery: { invoiceId: id } },
+      });
+      const deliveredSoFar: Record<string, Prisma.Decimal> = {};
+      for (const di of prevDeliveryItems) {
+        const prev = deliveredSoFar[di.itemId] || new Prisma.Decimal(0);
+        deliveredSoFar[di.itemId] = prev.add(di.quantity).add(di.giftQty);
+      }
+
+      for (const itemAlloc of payload.items) {
+        const ordered = orderedByItem[itemAlloc.itemId];
+        if (!ordered) {
+          throw new Error('الصنف غير موجود في الفاتورة');
+        }
+
+        const deliverQty = itemAlloc.allocations.reduce((sum, a) => sum.add(new Prisma.Decimal(a.quantity)), new Prisma.Decimal(0));
+        const totalDeliver = deliverQty.add(new Prisma.Decimal(itemAlloc.giftQty || 0));
+        const previously = deliveredSoFar[itemAlloc.itemId] || new Prisma.Decimal(0);
+        const maxAllowed = ordered.qty.add(ordered.gift);
+        if (previously.add(totalDeliver).gt(maxAllowed)) {
+          throw new Error('الكمية المراد تسليمها تتجاوز المطلوب في الفاتورة');
+        }
+
+        // Deduct from batches and record delivery item/batches
+        const deliveryItem = await tx.inventoryDeliveryItem.create({
+          data: {
+            deliveryId: delivery.id,
+            itemId: itemAlloc.itemId,
+            quantity: deliverQty,
+            giftQty: new Prisma.Decimal(itemAlloc.giftQty || 0),
+          },
+        });
+
+        for (const alloc of itemAlloc.allocations) {
+          const batch = await tx.stockBatch.findUnique({ where: { id: alloc.batchId } });
+          if (!batch || batch.inventoryId !== invoice.inventoryId || batch.itemId !== itemAlloc.itemId) {
+            throw new Error('الدفعة المحددة غير صالحة لهذا المخزن أو الصنف');
+          }
+          const allocQty = new Prisma.Decimal(alloc.quantity);
+          if (new Prisma.Decimal(batch.quantity).lt(allocQty)) {
+            throw new Error('الكمية غير متوفرة في الدفعة المحددة');
+          }
+
+          await tx.stockBatch.update({
+            where: { id: alloc.batchId },
+            data: { quantity: new Prisma.Decimal(batch.quantity).sub(allocQty) },
+          });
+
+          await tx.inventoryDeliveryBatch.create({
+            data: {
+              deliveryItemId: deliveryItem.id,
+              batchId: alloc.batchId,
+              quantity: allocQty,
+            },
+          });
+        }
+
+        // Update total stock for this item
+        await tx.inventoryStock.update({
+          where: { inventoryId_itemId: { inventoryId: invoice.inventoryId, itemId: itemAlloc.itemId } },
+          data: { quantity: { decrement: deliverQty } },
+        });
+
+        // Update deliveredSoFar map
+        deliveredSoFar[itemAlloc.itemId] = (deliveredSoFar[itemAlloc.itemId] || new Prisma.Decimal(0)).add(totalDeliver);
+      }
+
+      // After partial delivery, set invoice status to PARTIAL or DELIVERED if fully delivered
+      let allDelivered = true;
+      for (const [itemId, ordered] of Object.entries(orderedByItem)) {
+        const d = deliveredSoFar[itemId] || new Prisma.Decimal(0);
+        if (d.lt(ordered.qty.add(ordered.gift))) {
+          allDelivered = false;
+          break;
+        }
+      }
+
+      const updatedInvoice = await tx.salesInvoice.update({
+        where: { id },
+        data: { deliveryStatus: allDelivered ? 'DELIVERED' : 'PARTIAL' },
+        include: {
+          items: { include: { item: true } },
+          deliveries: { include: { deliveredByUser: true } },
+          customer: true,
+        },
+      });
+
+      return { invoice: updatedInvoice };
+    });
+
+    res.json(result);
+  } catch (error) {
+    console.error('Partial deliver invoice error:', error);
+    res.status(500).json({ error: error instanceof Error ? error.message : 'خطأ في الخادم' });
+  }
+});
+
 // Sales Reports endpoint
 router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (req: AuthRequest, res) => {
   try {
