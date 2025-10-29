@@ -813,11 +813,13 @@ router.post('/orders/:id/payments', requireRole('MANAGER'), checkBalanceOpen, cr
     };
 
     // Cash exchanges impact
-    const exchanges = await (prisma as any).cashExchange.findMany();
+    const exchanges = await prisma.cashExchange.findMany();
     const exImpact: Record<'CASH'|'BANK'|'BANK_NILE', Prisma.Decimal> = { CASH: new Prisma.Decimal(0), BANK: new Prisma.Decimal(0), BANK_NILE: new Prisma.Decimal(0) };
-    exchanges.forEach((e: any) => {
-      exImpact[e.fromMethod] = exImpact[e.fromMethod].sub(e.amount);
-      exImpact[e.toMethod] = exImpact[e.toMethod].add(e.amount);
+    exchanges.forEach((e) => {
+      const fromMethod = e.fromMethod as 'CASH'|'BANK'|'BANK_NILE';
+      const toMethod = e.toMethod as 'CASH'|'BANK'|'BANK_NILE';
+      exImpact[fromMethod] = exImpact[fromMethod].sub(e.amount);
+      exImpact[toMethod] = exImpact[toMethod].add(e.amount);
     });
 
     const available: Record<'CASH'|'BANK'|'BANK_NILE', Prisma.Decimal> = {
