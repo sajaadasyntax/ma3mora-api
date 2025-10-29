@@ -132,6 +132,7 @@ model Item {
   movements         StockMovement[]
   salesInvoiceItems SalesInvoiceItem[]
   procOrderItems    ProcOrderItem[]
+  deliveryItems     InventoryDeliveryItem[]
 
   @@map("items")
 }
@@ -176,6 +177,7 @@ model StockBatch {
   item            Item            @relation(fields: [itemId], references: [id], onDelete: Cascade)
   inventoryStock  InventoryStock? @relation(fields: [inventoryId, itemId], references: [inventoryId, itemId], onDelete: Cascade)
   receipt         InventoryReceipt? @relation(fields: [receiptId], references: [id], onDelete: SetNull)
+  deliveryBatches InventoryDeliveryBatch[]
 
   @@index([inventoryId, itemId])
   @@index([expiryDate])
