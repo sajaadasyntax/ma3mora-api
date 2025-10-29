@@ -133,6 +133,9 @@ model Item {
   salesInvoiceItems SalesInvoiceItem[]
   procOrderItems    ProcOrderItem[]
   deliveryItems     InventoryDeliveryItem[]
+  giftItems         SalesInvoiceItem[] @relation("GiftItem")
+  giftProcItems     ProcOrderItem[] @relation("GiftProcItem")
+  giftDeliveryItems InventoryDeliveryItem[] @relation("GiftDeliveryItem")
 
   @@map("items")
 }
@@ -296,16 +299,19 @@ model SalesInvoice {
 }
 
 model SalesInvoiceItem {
-  id        String  @id @default(cuid())
-  invoiceId String
-  itemId    String
-  quantity  Decimal @db.Decimal(10, 2)
-  giftQty   Decimal @default(0) @db.Decimal(10, 2)
-  unitPrice Decimal @db.Decimal(10, 2)
-  lineTotal Decimal @db.Decimal(10, 2)
+  id           String  @id @default(cuid())
+  invoiceId   String
+  itemId       String
+  quantity     Decimal @db.Decimal(10, 2)
+  giftQty      Decimal @default(0) @db.Decimal(10, 2)  // Deprecated: kept for backward compatibility
+  giftItemId   String?  // The item being given as gift (separate from the sold item)
+  giftQuantity Decimal? @db.Decimal(10, 2)  // Quantity of the gift item
+  unitPrice    Decimal @db.Decimal(10, 2)
+  lineTotal    Decimal @db.Decimal(10, 2)
 
   invoice SalesInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   item    Item         @relation(fields: [itemId], references: [id])
+  giftItem Item?       @relation("GiftItem", fields: [giftItemId], references: [id])
 
   @@map("sales_invoice_items")
 }
@@ -342,14 +348,17 @@ model InventoryDelivery {
 }
 
 model InventoryDeliveryItem {
-  id           String   @id @default(cuid())
-  deliveryId   String
-  itemId       String
-  quantity     Decimal  @db.Decimal(10, 2)
-  giftQty      Decimal  @default(0) @db.Decimal(10, 2)
+  id            String   @id @default(cuid())
+  deliveryId    String
+  itemId        String
+  quantity      Decimal  @db.Decimal(10, 2)
+  giftQty       Decimal  @default(0) @db.Decimal(10, 2)  // Deprecated: kept for backward compatibility
+  giftItemId    String?  // The item being given as gift
+  giftQuantity  Decimal? @db.Decimal(10, 2)  // Quantity of the gift item
 
   delivery InventoryDelivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
   item     Item               @relation(fields: [itemId], references: [id])
+  giftItem Item?              @relation("GiftDeliveryItem", fields: [giftItemId], references: [id])
   batches  InventoryDeliveryBatch[]
 
   @@map("inventory_delivery_items")
@@ -404,16 +413,19 @@ model ProcOrder {
 }
 
 model ProcOrderItem {
-  id       String  @id @default(cuid())
-  orderId  String
-  itemId   String
-  quantity Decimal @db.Decimal(10, 2)
-  giftQty  Decimal @default(0) @db.Decimal(10, 2)
-  unitCost Decimal @db.Decimal(10, 2)
-  lineTotal Decimal @db.Decimal(10, 2)
+  id           String  @id @default(cuid())
+  orderId      String
+  itemId       String
+  quantity     Decimal @db.Decimal(10, 2)
+  giftQty      Decimal @default(0) @db.Decimal(10, 2)  // Deprecated: kept for backward compatibility
+  giftItemId   String?  // The item being given as gift (separate from the ordered item)
+  giftQuantity Decimal? @db.Decimal(10, 2)  // Quantity of the gift item
+  unitCost     Decimal @db.Decimal(10, 2)
+  lineTotal    Decimal @db.Decimal(10, 2)
 
-  order ProcOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  item  Item      @relation(fields: [itemId], references: [id])
+  order    ProcOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  item     Item      @relation(fields: [itemId], references: [id])
+  giftItem Item?     @relation("GiftProcItem", fields: [giftItemId], references: [id])
 
   @@map("proc_order_items")
 }

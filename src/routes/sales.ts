@@ -34,7 +34,17 @@ async function checkBalanceOpen(req: AuthRequest, res: any, next: any) {
 const invoiceItemSchema = z.object({
   itemId: z.string(),
   quantity: z.number().positive(),
-  giftQty: z.number().min(0).default(0),
+  giftQty: z.number().min(0).default(0).optional(), // Deprecated: kept for backward compatibility
+  giftItemId: z.string().optional(), // New: The item being given as gift
+  giftQuantity: z.number().min(0).optional(), // New: Quantity of the gift item
+}).refine((data) => {
+  // Either use old giftQty or new giftItemId/giftQuantity, but not both
+  const hasOldGift = data.giftQty !== undefined && data.giftQty > 0;
+  const hasNewGift = data.giftItemId && data.giftQuantity && data.giftQuantity > 0;
+  return !(hasOldGift && hasNewGift);
+}, {
+  message: 'لا يمكن استخدام نظام الهدية القديم والجديد معاً',
+  path: ['giftItemId'],
 });
 
 const createInvoiceSchema = z.object({
@@ -106,6 +116,7 @@ router.get('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'ACCOUNTANT
         items: {
           include: {
             item: true,
+            giftItem: true, // Include gift item details
           },
         },
       },
@@ -138,10 +149,17 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'MANAGER')
       pricingTier = customer.type; // Customer type overrides any provided pricingTier
     }
 
-    // Get items with prices
+    // Get items with prices (including gift items)
     const itemIds = data.items.map((i) => i.itemId);
+    const giftItemIds = data.items
+      .filter((i) => i.giftItemId)
+      .map((i) => i.giftItemId!)
+      .filter((id) => id); // Remove undefined/null values
+    
+    const allItemIds = [...new Set([...itemIds, ...giftItemIds])]; // Unique item IDs
+    
     const items = await prisma.item.findMany({
-      where: { id: { in: itemIds } },
+      where: { id: { in: allItemIds } },
       include: {
         prices: {
           where: { tier: pricingTier },
@@ -150,6 +168,25 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'MANAGER')
         },
       },
     });
+
+    // Check stock availability for gift items
+    for (const lineItem of data.items) {
+      if (lineItem.giftItemId && lineItem.giftQuantity) {
+        const giftStock = await prisma.inventoryStock.findUnique({
+          where: {
+            inventoryId_itemId: {
+              inventoryId: data.inventoryId,
+              itemId: lineItem.giftItemId,
+            },
+          },
+        });
+
+        if (!giftStock || giftStock.quantity.lessThan(lineItem.giftQuantity)) {
+          const giftItem = items.find((i) => i.id === lineItem.giftItemId);
+          throw new Error(`الرصيد غير كافٍ للهدية: ${giftItem?.name || lineItem.giftItemId}. المطلوب: ${lineItem.giftQuantity}, المتاح: ${giftStock?.quantity.toString() || '0'}`);
+        }
+      }
+    }
 
     // Calculate line totals
     const invoiceItems = data.items.map((lineItem) => {
@@ -164,7 +201,9 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'MANAGER')
       return {
         itemId: lineItem.itemId,
         quantity: lineItem.quantity,
-        giftQty: lineItem.giftQty,
+        giftQty: lineItem.giftQty || 0, // Keep for backward compatibility
+        giftItemId: lineItem.giftItemId || null,
+        giftQuantity: lineItem.giftQuantity ? new Prisma.Decimal(lineItem.giftQuantity) : null,
         unitPrice,
         lineTotal,
       };
@@ -201,6 +240,7 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'MANAGER')
         items: {
           include: {
             item: true,
+            giftItem: true, // Include gift item details
           },
         },
         customer: true,
@@ -236,6 +276,7 @@ router.get('/invoices/:id', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'ACCOUN
         items: {
           include: {
             item: true,
+            giftItem: true, // Include gift item details
           },
         },
         payments: {
@@ -474,16 +515,32 @@ router.post('/invoices/:id/deliver', requireRole('INVENTORY', 'MANAGER'), create
         where: { delivery: { invoiceId: id } },
       });
       const deliveredSoFar: Record<string, Prisma.Decimal> = {};
+      const giftDeliveredSoFar: Record<string, Prisma.Decimal> = {}; // Track gift items separately
       for (const di of prevDeliveryItems) {
         const prev = deliveredSoFar[di.itemId] || new Prisma.Decimal(0);
-        deliveredSoFar[di.itemId] = prev.add(di.quantity).add(di.giftQty);
+        deliveredSoFar[di.itemId] = prev.add(di.quantity).add(di.giftQty || 0);
+        
+        // Track gift items (new system)
+        if (di.giftItemId && di.giftQuantity) {
+          const prevGift = giftDeliveredSoFar[di.giftItemId] || new Prisma.Decimal(0);
+          giftDeliveredSoFar[di.giftItemId] = prevGift.add(di.giftQuantity);
+        }
       }
 
       // If nothing remains to deliver, prevent duplicate delivery records
       const allRemainingZero = invoice.items.every((it) => {
-        const totalQty = new Prisma.Decimal(it.quantity).add(it.giftQty);
+        const totalQty = new Prisma.Decimal(it.quantity).add(it.giftQty || 0);
         const already = deliveredSoFar[it.itemId] || new Prisma.Decimal(0);
-        return totalQty.sub(already).lte(0);
+        const remainingQty = totalQty.sub(already);
+        
+        // Also check gift items
+        let remainingGift = new Prisma.Decimal(0);
+        if (it.giftItemId && it.giftQuantity) {
+          const alreadyGift = giftDeliveredSoFar[it.giftItemId] || new Prisma.Decimal(0);
+          remainingGift = it.giftQuantity.sub(alreadyGift);
+        }
+        
+        return remainingQty.lte(0) && remainingGift.lte(0);
       });
       if (allRemainingZero) {
         throw new Error('الفاتورة مسلمة بالكامل مسبقًا');
@@ -491,6 +548,7 @@ router.post('/invoices/:id/deliver', requireRole('INVENTORY', 'MANAGER'), create
 
       // Deduct stock using FIFO (First In First Out) based on expiry dates for remaining quantities only
       for (const item of invoice.items) {
+        // Handle main item
         const stock = await tx.inventoryStock.findUnique({
           where: {
             inventoryId_itemId: {
@@ -504,14 +562,44 @@ router.post('/invoices/:id/deliver', requireRole('INVENTORY', 'MANAGER'), create
           throw new Error(`المخزون غير موجود للصنف ${item.itemId}`);
         }
 
-        const totalQty = new Prisma.Decimal(item.quantity).add(item.giftQty);
+        const totalQty = new Prisma.Decimal(item.quantity).add(item.giftQty || 0);
         const alreadyDelivered = deliveredSoFar[item.itemId] || new Prisma.Decimal(0);
         const remainingToDeliver = totalQty.sub(alreadyDelivered);
-        if (remainingToDeliver.lte(0)) {
+        
+        // Handle gift item (new system)
+        let remainingGiftToDeliver = new Prisma.Decimal(0);
+        if (item.giftItemId && item.giftQuantity) {
+          const alreadyGiftDelivered = giftDeliveredSoFar[item.giftItemId] || new Prisma.Decimal(0);
+          remainingGiftToDeliver = item.giftQuantity.sub(alreadyGiftDelivered);
+          
+          if (remainingGiftToDeliver.gt(0)) {
+            // Check gift item stock
+            const giftStock = await tx.inventoryStock.findUnique({
+              where: {
+                inventoryId_itemId: {
+                  inventoryId: invoice.inventoryId,
+                  itemId: item.giftItemId,
+                },
+              },
+            });
+
+            if (!giftStock) {
+              const giftItemDetails = await tx.item.findUnique({ where: { id: item.giftItemId } });
+              throw new Error(`المخزون غير موجود للهدية: ${giftItemDetails?.name || item.giftItemId}`);
+            }
+
+            if (new Prisma.Decimal(giftStock.quantity).lessThan(remainingGiftToDeliver)) {
+              const giftItemDetails = await tx.item.findUnique({ where: { id: item.giftItemId } });
+              throw new Error(`الكمية غير كافية للهدية: ${giftItemDetails?.name || item.giftItemId}`);
+            }
+          }
+        }
+        
+        if (remainingToDeliver.lte(0) && remainingGiftToDeliver.lte(0)) {
           continue; // nothing left for this item
         }
 
-        if (new Prisma.Decimal(stock.quantity).lessThan(remainingToDeliver)) {
+        if (remainingToDeliver.gt(0) && new Prisma.Decimal(stock.quantity).lessThan(remainingToDeliver)) {
           const itemDetails = await tx.item.findUnique({ where: { id: item.itemId } });
           throw new Error(`الكمية غير كافية للصنف ${itemDetails?.name || item.itemId}`);
         }
@@ -568,19 +656,85 @@ router.post('/invoices/:id/deliver', requireRole('INVENTORY', 'MANAGER'), create
         }
 
         // Update total stock quantity for remaining only
-        await tx.inventoryStock.update({
-          where: {
-            inventoryId_itemId: {
+        if (remainingToDeliver.gt(0)) {
+          await tx.inventoryStock.update({
+            where: {
+              inventoryId_itemId: {
+                inventoryId: invoice.inventoryId,
+                itemId: item.itemId,
+              },
+            },
+            data: {
+              quantity: {
+                decrement: remainingToDeliver,
+              },
+            },
+          });
+        }
+
+        // Handle gift item stock deduction (new system)
+        if (remainingGiftToDeliver.gt(0) && item.giftItemId) {
+          // Get available batches for gift item
+          const giftBatches = await tx.stockBatch.findMany({
+            where: {
               inventoryId: invoice.inventoryId,
-              itemId: item.itemId,
+              itemId: item.giftItemId,
+              quantity: {
+                gt: 0,
+              },
             },
-          },
-          data: {
-            quantity: {
-              decrement: remainingToDeliver,
+          });
+
+          // Sort batches: expiry date (earliest first, nulls last), then received date (earliest first)
+          giftBatches.sort((a, b) => {
+            if (a.expiryDate && b.expiryDate) {
+              const dateDiff = a.expiryDate.getTime() - b.expiryDate.getTime();
+              if (dateDiff !== 0) return dateDiff;
+            }
+            if (a.expiryDate && !b.expiryDate) return -1;
+            if (!a.expiryDate && b.expiryDate) return 1;
+            return a.receivedAt.getTime() - b.receivedAt.getTime();
+          });
+
+          let remainingGiftQty = remainingGiftToDeliver;
+
+          // Consume from batches using FIFO
+          for (const batch of giftBatches) {
+            if (remainingGiftQty.lte(0)) break;
+
+            const batchQty = new Prisma.Decimal(batch.quantity);
+            if (batchQty.lte(0)) continue;
+
+            if (remainingGiftQty.gte(batchQty)) {
+              await tx.stockBatch.update({
+                where: { id: batch.id },
+                data: { quantity: 0 },
+              });
+              remainingGiftQty = remainingGiftQty.sub(batchQty);
+            } else {
+              await tx.stockBatch.update({
+                where: { id: batch.id },
+                data: { quantity: batchQty.sub(remainingGiftQty) },
+              });
+              remainingGiftQty = new Prisma.Decimal(0);
+            }
+          }
+
+          // Update total stock quantity for gift item
+          await tx.inventoryStock.update({
+            where: {
+              inventoryId_itemId: {
+                inventoryId: invoice.inventoryId,
+                itemId: item.giftItemId,
+              },
             },
-          },
-        });
+            data: {
+              quantity: {
+                decrement: remainingGiftToDeliver,
+              },
+            },
+          });
+        }
 
       }
 
@@ -597,16 +751,27 @@ router.post('/invoices/:id/deliver', requireRole('INVENTORY', 'MANAGER'), create
       // we will instead create summary items now per remaining items.
       // Recompute remaining per item to attach to this delivery record.
       for (const item of invoice.items) {
-        const totalQty = new Prisma.Decimal(item.quantity).add(item.giftQty);
+        const totalQty = new Prisma.Decimal(item.quantity).add(item.giftQty || 0);
         const alreadyDelivered = deliveredSoFar[item.itemId] || new Prisma.Decimal(0);
         const remainingToDeliver = totalQty.sub(alreadyDelivered);
-        if (remainingToDeliver.lte(0)) continue;
+        
+        // Calculate remaining gift item
+        let remainingGiftQty = new Prisma.Decimal(0);
+        if (item.giftItemId && item.giftQuantity) {
+          const alreadyGiftDelivered = giftDeliveredSoFar[item.giftItemId] || new Prisma.Decimal(0);
+          remainingGiftQty = item.giftQuantity.sub(alreadyGiftDelivered);
+        }
+        
+        if (remainingToDeliver.lte(0) && remainingGiftQty.lte(0)) continue;
+        
         await tx.inventoryDeliveryItem.create({
           data: {
             deliveryId: delivery.id,
             itemId: item.itemId,
             quantity: remainingToDeliver,
-            giftQty: new Prisma.Decimal(0),
+            giftQty: new Prisma.Decimal(0), // Keep for backward compatibility
+            giftItemId: item.giftItemId || null,
+            giftQuantity: remainingGiftQty.gt(0) ? remainingGiftQty : null,
           },
         });
       }
@@ -834,6 +999,7 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
         items: {
           include: {
             item: true,
+            giftItem: true, // Include gift item details
           },
         },
         payments: true,
@@ -998,6 +1164,7 @@ router.get('/reports/daily-by-item', requireRole('SALES_GROCERY', 'SALES_BAKERY'
         items: {
           include: {
             item: true,
+            giftItem: true, // Include gift item details
           },
         },
         payments: true,

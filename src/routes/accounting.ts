@@ -1978,5 +1978,415 @@ router.get('/bank-transactions', requireRole('ACCOUNTANT', 'MANAGER'), async (re
   }
 });
 
+// Get daily income and loss report with all transaction details
+router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (req: AuthRequest, res) => {
+  try {
+    const { date, startDate, endDate } = req.query;
+    
+    // Determine date range
+    let startOfDay: Date;
+    let endOfDay: Date;
+    
+    if (date) {
+      // Single day
+      startOfDay = new Date(date as string);
+      startOfDay.setHours(0, 0, 0, 0);
+      endOfDay = new Date(date as string);
+      endOfDay.setHours(23, 59, 59, 999);
+    } else if (startDate && endDate) {
+      // Date range
+      startOfDay = new Date(startDate as string);
+      startOfDay.setHours(0, 0, 0, 0);
+      endOfDay = new Date(endDate as string);
+      endOfDay.setHours(23, 59, 59, 999);
+    } else {
+      // Default to today
+      startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+      endOfDay = new Date();
+      endOfDay.setHours(23, 59, 59, 999);
+    }
+    
+    // Get all income transactions (sales payments - only confirmed)
+    const salesPayments = await prisma.salesPayment.findMany({
+      where: {
+        paidAt: {
+          gte: startOfDay,
+          lte: endOfDay,
+        },
+        invoice: {
+          paymentConfirmed: true,
+        },
+      },
+      include: {
+        invoice: {
+          include: {
+            customer: true,
+            inventory: true,
+          },
+        },
+        recordedByUser: {
+          select: { id: true, username: true },
+        },
+      },
+      orderBy: { paidAt: 'asc' },
+    });
+    
+    // Get all loss transactions - Procurement payments (only confirmed)
+    const procPayments = await prisma.procOrderPayment.findMany({
+      where: {
+        paidAt: {
+          gte: startOfDay,
+          lte: endOfDay,
+        },
+        order: {
+          paymentConfirmed: true,
+          status: { not: 'CANCELLED' },
+        },
+      },
+      include: {
+        order: {
+          include: {
+            supplier: {
+              select: { name: true },
+            },
+            inventory: {
+              select: { name: true },
+            },
+          },
+        },
+        recordedByUser: {
+          select: { id: true, username: true },
+        },
+      },
+      orderBy: { paidAt: 'asc' },
+    });
+    
+    // Get all expenses
+    const expenses = await prisma.expense.findMany({
+      where: {
+        createdAt: {
+          gte: startOfDay,
+          lte: endOfDay,
+        },
+      },
+      include: {
+        inventory: true,
+        creator: {
+          select: { id: true, username: true },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    
+    // Get paid salaries
+    const salaries = await prisma.salary.findMany({
+      where: {
+        paidAt: {
+          gte: startOfDay,
+          lte: endOfDay,
+          not: null,
+        },
+      },
+      include: {
+        employee: true,
+        creator: {
+          select: { id: true, username: true },
+        },
+      },
+      orderBy: { paidAt: 'asc' },
+    });
+    
+    // Get paid advances
+    const advances = await prisma.advance.findMany({
+      where: {
+        paidAt: {
+          gte: startOfDay,
+          lte: endOfDay,
+          not: null,
+        },
+      },
+      include: {
+        employee: true,
+        creator: {
+          select: { id: true, username: true },
+        },
+      },
+      orderBy: { paidAt: 'asc' },
+    });
+    
+    // Get cash exchanges
+    const cashExchanges = await prisma.cashExchange.findMany({
+      where: {
+        createdAt: {
+          gte: startOfDay,
+          lte: endOfDay,
+        },
+      },
+      include: {
+        createdByUser: {
+          select: { id: true, username: true },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    
+    // Group transactions by date
+    const transactionsByDate: Record<string, any> = {};
+    
+    // Process sales payments (income)
+    salesPayments.forEach((payment) => {
+      const dateKey = new Date(payment.paidAt).toISOString().split('T')[0];
+      if (!transactionsByDate[dateKey]) {
+        transactionsByDate[dateKey] = {
+          date: dateKey,
+          income: [],
+          losses: [],
+        };
+      }
+      transactionsByDate[dateKey].income.push({
+        type: 'SALES_PAYMENT',
+        typeLabel: 'دفعة مبيعات',
+        id: payment.id,
+        amount: payment.amount.toString(),
+        method: payment.method,
+        date: payment.paidAt,
+        recordedBy: payment.recordedByUser?.username || 'غير محدد',
+        details: {
+          invoiceNumber: payment.invoice?.invoiceNumber || 'غير محدد',
+          customer: payment.invoice?.customer?.name || 'بدون عميل',
+          inventory: payment.invoice?.inventory?.name || 'غير محدد',
+          receiptNumber: payment.receiptNumber || null,
+          receiptUrl: payment.receiptUrl || null,
+          notes: payment.notes || null,
+        },
+      });
+    });
+    
+    // Process procurement payments (loss)
+    procPayments.forEach((payment) => {
+      const dateKey = new Date(payment.paidAt).toISOString().split('T')[0];
+      if (!transactionsByDate[dateKey]) {
+        transactionsByDate[dateKey] = {
+          date: dateKey,
+          income: [],
+          losses: [],
+        };
+      }
+      transactionsByDate[dateKey].losses.push({
+        type: 'PROCUREMENT_PAYMENT',
+        typeLabel: 'دفعة مشتريات',
+        id: payment.id,
+        amount: payment.amount.toString(),
+        method: payment.method,
+        date: payment.paidAt,
+        recordedBy: payment.recordedByUser?.username || 'غير محدد',
+        details: {
+          orderNumber: payment.order?.orderNumber || 'غير محدد',
+          supplier: payment.order?.supplier?.name || 'غير محدد',
+          inventory: payment.order?.inventory?.name || 'غير محدد',
+          receiptNumber: (payment as any).receiptNumber || null,
+          receiptUrl: payment.receiptUrl || null,
+          notes: payment.notes || null,
+        },
+      });
+    });
+    
+    // Process expenses (loss)
+    expenses.forEach((expense) => {
+      const dateKey = new Date(expense.createdAt).toISOString().split('T')[0];
+      if (!transactionsByDate[dateKey]) {
+        transactionsByDate[dateKey] = {
+          date: dateKey,
+          income: [],
+          losses: [],
+        };
+      }
+      transactionsByDate[dateKey].losses.push({
+        type: 'EXPENSE',
+        typeLabel: 'منصرف',
+        id: expense.id,
+        amount: expense.amount.toString(),
+        method: expense.method,
+        date: expense.createdAt,
+        recordedBy: expense.creator?.username || 'غير محدد',
+        details: {
+          description: expense.description,
+          inventory: expense.inventory?.name || null,
+          section: expense.section || null,
+        },
+      });
+    });
+    
+    // Process salaries (loss)
+    salaries.forEach((salary) => {
+      const dateKey = new Date(salary.paidAt!).toISOString().split('T')[0];
+      if (!transactionsByDate[dateKey]) {
+        transactionsByDate[dateKey] = {
+          date: dateKey,
+          income: [],
+          losses: [],
+        };
+      }
+      transactionsByDate[dateKey].losses.push({
+        type: 'SALARY',
+        typeLabel: 'راتب',
+        id: salary.id,
+        amount: salary.amount.toString(),
+        method: salary.paymentMethod,
+        date: salary.paidAt || salary.createdAt,
+        recordedBy: salary.creator?.username || 'غير محدد',
+        details: {
+          employee: salary.employee?.name || 'غير محدد',
+          position: salary.employee?.position || 'غير محدد',
+          month: salary.month,
+          year: salary.year,
+          notes: salary.notes || null,
+        },
+      });
+    });
+    
+    // Process advances (loss)
+    advances.forEach((advance) => {
+      const dateKey = new Date(advance.paidAt!).toISOString().split('T')[0];
+      if (!transactionsByDate[dateKey]) {
+        transactionsByDate[dateKey] = {
+          date: dateKey,
+          income: [],
+          losses: [],
+        };
+      }
+      transactionsByDate[dateKey].losses.push({
+        type: 'ADVANCE',
+        typeLabel: 'سلفية',
+        id: advance.id,
+        amount: advance.amount.toString(),
+        method: advance.paymentMethod,
+        date: advance.paidAt || advance.createdAt,
+        recordedBy: advance.creator?.username || 'غير محدد',
+        details: {
+          employee: advance.employee?.name || 'غير محدد',
+          position: advance.employee?.position || 'غير محدد',
+          reason: advance.reason,
+          notes: advance.notes || null,
+        },
+      });
+    });
+    
+    // Process cash exchanges (affects both income and loss depending on direction)
+    cashExchanges.forEach((exchange) => {
+      const dateKey = new Date(exchange.createdAt).toISOString().split('T')[0];
+      if (!transactionsByDate[dateKey]) {
+        transactionsByDate[dateKey] = {
+          date: dateKey,
+          income: [],
+          losses: [],
+        };
+      }
+      
+      // If exchanging FROM cash TO bank = loss (cash leaving)
+      if (exchange.fromMethod === 'CASH' && (exchange.toMethod === 'BANK' || exchange.toMethod === 'BANK_NILE')) {
+        transactionsByDate[dateKey].losses.push({
+          type: 'CASH_EXCHANGE',
+          typeLabel: 'تحويل نقد إلى بنك',
+          id: exchange.id,
+          amount: exchange.amount.toString(),
+          method: exchange.fromMethod,
+          date: exchange.createdAt,
+          recordedBy: exchange.createdByUser?.username || 'غير محدد',
+          details: {
+            fromMethod: exchange.fromMethod,
+            toMethod: exchange.toMethod,
+            receiptNumber: exchange.receiptNumber || null,
+            receiptUrl: exchange.receiptUrl || null,
+            notes: exchange.notes || null,
+            description: `تحويل من ${exchange.fromMethod === 'CASH' ? 'نقد' : exchange.fromMethod} إلى ${exchange.toMethod === 'BANK' ? 'بنكك' : 'بنك النيل'}`,
+          },
+        });
+      }
+      // If exchanging FROM bank TO cash = income (cash coming in)
+      else if ((exchange.fromMethod === 'BANK' || exchange.fromMethod === 'BANK_NILE') && exchange.toMethod === 'CASH') {
+        transactionsByDate[dateKey].income.push({
+          type: 'CASH_EXCHANGE',
+          typeLabel: 'استرجاع نقد من بنك',
+          id: exchange.id,
+          amount: exchange.amount.toString(),
+          method: exchange.toMethod,
+          date: exchange.createdAt,
+          recordedBy: exchange.createdByUser?.username || 'غير محدد',
+          details: {
+            fromMethod: exchange.fromMethod,
+            toMethod: exchange.toMethod,
+            receiptNumber: exchange.receiptNumber || null,
+            receiptUrl: exchange.receiptUrl || null,
+            notes: exchange.notes || null,
+            description: `استرجاع من ${exchange.fromMethod === 'BANK' ? 'بنكك' : 'بنك النيل'} إلى نقد`,
+          },
+        });
+      }
+      // Bank to bank exchanges (neutral but still record)
+      else {
+        transactionsByDate[dateKey].losses.push({
+          type: 'CASH_EXCHANGE',
+          typeLabel: 'تحويل بين بنوك',
+          id: exchange.id,
+          amount: exchange.amount.toString(),
+          method: exchange.fromMethod,
+          date: exchange.createdAt,
+          recordedBy: exchange.createdByUser?.username || 'غير محدد',
+          details: {
+            fromMethod: exchange.fromMethod,
+            toMethod: exchange.toMethod,
+            receiptNumber: exchange.receiptNumber || null,
+            receiptUrl: exchange.receiptUrl || null,
+            notes: exchange.notes || null,
+            description: `تحويل من ${exchange.fromMethod === 'BANK' ? 'بنكك' : 'بنك النيل'} إلى ${exchange.toMethod === 'BANK' ? 'بنكك' : 'بنك النيل'}`,
+          },
+        });
+      }
+    });
+    
+    // Convert to array and calculate totals for each day
+    const dailyReports = Object.values(transactionsByDate).map((dayData: any) => {
+      const totalIncome = dayData.income.reduce((sum: Prisma.Decimal, t: any) => 
+        sum.add(new Prisma.Decimal(t.amount)), new Prisma.Decimal(0));
+      const totalLosses = dayData.losses.reduce((sum: Prisma.Decimal, t: any) => 
+        sum.add(new Prisma.Decimal(t.amount)), new Prisma.Decimal(0));
+      const netProfit = totalIncome.sub(totalLosses);
+      
+      return {
+        ...dayData,
+        totalIncome: totalIncome.toString(),
+        totalLosses: totalLosses.toString(),
+        netProfit: netProfit.toString(),
+        incomeCount: dayData.income.length,
+        lossesCount: dayData.losses.length,
+      };
+    }).sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    
+    // Calculate overall summary
+    const overallTotalIncome = dailyReports.reduce((sum, day) => 
+      sum.add(new Prisma.Decimal(day.totalIncome)), new Prisma.Decimal(0));
+    const overallTotalLosses = dailyReports.reduce((sum, day) => 
+      sum.add(new Prisma.Decimal(day.totalLosses)), new Prisma.Decimal(0));
+    const overallNetProfit = overallTotalIncome.sub(overallTotalLosses);
+    
+    res.json({
+      startDate: startOfDay.toISOString().split('T')[0],
+      endDate: endOfDay.toISOString().split('T')[0],
+      summary: {
+        totalIncome: overallTotalIncome.toString(),
+        totalLosses: overallTotalLosses.toString(),
+        netProfit: overallNetProfit.toString(),
+        totalDays: dailyReports.length,
+      },
+      dailyReports,
+    });
+  } catch (error) {
+    console.error('Daily income/loss error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
 export default router;
 

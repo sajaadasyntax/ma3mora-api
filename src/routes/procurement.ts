@@ -34,8 +34,18 @@ async function checkBalanceOpen(req: AuthRequest, res: any, next: any) {
 const orderItemSchema = z.object({
   itemId: z.string(),
   quantity: z.number().positive(),
-  giftQty: z.number().min(0).default(0),
+  giftQty: z.number().min(0).default(0).optional(), // Deprecated: kept for backward compatibility
+  giftItemId: z.string().optional(), // New: The item being given as gift
+  giftQuantity: z.number().min(0).optional(), // New: Quantity of the gift item
   unitCost: z.number().positive(),
+}).refine((data) => {
+  // Either use old giftQty or new giftItemId/giftQuantity, but not both
+  const hasOldGift = data.giftQty !== undefined && data.giftQty > 0;
+  const hasNewGift = data.giftItemId && data.giftQuantity && data.giftQuantity > 0;
+  return !(hasOldGift && hasNewGift);
+}, {
+  message: 'لا يمكن استخدام نظام الهدية القديم والجديد معاً',
+  path: ['giftItemId'],
 });
 
 const createOrderSchema = z.object({
@@ -93,6 +103,7 @@ router.get('/orders', requireRole('PROCUREMENT', 'ACCOUNTANT', 'AUDITOR', 'MANAG
         items: {
           include: {
             item: true,
+            giftItem: true, // Include gift item details
           },
         },
       },
@@ -117,7 +128,9 @@ router.post('/orders', requireRole('PROCUREMENT', 'MANAGER'), checkBalanceOpen, 
       return {
         itemId: lineItem.itemId,
         quantity: lineItem.quantity,
-        giftQty: lineItem.giftQty || 0,
+        giftQty: lineItem.giftQty || 0, // Keep for backward compatibility
+        giftItemId: lineItem.giftItemId || null,
+        giftQuantity: lineItem.giftQuantity ? new Prisma.Decimal(lineItem.giftQuantity) : null,
         unitCost: lineItem.unitCost,
         lineTotal,
       };
@@ -148,6 +161,7 @@ router.post('/orders', requireRole('PROCUREMENT', 'MANAGER'), checkBalanceOpen, 
         items: {
           include: {
             item: true,
+            giftItem: true, // Include gift item details
           },
         },
         supplier: true,
@@ -186,6 +200,7 @@ router.get('/orders/:id', requireRole('PROCUREMENT', 'ACCOUNTANT', 'AUDITOR', 'M
         items: {
           include: {
             item: true,
+            giftItem: true, // Include gift item details
           },
         },
         payments: {
@@ -301,6 +316,7 @@ router.post('/orders/:id/add-gifts', requireRole('MANAGER'), createAuditLog('Pro
         items: {
           include: {
             item: true,
+            giftItem: true, // Include gift item details
           },
         },
         supplier: true,
@@ -452,6 +468,7 @@ router.post('/orders/:id/cancel', requireRole('MANAGER'), createAuditLog('ProcOr
         items: {
           include: {
             item: true,
+            giftItem: true, // Include gift item details
           },
         },
         payments: {
@@ -543,10 +560,10 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
             throw new Error(`المخزون غير موجود للصنف ${batch.itemId}`);
           }
 
-          // Include gift quantity in total
+          // Include gift quantity in total (old system - same item)
           const totalQuantity = new Prisma.Decimal(batch.quantity).add(orderItem.giftQty || 0);
 
-          // Create stock batch with expiry date (including gift quantity)
+          // Create stock batch with expiry date (including gift quantity from old system)
           await tx.stockBatch.create({
             data: {
               inventoryId: order.inventoryId,
@@ -558,7 +575,7 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
             },
           });
 
-          // Update stock quantity (including gift quantity)
+          // Update stock quantity (including gift quantity from old system)
           await tx.inventoryStock.update({
             where: {
               inventoryId_itemId: {
@@ -572,6 +589,49 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
               },
             },
           });
+
+          // Handle gift item (new system - separate item)
+          if (orderItem.giftItemId && orderItem.giftQuantity) {
+            const giftStock = await tx.inventoryStock.findUnique({
+              where: {
+                inventoryId_itemId: {
+                  inventoryId: order.inventoryId,
+                  itemId: orderItem.giftItemId,
+                },
+              },
+            });
+
+            if (!giftStock) {
+              throw new Error(`المخزون غير موجود للهدية: ${orderItem.giftItemId}`);
+            }
+
+            // Create stock batch for gift item (use same expiry date if available)
+            await tx.stockBatch.create({
+              data: {
+                inventoryId: order.inventoryId,
+                itemId: orderItem.giftItemId,
+                quantity: orderItem.giftQuantity,
+                expiryDate: batch.expiryDate ? new Date(batch.expiryDate) : null,
+                receiptId: receipt.id,
+                notes: batch.notes ? `${batch.notes} - هدية` : 'هدية',
+              },
+            });
+
+            // Update stock quantity for gift item
+            await tx.inventoryStock.update({
+              where: {
+                inventoryId_itemId: {
+                  inventoryId: order.inventoryId,
+                  itemId: orderItem.giftItemId,
+                },
+              },
+              data: {
+                quantity: {
+                  increment: orderItem.giftQuantity,
+                },
+              },
+            });
+          }
         }
       } else {
         // Default behavior: create batches without expiry dates
@@ -589,13 +649,17 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
             throw new Error(`المخزون غير موجود للصنف ${item.itemId}`);
           }
 
+          // Include gift quantity (old system - same item)
+          const totalQuantity = new Prisma.Decimal(item.quantity).add(item.giftQty || 0);
+
           // Create stock batch without expiry date
           await tx.stockBatch.create({
             data: {
               inventoryId: order.inventoryId,
               itemId: item.itemId,
-              quantity: item.quantity,
+              quantity: totalQuantity,
               receiptId: receipt.id,
+              notes: item.giftQty && item.giftQty.gt(0) ? `يشمل ${item.giftQty.toString()} هدية` : undefined,
             },
           });
 
@@ -609,10 +673,52 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
             },
             data: {
               quantity: {
-                increment: item.quantity,
+                increment: totalQuantity,
               },
             },
           });
+
+          // Handle gift item (new system - separate item)
+          if (item.giftItemId && item.giftQuantity) {
+            const giftStock = await tx.inventoryStock.findUnique({
+              where: {
+                inventoryId_itemId: {
+                  inventoryId: order.inventoryId,
+                  itemId: item.giftItemId,
+                },
+              },
+            });
+
+            if (!giftStock) {
+              throw new Error(`المخزون غير موجود للهدية: ${item.giftItemId}`);
+            }
+
+            // Create stock batch for gift item
+            await tx.stockBatch.create({
+              data: {
+                inventoryId: order.inventoryId,
+                itemId: item.giftItemId,
+                quantity: item.giftQuantity,
+                receiptId: receipt.id,
+                notes: 'هدية',
+              },
+            });
+
+            // Update stock quantity for gift item
+            await tx.inventoryStock.update({
+              where: {
+                inventoryId_itemId: {
+                  inventoryId: order.inventoryId,
+                  itemId: item.giftItemId,
+                },
+              },
+              data: {
+                quantity: {
+                  increment: item.giftQuantity,
+                },
+              },
+            });
+          }
         }
       }
 
@@ -977,6 +1083,7 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
         items: {
           include: {
             item: true,
+            giftItem: true, // Include gift item details
           },
         },
       },
