@@ -742,6 +742,8 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), asyn
           amount: p.amount.toFixed(2),
           method: p.method,
           paidAt: p.paidAt,
+          receiptNumber: (p as any).receiptNumber || null,
+          receiptUrl: p.receiptUrl || null,
           items: p.invoice.items.map(item => ({
             name: item.item.name,
             quantity: item.quantity.toString(),
