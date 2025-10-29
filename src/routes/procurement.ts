@@ -541,9 +541,19 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
       if (batches && batches.length > 0) {
         // Process batches with expiry dates
         for (const batch of batches) {
-          // Verify this item exists in the order
+          // Verify this item exists in the order (either as main item or gift item)
           const orderItem = order.items.find((oi) => oi.itemId === batch.itemId);
-          if (!orderItem) {
+          const giftOrderItem = !orderItem ? order.items.find((oi) => oi.giftItemId === batch.itemId) : null;
+          
+          if (!orderItem && !giftOrderItem) {
+            throw new Error(`الصنف ${batch.itemId} غير موجود في أمر الشراء`);
+          }
+
+          // Determine if this batch is for a gift item or main item
+          const isGiftItem = giftOrderItem !== null;
+          const actualOrderItem = orderItem || giftOrderItem;
+
+          if (!actualOrderItem) {
             throw new Error(`الصنف ${batch.itemId} غير موجود في أمر الشراء`);
           }
 
@@ -560,10 +570,18 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
             throw new Error(`المخزون غير موجود للصنف ${batch.itemId}`);
           }
 
-          // Include gift quantity in total (old system - same item)
-          const totalQuantity = new Prisma.Decimal(batch.quantity).add(orderItem.giftQty || 0);
+          // For main items, include old gift quantity (same item gift system)
+          // For gift items (new system), use batch quantity as is
+          const totalQuantity = isGiftItem 
+            ? new Prisma.Decimal(batch.quantity)
+            : new Prisma.Decimal(batch.quantity).add((orderItem?.giftQty || 0) as Prisma.Decimal);
 
-          // Create stock batch with expiry date (including gift quantity from old system)
+          // Create stock batch with expiry date
+          // For gift items, mark it as a gift. For main items, include old gift quantity note
+          const batchNotes = isGiftItem 
+            ? (batch.notes ? `${batch.notes} - هدية` : 'هدية')
+            : (batch.notes || (orderItem?.giftQty && orderItem.giftQty.gt(0) ? `يشمل ${orderItem.giftQty.toString()} هدية` : undefined));
+          
           await tx.stockBatch.create({
             data: {
               inventoryId: order.inventoryId,
@@ -571,11 +589,11 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
               quantity: totalQuantity,
               expiryDate: batch.expiryDate ? new Date(batch.expiryDate) : null,
               receiptId: receipt.id,
-              notes: batch.notes || (orderItem?.giftQty && orderItem.giftQty.gt(0) ? `يشمل ${orderItem.giftQty.toString()} هدية` : undefined),
+              notes: batchNotes,
             },
           });
 
-          // Update stock quantity (including gift quantity from old system)
+          // Update stock quantity
           await tx.inventoryStock.update({
             where: {
               inventoryId_itemId: {
@@ -590,51 +608,52 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
             },
           });
 
-          // Handle gift item (new system - separate item)
-          if (orderItem.giftItemId && orderItem.giftQuantity) {
-            const giftStock = await tx.inventoryStock.findUnique({
-              where: {
-                inventoryId_itemId: {
+          // Handle gift item (new system - separate item) ONLY if this is not already a gift item batch
+          if (!isGiftItem && orderItem.giftItemId && orderItem.giftQuantity) {
+            // Check if gift item is already processed in batches
+            const giftBatchExists = batches.some((b) => b.itemId === orderItem.giftItemId && b.quantity > 0);
+            
+            // Only process gift item if it's not in batches (legacy support)
+            if (!giftBatchExists) {
+              const giftStock = await tx.inventoryStock.findUnique({
+                where: {
+                  inventoryId_itemId: {
+                    inventoryId: order.inventoryId,
+                    itemId: orderItem.giftItemId,
+                  },
+                },
+              });
+
+              if (!giftStock) {
+                throw new Error(`المخزون غير موجود للهدية: ${orderItem.giftItemId}`);
+              }
+
+              // Create stock batch for gift item (no expiry date for legacy gifts)
+              await tx.stockBatch.create({
+                data: {
                   inventoryId: order.inventoryId,
                   itemId: orderItem.giftItemId,
+                  quantity: orderItem.giftQuantity,
+                  receiptId: receipt.id,
+                  notes: 'هدية',
                 },
-              },
-            });
+              });
 
-            if (!giftStock) {
-              throw new Error(`المخزون غير موجود للهدية: ${orderItem.giftItemId}`);
+              // Update stock quantity for gift item
+              await tx.inventoryStock.update({
+                where: {
+                  inventoryId_itemId: {
+                    inventoryId: order.inventoryId,
+                    itemId: orderItem.giftItemId,
+                  },
+                },
+                data: {
+                  quantity: {
+                    increment: orderItem.giftQuantity,
+                  },
+                },
+              });
             }
-
-            // Check if there's a separate batch entry for the gift item
-            const giftBatch = batches.find((b) => b.itemId === orderItem.giftItemId);
-            const giftExpiryDate = giftBatch?.expiryDate ? new Date(giftBatch.expiryDate) : null;
-
-            // Create stock batch for gift item (use its own expiry date if provided, otherwise null)
-            await tx.stockBatch.create({
-              data: {
-                inventoryId: order.inventoryId,
-                itemId: orderItem.giftItemId,
-                quantity: orderItem.giftQuantity,
-                expiryDate: giftExpiryDate,
-                receiptId: receipt.id,
-                notes: giftBatch?.notes ? `${giftBatch.notes} - هدية` : 'هدية',
-              },
-            });
-
-            // Update stock quantity for gift item
-            await tx.inventoryStock.update({
-              where: {
-                inventoryId_itemId: {
-                  inventoryId: order.inventoryId,
-                  itemId: orderItem.giftItemId,
-                },
-              },
-              data: {
-                quantity: {
-                  increment: orderItem.giftQuantity,
-                },
-              },
-            });
           }
         }
       } else {
