@@ -52,7 +52,7 @@ const createInvoiceSchema = z.object({
   section: z.enum(['GROCERY', 'BAKERY']),
   customerId: z.string().optional(),
   pricingTier: z.enum(['WHOLESALE', 'RETAIL']).optional(), // Used when no customer selected
-  paymentMethod: z.enum(['CASH', 'BANK', 'BANK_NILE']),
+  paymentMethod: z.enum(['CASH', 'BANK', 'BANK_NILE']).default('CASH'),
   discount: z.number().min(0).default(0),
   items: z.array(invoiceItemSchema).min(1),
   notes: z.string().optional(),
@@ -416,12 +416,18 @@ router.post('/invoices/:id/payments', requireRole('ACCOUNTANT', 'SALES_GROCERY',
       paymentStatus = 'CREDIT';
     }
 
+    const updateData: any = {
+      paidAmount: newPaidAmount,
+      paymentStatus,
+    };
+    // If this is the first payment, set invoice payment method to the method chosen by accountant/manager
+    if (new Prisma.Decimal(invoice.paidAmount).equals(0)) {
+      updateData.paymentMethod = paymentData.method;
+    }
+
     const updatedInvoice = await prisma.salesInvoice.update({
       where: { id },
-      data: {
-        paidAmount: newPaidAmount,
-        paymentStatus,
-      },
+      data: updateData,
       include: {
         payments: true,
       },
