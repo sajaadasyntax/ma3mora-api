@@ -2025,7 +2025,7 @@ router.get('/bank-transactions', requireRole('ACCOUNTANT', 'MANAGER'), async (re
 // Get daily income and loss report with all transaction details
 router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (req: AuthRequest, res) => {
   try {
-    const { date, startDate, endDate } = req.query;
+    const { date, startDate, endDate, method } = req.query;
     
     // Determine date range
     let startOfDay: Date;
@@ -2058,6 +2058,7 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
           gte: startOfDay,
           lte: endOfDay,
         },
+        method: method ? (method as 'CASH' | 'BANK' | 'BANK_NILE') : undefined,
         invoice: {
           paymentConfirmed: true,
         },
@@ -2083,6 +2084,7 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
           gte: startOfDay,
           lte: endOfDay,
         },
+        method: method ? (method as 'CASH' | 'BANK' | 'BANK_NILE') : undefined,
         order: {
           paymentConfirmed: true,
           status: { not: 'CANCELLED' },
@@ -2113,6 +2115,7 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
           gte: startOfDay,
           lte: endOfDay,
         },
+        method: method ? (method as 'CASH' | 'BANK' | 'BANK_NILE') : undefined,
       },
       include: {
         inventory: true,
@@ -2131,6 +2134,7 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
           lte: endOfDay,
           not: null,
         },
+        paymentMethod: method ? (method as 'CASH' | 'BANK' | 'BANK_NILE') : undefined,
       },
       include: {
         employee: true,
@@ -2149,6 +2153,7 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
           lte: endOfDay,
           not: null,
         },
+        paymentMethod: method ? (method as 'CASH' | 'BANK' | 'BANK_NILE') : undefined,
       },
       include: {
         employee: true,
@@ -2166,6 +2171,12 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
           gte: startOfDay,
           lte: endOfDay,
         },
+        ...(method ? {
+          OR: [
+            { fromMethod: method as 'CASH' | 'BANK' | 'BANK_NILE' },
+            { toMethod: method as 'CASH' | 'BANK' | 'BANK_NILE' },
+          ],
+        } : {}),
       },
       include: {
         createdByUser: {
