@@ -1,5 +1,5 @@
 import express, { type Request } from 'express';
-import multer, { type FileFilterCallback } from 'multer';
+import multer, { type FileFilterCallback, type File } from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { requireAuth, requireRole } from '../middleware/auth';
@@ -15,10 +15,10 @@ if (!fs.existsSync(uploadsDir)) {
 }
 
 const storage = multer.diskStorage({
-  destination: (_req: Request, _file: Express.Multer.File, cb: (error: Error | null, destination: string) => void) => {
+  destination: (_req: Request, _file: File, cb: (error: Error | null, destination: string) => void) => {
     cb(null, uploadsDir);
   },
-  filename: (_req: Request, file: Express.Multer.File, cb: (error: Error | null, filename: string) => void) => {
+  filename: (_req: Request, file: File, cb: (error: Error | null, filename: string) => void) => {
     const ext = path.extname(file.originalname).toLowerCase();
     const base = path.basename(file.originalname, ext).replace(/[^a-zA-Z0-9-_]/g, '_');
     const unique = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -29,7 +29,7 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage,
   limits: { fileSize: 2 * 1024 * 1024 }, // 2MB
-  fileFilter: (_req: Request, file: Express.Multer.File, cb: FileFilterCallback) => {
+  fileFilter: (_req: Request, file: File, cb: FileFilterCallback) => {
     if (!file.mimetype.startsWith('image/')) {
       return cb(new Error('Invalid file type'));
     }
@@ -38,7 +38,7 @@ const upload = multer({
 });
 
 // Auth: allow roles that can attach receipts: ACCOUNTANT, MANAGER, INVENTORY, PROCUREMENT
-router.post('/', requireRole('ACCOUNTANT', 'MANAGER', 'INVENTORY', 'PROCUREMENT'), upload.single('file'), (req: Request & { file?: Express.Multer.File }, res) => {
+router.post('/', requireRole('ACCOUNTANT', 'MANAGER', 'INVENTORY', 'PROCUREMENT'), upload.single('file'), (req: Request & { file?: File }, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'لم يتم رفع أي ملف' });
   }

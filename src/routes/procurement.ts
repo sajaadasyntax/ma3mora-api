@@ -272,7 +272,12 @@ router.post('/orders/:id/add-gifts', requireRole('MANAGER'), createAuditLog('Pro
     const order = await prisma.procOrder.findUnique({
       where: { id },
       include: {
-        items: true,
+        items: {
+          include: {
+            item: true,
+            giftItem: true,
+          },
+        },
       },
     });
 
@@ -506,7 +511,12 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
     const order = await prisma.procOrder.findUnique({
       where: { id },
       include: {
-        items: true,
+        items: {
+          include: {
+            item: true,
+            giftItem: true,
+          },
+        },
       },
     });
 
@@ -609,7 +619,7 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
           });
 
           // Handle gift item (new system - separate item) ONLY if this is not already a gift item batch
-          if (!isGiftItem && orderItem.giftItemId && orderItem.giftQuantity) {
+          if (!isGiftItem && orderItem && orderItem.giftItemId && orderItem.giftQuantity) {
             // Check if gift item is already processed in batches
             const giftBatchExists = batches.some((b) => b.itemId === orderItem.giftItemId && b.quantity > 0);
             
@@ -814,8 +824,8 @@ router.post('/orders/:id/payments', requireRole('MANAGER'), checkBalanceOpen, cr
     // Enforce cross-app unique receiptNumber if provided
     if (paymentData.receiptNumber) {
       // Check existing in procurement payments
-      const existingProcPay = await prisma.procOrderPayment.findUnique({
-        where: { receiptNumber: paymentData.receiptNumber as any },
+      const existingProcPay = await prisma.procOrderPayment.findFirst({
+        where: { receiptNumber: paymentData.receiptNumber },
         include: {
           order: {
             include: { supplier: true },

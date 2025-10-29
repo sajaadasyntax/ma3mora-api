@@ -223,7 +223,7 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'MANAGER')
         inventoryId: data.inventoryId,
         section: data.section,
         salesUserId: req.user!.id,
-        customerId: data.customerId || null,
+        customerId: data.customerId || undefined,
         paymentMethod: data.paymentMethod,
         paymentStatus: 'CREDIT',
         deliveryStatus: 'NOT_DELIVERED',
