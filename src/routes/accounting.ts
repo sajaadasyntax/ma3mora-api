@@ -2454,35 +2454,49 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
     };
 
     prePeriodSalesPayments.forEach((p) => {
-      prePeriodImpact[p.method as keyof typeof prePeriodImpact] = 
-        prePeriodImpact[p.method as keyof typeof prePeriodImpact].add(p.amount);
+      const m = p.method as any;
+      if (isValidMethod(m)) {
+        prePeriodImpact[m] = prePeriodImpact[m].add(p.amount);
+      }
     });
 
     prePeriodProcPayments.forEach((p) => {
-      prePeriodImpact[p.method as keyof typeof prePeriodImpact] = 
-        prePeriodImpact[p.method as keyof typeof prePeriodImpact].sub(p.amount);
+      const m = p.method as any;
+      if (isValidMethod(m)) {
+        prePeriodImpact[m] = prePeriodImpact[m].sub(p.amount);
+      }
     });
 
     prePeriodExpenses.forEach((e) => {
-      prePeriodImpact[e.method as keyof typeof prePeriodImpact] = 
-        prePeriodImpact[e.method as keyof typeof prePeriodImpact].sub(e.amount);
+      const m = e.method as any;
+      if (isValidMethod(m)) {
+        prePeriodImpact[m] = prePeriodImpact[m].sub(e.amount);
+      }
     });
 
     prePeriodSalaries.forEach((s: any) => {
-      prePeriodImpact[s.paymentMethod as keyof typeof prePeriodImpact] = 
-        prePeriodImpact[s.paymentMethod as keyof typeof prePeriodImpact].sub(s.amount);
+      const m = s.paymentMethod as any;
+      if (isValidMethod(m)) {
+        prePeriodImpact[m] = prePeriodImpact[m].sub(s.amount);
+      }
     });
 
     prePeriodAdvances.forEach((a: any) => {
-      prePeriodImpact[a.paymentMethod as keyof typeof prePeriodImpact] = 
-        prePeriodImpact[a.paymentMethod as keyof typeof prePeriodImpact].sub(a.amount);
+      const m = a.paymentMethod as any;
+      if (isValidMethod(m)) {
+        prePeriodImpact[m] = prePeriodImpact[m].sub(a.amount);
+      }
     });
 
     prePeriodCashExchanges.forEach((e: any) => {
-      const fromM = e.fromMethod as 'CASH' | 'BANK' | 'BANK_NILE';
-      const toM = e.toMethod as 'CASH' | 'BANK' | 'BANK_NILE';
-      prePeriodImpact[fromM] = prePeriodImpact[fromM].sub(e.amount);
-      prePeriodImpact[toM] = prePeriodImpact[toM].add(e.amount);
+      const fromM = e.fromMethod as any;
+      const toM = e.toMethod as any;
+      if (isValidMethod(fromM)) {
+        prePeriodImpact[fromM] = prePeriodImpact[fromM].sub(e.amount);
+      }
+      if (isValidMethod(toM)) {
+        prePeriodImpact[toM] = prePeriodImpact[toM].add(e.amount);
+      }
     });
 
     // Calculate opening balance at start of period
@@ -2500,6 +2514,9 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
     };
 
     // Convert to array and calculate totals for each day with opening/closing balances
+    const validMethods = ['CASH', 'BANK', 'BANK_NILE'] as const;
+    const isValidMethod = (m: any): m is 'CASH' | 'BANK' | 'BANK_NILE' => validMethods.includes(m);
+
     const dailyReports = sortedDates.map((dateKey) => {
       const dayData = transactionsByDate[dateKey];
       
@@ -2516,13 +2533,17 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
       };
 
       dayData.income.forEach((t: any) => {
-        const method = t.method as 'CASH' | 'BANK' | 'BANK_NILE';
-        incomeByMethod[method] = incomeByMethod[method].add(new Prisma.Decimal(t.amount));
+        const method = t.method as any;
+        if (isValidMethod(method)) {
+          incomeByMethod[method] = incomeByMethod[method].add(new Prisma.Decimal(t.amount));
+        }
       });
 
       dayData.losses.forEach((t: any) => {
-        const method = t.method as 'CASH' | 'BANK' | 'BANK_NILE';
-        lossesByMethod[method] = lossesByMethod[method].add(new Prisma.Decimal(t.amount));
+        const method = t.method as any;
+        if (isValidMethod(method)) {
+          lossesByMethod[method] = lossesByMethod[method].add(new Prisma.Decimal(t.amount));
+        }
       });
 
       // Calculate REAL income and losses (excluding transfers) for display
@@ -2538,22 +2559,29 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
       };
 
       dayData.income.forEach((t: any) => {
-        const method = t.method as 'CASH' | 'BANK' | 'BANK_NILE';
-        realIncomeByMethod[method] = realIncomeByMethod[method].add(new Prisma.Decimal(t.amount));
+        const method = t.method as any;
+        if (isValidMethod(method)) {
+          realIncomeByMethod[method] = realIncomeByMethod[method].add(new Prisma.Decimal(t.amount));
+        }
       });
 
       dayData.losses.forEach((t: any) => {
-        const method = t.method as 'CASH' | 'BANK' | 'BANK_NILE';
-        realLossesByMethod[method] = realLossesByMethod[method].add(new Prisma.Decimal(t.amount));
+        const method = t.method as any;
+        if (isValidMethod(method)) {
+          realLossesByMethod[method] = realLossesByMethod[method].add(new Prisma.Decimal(t.amount));
+        }
       });
 
       // Process cash exchanges - affect balances but NOT income/loss totals
       (dayData.transfers || []).forEach((transfer: any) => {
-        const fromM = transfer.fromMethod as 'CASH' | 'BANK' | 'BANK_NILE';
-        const toM = transfer.toMethod as 'CASH' | 'BANK' | 'BANK_NILE';
-        // Update incomeByMethod and lossesByMethod for balance calculations only
-        lossesByMethod[fromM] = lossesByMethod[fromM].add(new Prisma.Decimal(transfer.amount));
-        incomeByMethod[toM] = incomeByMethod[toM].add(new Prisma.Decimal(transfer.amount));
+        const fromM = transfer.fromMethod as any;
+        const toM = transfer.toMethod as any;
+        if (isValidMethod(fromM)) {
+          lossesByMethod[fromM] = lossesByMethod[fromM].add(new Prisma.Decimal(transfer.amount));
+        }
+        if (isValidMethod(toM)) {
+          incomeByMethod[toM] = incomeByMethod[toM].add(new Prisma.Decimal(transfer.amount));
+        }
       });
 
       // Opening balance for this day (before transactions)
