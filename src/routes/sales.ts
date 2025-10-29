@@ -41,6 +41,7 @@ const createInvoiceSchema = z.object({
   inventoryId: z.string(),
   section: z.enum(['GROCERY', 'BAKERY']),
   customerId: z.string().optional(),
+  pricingTier: z.enum(['WHOLESALE', 'RETAIL']).optional(), // Used when no customer selected
   paymentMethod: z.enum(['CASH', 'BANK', 'BANK_NILE']),
   discount: z.number().min(0).default(0),
   items: z.array(invoiceItemSchema).min(1),
@@ -124,7 +125,7 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'MANAGER')
 
     // Get customer to determine pricing tier (default to RETAIL if no customer)
     let customer = null;
-    let pricingTier: 'WHOLESALE' | 'RETAIL' = 'RETAIL';
+    let pricingTier: 'WHOLESALE' | 'RETAIL' = data.pricingTier || 'RETAIL';
     
     if (data.customerId) {
       customer = await prisma.customer.findUnique({
@@ -134,7 +135,7 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'MANAGER')
       if (!customer) {
         return res.status(404).json({ error: 'العميل غير موجود' });
       }
-      pricingTier = customer.type;
+      pricingTier = customer.type; // Customer type overrides any provided pricingTier
     }
 
     // Get items with prices
