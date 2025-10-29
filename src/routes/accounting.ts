@@ -2197,6 +2197,7 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
           date: dateKey,
           income: [],
           losses: [],
+          transfers: [],
         };
       }
       transactionsByDate[dateKey].income.push({
@@ -2328,7 +2329,7 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
       });
     });
     
-    // Process cash exchanges properly - track impact on each payment method
+    // Process cash exchanges properly - track as transfers, not separate income/loss
     cashExchanges.forEach((exchange) => {
       const dateKey = new Date(exchange.createdAt).toISOString().split('T')[0];
       if (!transactionsByDate[dateKey]) {
@@ -2336,20 +2337,21 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
           date: dateKey,
           income: [],
           losses: [],
+          transfers: [], // New array for cash exchanges
         };
       }
       
       const fromMethod = exchange.fromMethod as 'CASH' | 'BANK' | 'BANK_NILE';
       const toMethod = exchange.toMethod as 'CASH' | 'BANK' | 'BANK_NILE';
       
-      // Record as loss for fromMethod and income for toMethod
-      // This properly tracks the cash flow between methods
-      transactionsByDate[dateKey].losses.push({
+      // Record as a transfer (not income/loss separately)
+      transactionsByDate[dateKey].transfers.push({
         type: 'CASH_EXCHANGE',
         typeLabel: `تحويل من ${fromMethod === 'CASH' ? 'نقد' : fromMethod === 'BANK' ? 'بنكك' : 'بنك النيل'} إلى ${toMethod === 'CASH' ? 'نقد' : toMethod === 'BANK' ? 'بنكك' : 'بنك النيل'}`,
         id: exchange.id,
         amount: exchange.amount.toString(),
-        method: fromMethod,
+        fromMethod: fromMethod,
+        toMethod: toMethod,
         date: exchange.createdAt,
         recordedBy: exchange.createdByUser?.username || 'غير محدد',
         details: {
@@ -2359,24 +2361,6 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
           receiptUrl: exchange.receiptUrl || null,
           notes: exchange.notes || null,
           description: `تحويل من ${fromMethod === 'CASH' ? 'نقد' : fromMethod === 'BANK' ? 'بنكك' : 'بنك النيل'} إلى ${toMethod === 'CASH' ? 'نقد' : toMethod === 'BANK' ? 'بنكك' : 'بنك النيل'}`,
-        },
-      });
-      
-      transactionsByDate[dateKey].income.push({
-        type: 'CASH_EXCHANGE',
-        typeLabel: `استلام من ${fromMethod === 'CASH' ? 'نقد' : fromMethod === 'BANK' ? 'بنكك' : 'بنك النيل'}`,
-        id: exchange.id + '_in',
-        amount: exchange.amount.toString(),
-        method: toMethod,
-        date: exchange.createdAt,
-        recordedBy: exchange.createdByUser?.username || 'غير محدد',
-        details: {
-          fromMethod: fromMethod,
-          toMethod: toMethod,
-          receiptNumber: exchange.receiptNumber || null,
-          receiptUrl: exchange.receiptUrl || null,
-          notes: exchange.notes || null,
-          description: `استلام من ${fromMethod === 'CASH' ? 'نقد' : fromMethod === 'BANK' ? 'بنكك' : 'بنك النيل'}`,
         },
       });
     });
@@ -2538,6 +2522,14 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
         lossesByMethod[method] = lossesByMethod[method].add(new Prisma.Decimal(t.amount));
       });
 
+      // Process cash exchanges - subtract from fromMethod, add to toMethod
+      (dayData.transfers || []).forEach((transfer: any) => {
+        const fromM = transfer.fromMethod as 'CASH' | 'BANK' | 'BANK_NILE';
+        const toM = transfer.toMethod as 'CASH' | 'BANK' | 'BANK_NILE';
+        lossesByMethod[fromM] = lossesByMethod[fromM].add(new Prisma.Decimal(transfer.amount));
+        incomeByMethod[toM] = incomeByMethod[toM].add(new Prisma.Decimal(transfer.amount));
+      });
+
       // Opening balance for this day (before transactions)
       const openingBalance = {
         CASH: runningBalances.CASH,
@@ -2590,6 +2582,7 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
           BANK: lossesByMethod.BANK.toString(),
           BANK_NILE: lossesByMethod.BANK_NILE.toString(),
         },
+        transfers: dayData.transfers || [],
       };
     }).reverse(); // Reverse to show newest first
     
