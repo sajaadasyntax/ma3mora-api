@@ -1269,5 +1269,89 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
   }
 });
 
+// Assign partial procurement as fully received (no stock changes), validates full quantities received
+router.post('/orders/:id/assign-delivered', requireRole('INVENTORY', 'MANAGER'), createAuditLog('ProcOrder'), async (req: AuthRequest, res) => {
+  try {
+    const { id } = req.params;
+
+    const order = await prisma.procOrder.findUnique({
+      where: { id },
+      include: {
+        items: {
+          include: { item: true, giftItem: true },
+        },
+        receipts: {
+          include: { batches: true },
+        },
+      },
+    });
+
+    if (!order) {
+      return res.status(404).json({ error: 'أمر الشراء غير موجود' });
+    }
+
+    if (!order.paymentConfirmed) {
+      return res.status(400).json({ error: 'يجب تأكيد الدفع أولاً' });
+    }
+
+    if (order.status === 'CANCELLED') {
+      return res.status(400).json({ error: 'أمر الشراء ملغي' });
+    }
+
+    if (order.status === 'RECEIVED') {
+      return res.status(400).json({ error: 'أمر الشراء مستلم بالفعل' });
+    }
+
+    // Sum received quantities by itemId from all receipts
+    const receivedByItem: Record<string, Prisma.Decimal> = {};
+    for (const r of order.receipts) {
+      for (const b of r.batches) {
+        const key = b.itemId;
+        const qty = new Prisma.Decimal(b.quantity);
+        receivedByItem[key] = (receivedByItem[key] || new Prisma.Decimal(0)).add(qty);
+      }
+    }
+
+    // Validate that each ordered item (and its gift item if any) is fully received
+    const errors: string[] = [];
+    for (const it of order.items) {
+      const orderedMain = new Prisma.Decimal(it.quantity).add(it.giftQty || 0);
+      const receivedMain = receivedByItem[it.itemId] || new Prisma.Decimal(0);
+      if (receivedMain.lessThan(orderedMain)) {
+        const pending = orderedMain.sub(receivedMain);
+        errors.push(`${it.item.name}: متبقي ${pending.toString()}`);
+      }
+
+      if (it.giftItemId && it.giftQuantity) {
+        const orderedGift = new Prisma.Decimal(it.giftQuantity);
+        const receivedGift = receivedByItem[it.giftItemId] || new Prisma.Decimal(0);
+        if (receivedGift.lessThan(orderedGift)) {
+          const pendingGift = orderedGift.sub(receivedGift);
+          errors.push(`${it.giftItem?.name || it.giftItemId} (هدية): متبقي ${pendingGift.toString()}`);
+        }
+      }
+    }
+
+    if (errors.length > 0) {
+      return res.status(400).json({ error: 'لا يمكن التعيين كمستلم كامل قبل اكتمال الاستلام', details: errors });
+    }
+
+    const updated = await prisma.procOrder.update({
+      where: { id },
+      data: { status: 'RECEIVED' },
+      include: {
+        supplier: true,
+        inventory: true,
+        items: { include: { item: true, giftItem: true } },
+      },
+    });
+
+    res.json(updated);
+  } catch (error) {
+    console.error('Assign delivered error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
 export default router;
 
