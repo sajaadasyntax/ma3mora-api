@@ -819,7 +819,7 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), asyn
         details: payments.map(p => ({
           id: p.id,
           invoiceNumber: p.invoice.invoiceNumber,
-          customer: p.invoice.customer.name,
+          customer: p.invoice.customer?.name || 'غير محدد',
           amount: p.amount.toFixed(2),
           method: p.method,
           paidAt: p.paidAt,
@@ -1492,7 +1492,7 @@ router.get('/daily-report', requireRole('AUDITOR', 'MANAGER'), async (req: AuthR
         pending: totalSales.sub(totalSalesReceived),
         invoiceList: salesInvoices.map(inv => ({
           number: inv.invoiceNumber,
-          customer: inv.customer.name,
+          customer: inv.customer?.name || 'غير محدد',
           total: inv.total,
           paid: inv.paidAmount,
           status: inv.paymentStatus,
