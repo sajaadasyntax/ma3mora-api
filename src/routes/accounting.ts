@@ -2328,7 +2328,7 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
       });
     });
     
-    // Process cash exchanges (affects both income and loss depending on direction)
+    // Process cash exchanges properly - track impact on each payment method
     cashExchanges.forEach((exchange) => {
       const dateKey = new Date(exchange.createdAt).toISOString().split('T')[0];
       if (!transactionsByDate[dateKey]) {
@@ -2339,74 +2339,226 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
         };
       }
       
-      // If exchanging FROM cash TO bank = loss (cash leaving)
-      if (exchange.fromMethod === 'CASH' && (exchange.toMethod === 'BANK' || exchange.toMethod === 'BANK_NILE')) {
-        transactionsByDate[dateKey].losses.push({
-          type: 'CASH_EXCHANGE',
-          typeLabel: 'تحويل نقد إلى بنك',
-          id: exchange.id,
-          amount: exchange.amount.toString(),
-          method: exchange.fromMethod,
-          date: exchange.createdAt,
-          recordedBy: exchange.createdByUser?.username || 'غير محدد',
-          details: {
-            fromMethod: exchange.fromMethod,
-            toMethod: exchange.toMethod,
-            receiptNumber: exchange.receiptNumber || null,
-            receiptUrl: exchange.receiptUrl || null,
-            notes: exchange.notes || null,
-            description: `تحويل من ${exchange.fromMethod === 'CASH' ? 'نقد' : exchange.fromMethod} إلى ${exchange.toMethod === 'BANK' ? 'بنكك' : 'بنك النيل'}`,
-          },
-        });
-      }
-      // If exchanging FROM bank TO cash = income (cash coming in)
-      else if ((exchange.fromMethod === 'BANK' || exchange.fromMethod === 'BANK_NILE') && exchange.toMethod === 'CASH') {
-        transactionsByDate[dateKey].income.push({
-          type: 'CASH_EXCHANGE',
-          typeLabel: 'استرجاع نقد من بنك',
-          id: exchange.id,
-          amount: exchange.amount.toString(),
-          method: exchange.toMethod,
-          date: exchange.createdAt,
-          recordedBy: exchange.createdByUser?.username || 'غير محدد',
-          details: {
-            fromMethod: exchange.fromMethod,
-            toMethod: exchange.toMethod,
-            receiptNumber: exchange.receiptNumber || null,
-            receiptUrl: exchange.receiptUrl || null,
-            notes: exchange.notes || null,
-            description: `استرجاع من ${exchange.fromMethod === 'BANK' ? 'بنكك' : 'بنك النيل'} إلى نقد`,
-          },
-        });
-      }
-      // Bank to bank exchanges (neutral but still record)
-      else {
-        transactionsByDate[dateKey].losses.push({
-          type: 'CASH_EXCHANGE',
-          typeLabel: 'تحويل بين بنوك',
-          id: exchange.id,
-          amount: exchange.amount.toString(),
-          method: exchange.fromMethod,
-          date: exchange.createdAt,
-          recordedBy: exchange.createdByUser?.username || 'غير محدد',
-          details: {
-            fromMethod: exchange.fromMethod,
-            toMethod: exchange.toMethod,
-            receiptNumber: exchange.receiptNumber || null,
-            receiptUrl: exchange.receiptUrl || null,
-            notes: exchange.notes || null,
-            description: `تحويل من ${exchange.fromMethod === 'BANK' ? 'بنكك' : 'بنك النيل'} إلى ${exchange.toMethod === 'BANK' ? 'بنكك' : 'بنك النيل'}`,
-          },
-        });
-      }
+      const fromMethod = exchange.fromMethod as 'CASH' | 'BANK' | 'BANK_NILE';
+      const toMethod = exchange.toMethod as 'CASH' | 'BANK' | 'BANK_NILE';
+      
+      // Record as loss for fromMethod and income for toMethod
+      // This properly tracks the cash flow between methods
+      transactionsByDate[dateKey].losses.push({
+        type: 'CASH_EXCHANGE',
+        typeLabel: `تحويل من ${fromMethod === 'CASH' ? 'نقد' : fromMethod === 'BANK' ? 'بنكك' : 'بنك النيل'} إلى ${toMethod === 'CASH' ? 'نقد' : toMethod === 'BANK' ? 'بنكك' : 'بنك النيل'}`,
+        id: exchange.id,
+        amount: exchange.amount.toString(),
+        method: fromMethod,
+        date: exchange.createdAt,
+        recordedBy: exchange.createdByUser?.username || 'غير محدد',
+        details: {
+          fromMethod: fromMethod,
+          toMethod: toMethod,
+          receiptNumber: exchange.receiptNumber || null,
+          receiptUrl: exchange.receiptUrl || null,
+          notes: exchange.notes || null,
+          description: `تحويل من ${fromMethod === 'CASH' ? 'نقد' : fromMethod === 'BANK' ? 'بنكك' : 'بنك النيل'} إلى ${toMethod === 'CASH' ? 'نقد' : toMethod === 'BANK' ? 'بنكك' : 'بنك النيل'}`,
+        },
+      });
+      
+      transactionsByDate[dateKey].income.push({
+        type: 'CASH_EXCHANGE',
+        typeLabel: `استلام من ${fromMethod === 'CASH' ? 'نقد' : fromMethod === 'BANK' ? 'بنكك' : 'بنك النيل'}`,
+        id: exchange.id + '_in',
+        amount: exchange.amount.toString(),
+        method: toMethod,
+        date: exchange.createdAt,
+        recordedBy: exchange.createdByUser?.username || 'غير محدد',
+        details: {
+          fromMethod: fromMethod,
+          toMethod: toMethod,
+          receiptNumber: exchange.receiptNumber || null,
+          receiptUrl: exchange.receiptUrl || null,
+          notes: exchange.notes || null,
+          description: `استلام من ${fromMethod === 'CASH' ? 'نقد' : fromMethod === 'BANK' ? 'بنكك' : 'بنك النيل'}`,
+        },
+      });
     });
     
-    // Convert to array and calculate totals for each day
-    const dailyReports = Object.values(transactionsByDate).map((dayData: any) => {
-      const totalIncome = dayData.income.reduce((sum: Prisma.Decimal, t: any) => 
-        sum.add(new Prisma.Decimal(t.amount)), new Prisma.Decimal(0));
-      const totalLosses = dayData.losses.reduce((sum: Prisma.Decimal, t: any) => 
-        sum.add(new Prisma.Decimal(t.amount)), new Prisma.Decimal(0));
+    // Sort dates chronologically to calculate cumulative balances
+    const sortedDates = Object.keys(transactionsByDate).sort((a, b) => 
+      new Date(a).getTime() - new Date(b).getTime()
+    );
+
+    // Get opening balances (for calculating opening balance before transactions)
+    const openingBalances = await prisma.openingBalance.findMany({
+      where: {
+        scope: 'CASHBOX',
+        isClosed: false,
+      },
+      orderBy: { openedAt: 'desc' },
+    });
+
+    // Calculate base opening balance per payment method
+    const baseOpeningBalanceByMethod = {
+      CASH: openingBalances
+        .filter((b: any) => b.paymentMethod === 'CASH')
+        .reduce((sum, b) => sum.add(b.amount), new Prisma.Decimal(0)),
+      BANK: openingBalances
+        .filter((b: any) => b.paymentMethod === 'BANK')
+        .reduce((sum, b) => sum.add(b.amount), new Prisma.Decimal(0)),
+      BANK_NILE: openingBalances
+        .filter((b: any) => b.paymentMethod === 'BANK_NILE')
+        .reduce((sum, b) => sum.add(b.amount), new Prisma.Decimal(0)),
+    };
+
+    // Calculate opening balance at start of period by adding/subtracting all transactions before start date
+    // Get all transactions before the start date to calculate the actual opening balance
+    const prePeriodSalesPayments = await prisma.salesPayment.findMany({
+      where: {
+        paidAt: { lt: startOfDay },
+        invoice: { paymentConfirmed: true },
+        ...(method ? { method: method as 'CASH' | 'BANK' | 'BANK_NILE' } : {}),
+      },
+    });
+
+    const prePeriodProcPayments = await prisma.procOrderPayment.findMany({
+      where: {
+        paidAt: { lt: startOfDay },
+        order: { paymentConfirmed: true, status: { not: 'CANCELLED' } },
+        ...(method ? { method: method as 'CASH' | 'BANK' | 'BANK_NILE' } : {}),
+      },
+    });
+
+    const prePeriodExpenses = await prisma.expense.findMany({
+      where: {
+        createdAt: { lt: startOfDay },
+        ...(method ? { method: method as 'CASH' | 'BANK' | 'BANK_NILE' } : {}),
+      },
+    });
+
+    const prePeriodSalaries = await prisma.salary.findMany({
+      where: {
+        paidAt: { lt: startOfDay, not: null },
+        ...(method ? { paymentMethod: method as 'CASH' | 'BANK' | 'BANK_NILE' } : {}),
+      },
+    });
+
+    const prePeriodAdvances = await prisma.advance.findMany({
+      where: {
+        paidAt: { lt: startOfDay, not: null },
+        ...(method ? { paymentMethod: method as 'CASH' | 'BANK' | 'BANK_NILE' } : {}),
+      },
+    });
+
+    const prePeriodCashExchanges = await prisma.cashExchange.findMany({
+      where: {
+        createdAt: { lt: startOfDay },
+        ...(method ? {
+          OR: [
+            { fromMethod: method as 'CASH' | 'BANK' | 'BANK_NILE' },
+            { toMethod: method as 'CASH' | 'BANK' | 'BANK_NILE' },
+          ],
+        } : {}),
+      },
+    });
+
+    // Calculate impact of pre-period transactions
+    const prePeriodImpact = {
+      CASH: new Prisma.Decimal(0),
+      BANK: new Prisma.Decimal(0),
+      BANK_NILE: new Prisma.Decimal(0),
+    };
+
+    prePeriodSalesPayments.forEach((p) => {
+      prePeriodImpact[p.method as keyof typeof prePeriodImpact] = 
+        prePeriodImpact[p.method as keyof typeof prePeriodImpact].add(p.amount);
+    });
+
+    prePeriodProcPayments.forEach((p) => {
+      prePeriodImpact[p.method as keyof typeof prePeriodImpact] = 
+        prePeriodImpact[p.method as keyof typeof prePeriodImpact].sub(p.amount);
+    });
+
+    prePeriodExpenses.forEach((e) => {
+      prePeriodImpact[e.method as keyof typeof prePeriodImpact] = 
+        prePeriodImpact[e.method as keyof typeof prePeriodImpact].sub(e.amount);
+    });
+
+    prePeriodSalaries.forEach((s: any) => {
+      prePeriodImpact[s.paymentMethod as keyof typeof prePeriodImpact] = 
+        prePeriodImpact[s.paymentMethod as keyof typeof prePeriodImpact].sub(s.amount);
+    });
+
+    prePeriodAdvances.forEach((a: any) => {
+      prePeriodImpact[a.paymentMethod as keyof typeof prePeriodImpact] = 
+        prePeriodImpact[a.paymentMethod as keyof typeof prePeriodImpact].sub(a.amount);
+    });
+
+    prePeriodCashExchanges.forEach((e: any) => {
+      const fromM = e.fromMethod as 'CASH' | 'BANK' | 'BANK_NILE';
+      const toM = e.toMethod as 'CASH' | 'BANK' | 'BANK_NILE';
+      prePeriodImpact[fromM] = prePeriodImpact[fromM].sub(e.amount);
+      prePeriodImpact[toM] = prePeriodImpact[toM].add(e.amount);
+    });
+
+    // Calculate opening balance at start of period
+    const openingBalanceByMethod = {
+      CASH: baseOpeningBalanceByMethod.CASH.add(prePeriodImpact.CASH),
+      BANK: baseOpeningBalanceByMethod.BANK.add(prePeriodImpact.BANK),
+      BANK_NILE: baseOpeningBalanceByMethod.BANK_NILE.add(prePeriodImpact.BANK_NILE),
+    };
+
+    // Track running balances by payment method
+    let runningBalances = {
+      CASH: openingBalanceByMethod.CASH,
+      BANK: openingBalanceByMethod.BANK,
+      BANK_NILE: openingBalanceByMethod.BANK_NILE,
+    };
+
+    // Convert to array and calculate totals for each day with opening/closing balances
+    const dailyReports = sortedDates.map((dateKey) => {
+      const dayData = transactionsByDate[dateKey];
+      
+      // Calculate income and losses by payment method
+      const incomeByMethod = {
+        CASH: new Prisma.Decimal(0),
+        BANK: new Prisma.Decimal(0),
+        BANK_NILE: new Prisma.Decimal(0),
+      };
+      const lossesByMethod = {
+        CASH: new Prisma.Decimal(0),
+        BANK: new Prisma.Decimal(0),
+        BANK_NILE: new Prisma.Decimal(0),
+      };
+
+      dayData.income.forEach((t: any) => {
+        const method = t.method as 'CASH' | 'BANK' | 'BANK_NILE';
+        incomeByMethod[method] = incomeByMethod[method].add(new Prisma.Decimal(t.amount));
+      });
+
+      dayData.losses.forEach((t: any) => {
+        const method = t.method as 'CASH' | 'BANK' | 'BANK_NILE';
+        lossesByMethod[method] = lossesByMethod[method].add(new Prisma.Decimal(t.amount));
+      });
+
+      // Opening balance for this day (before transactions)
+      const openingBalance = {
+        CASH: runningBalances.CASH,
+        BANK: runningBalances.BANK,
+        BANK_NILE: runningBalances.BANK_NILE,
+      };
+
+      // Update running balances (opening + income - losses)
+      runningBalances.CASH = runningBalances.CASH.add(incomeByMethod.CASH).sub(lossesByMethod.CASH);
+      runningBalances.BANK = runningBalances.BANK.add(incomeByMethod.BANK).sub(lossesByMethod.BANK);
+      runningBalances.BANK_NILE = runningBalances.BANK_NILE.add(incomeByMethod.BANK_NILE).sub(lossesByMethod.BANK_NILE);
+
+      // Closing balance for this day (after transactions)
+      const closingBalance = {
+        CASH: runningBalances.CASH,
+        BANK: runningBalances.BANK,
+        BANK_NILE: runningBalances.BANK_NILE,
+      };
+
+      const totalIncome = incomeByMethod.CASH.add(incomeByMethod.BANK).add(incomeByMethod.BANK_NILE);
+      const totalLosses = lossesByMethod.CASH.add(lossesByMethod.BANK).add(lossesByMethod.BANK_NILE);
       const netProfit = totalIncome.sub(totalLosses);
       
       return {
@@ -2416,8 +2568,30 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
         netProfit: netProfit.toString(),
         incomeCount: dayData.income.length,
         lossesCount: dayData.losses.length,
+        openingBalance: {
+          CASH: openingBalance.CASH.toString(),
+          BANK: openingBalance.BANK.toString(),
+          BANK_NILE: openingBalance.BANK_NILE.toString(),
+          total: openingBalance.CASH.add(openingBalance.BANK).add(openingBalance.BANK_NILE).toString(),
+        },
+        closingBalance: {
+          CASH: closingBalance.CASH.toString(),
+          BANK: closingBalance.BANK.toString(),
+          BANK_NILE: closingBalance.BANK_NILE.toString(),
+          total: closingBalance.CASH.add(closingBalance.BANK).add(closingBalance.BANK_NILE).toString(),
+        },
+        incomeByMethod: {
+          CASH: incomeByMethod.CASH.toString(),
+          BANK: incomeByMethod.BANK.toString(),
+          BANK_NILE: incomeByMethod.BANK_NILE.toString(),
+        },
+        lossesByMethod: {
+          CASH: lossesByMethod.CASH.toString(),
+          BANK: lossesByMethod.BANK.toString(),
+          BANK_NILE: lossesByMethod.BANK_NILE.toString(),
+        },
       };
-    }).sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    }).reverse(); // Reverse to show newest first
     
     // Calculate overall summary
     const overallTotalIncome = dailyReports.reduce((sum, day) => 
@@ -2426,6 +2600,18 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
       sum.add(new Prisma.Decimal(day.totalLosses)), new Prisma.Decimal(0));
     const overallNetProfit = overallTotalIncome.sub(overallTotalLosses);
     
+    // Calculate overall opening and closing balances
+    const overallOpeningBalance = {
+      CASH: openingBalanceByMethod.CASH.toString(),
+      BANK: openingBalanceByMethod.BANK.toString(),
+      BANK_NILE: openingBalanceByMethod.BANK_NILE.toString(),
+      total: openingBalanceByMethod.CASH.add(openingBalanceByMethod.BANK).add(openingBalanceByMethod.BANK_NILE).toString(),
+    };
+
+    const overallClosingBalance = dailyReports.length > 0 
+      ? dailyReports[dailyReports.length - 1].closingBalance 
+      : overallOpeningBalance;
+
     res.json({
       startDate: startOfDay.toISOString().split('T')[0],
       endDate: endOfDay.toISOString().split('T')[0],
@@ -2434,6 +2620,8 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
         totalLosses: overallTotalLosses.toString(),
         netProfit: overallNetProfit.toString(),
         totalDays: dailyReports.length,
+        openingBalance: overallOpeningBalance,
+        closingBalance: overallClosingBalance,
       },
       dailyReports,
     });
