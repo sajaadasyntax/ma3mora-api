@@ -40,7 +40,7 @@ const invoiceItemSchema = z.object({
 const createInvoiceSchema = z.object({
   inventoryId: z.string(),
   section: z.enum(['GROCERY', 'BAKERY']),
-  customerId: z.string(),
+  customerId: z.string().optional(),
   paymentMethod: z.enum(['CASH', 'BANK', 'BANK_NILE']),
   discount: z.number().min(0).default(0),
   items: z.array(invoiceItemSchema).min(1),
@@ -122,13 +122,19 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'MANAGER')
   try {
     const data = createInvoiceSchema.parse(req.body);
 
-    // Get customer to determine pricing tier
-    const customer = await prisma.customer.findUnique({
-      where: { id: data.customerId },
-    });
+    // Get customer to determine pricing tier (default to RETAIL if no customer)
+    let customer = null;
+    let pricingTier: 'WHOLESALE' | 'RETAIL' = 'RETAIL';
+    
+    if (data.customerId) {
+      customer = await prisma.customer.findUnique({
+        where: { id: data.customerId },
+      });
 
-    if (!customer) {
-      return res.status(404).json({ error: 'العميل غير موجود' });
+      if (!customer) {
+        return res.status(404).json({ error: 'العميل غير موجود' });
+      }
+      pricingTier = customer.type;
     }
 
     // Get items with prices
@@ -137,7 +143,7 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'MANAGER')
       where: { id: { in: itemIds } },
       include: {
         prices: {
-          where: { tier: customer.type },
+          where: { tier: pricingTier },
           orderBy: { validFrom: 'desc' },
           take: 1,
         },
@@ -177,7 +183,7 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'MANAGER')
         inventoryId: data.inventoryId,
         section: data.section,
         salesUserId: req.user!.id,
-        customerId: data.customerId,
+        customerId: data.customerId || null,
         paymentMethod: data.paymentMethod,
         paymentStatus: 'CREDIT',
         deliveryStatus: 'NOT_DELIVERED',

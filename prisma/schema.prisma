@@ -266,7 +266,7 @@ model SalesInvoice {
   inventoryId        String
   section            Section
   salesUserId        String
-  customerId         String
+  customerId         String?
   paymentMethod      PaymentMethod
   paymentStatus      PaymentStatus  @default(CREDIT)
   deliveryStatus     DeliveryStatus @default(NOT_DELIVERED)
@@ -283,7 +283,7 @@ model SalesInvoice {
 
   inventory               Inventory @relation(fields: [inventoryId], references: [id])
   salesUser               User      @relation(fields: [salesUserId], references: [id])
-  customer                Customer  @relation(fields: [customerId], references: [id])
+  customer                Customer? @relation(fields: [customerId], references: [id])
   paymentConfirmedByUser  User?     @relation("InvoicePaymentConfirmer", fields: [paymentConfirmedBy], references: [id])
 
   items      SalesInvoiceItem[]
