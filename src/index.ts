@@ -11,6 +11,8 @@ import salesRoutes from './routes/sales';
 import procurementRoutes from './routes/procurement';
 import accountingRoutes from './routes/accounting';
 import employeesRoutes from './routes/employees';
+import uploadsRoutes from './routes/uploads';
+import path from 'path';
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -23,6 +25,8 @@ app.use(cors({
 app.use(compression()); // Add compression for faster data transfer
 app.use(express.json());
 app.use(cookieParser());
+// Static files for uploaded receipts
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -34,6 +38,7 @@ app.use('/api/sales', salesRoutes);
 app.use('/api/procurement', procurementRoutes);
 app.use('/api/accounting', accountingRoutes);
 app.use('/api/employees', employeesRoutes);
+app.use('/api/uploads', uploadsRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
