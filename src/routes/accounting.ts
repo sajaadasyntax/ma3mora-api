@@ -874,6 +874,72 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), asyn
   }
 });
 
+// Receivables (له) and Payables (عليه) report
+router.get('/receivables-payables', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (req: AuthRequest, res) => {
+  try {
+    const { section } = req.query;
+
+    // Customers receivables: sum invoices total - paidAmount
+    const customers = await prisma.customer.findMany({
+      include: {
+        salesInvoices: section
+          ? { where: { section: section as any }, select: { total: true, paidAmount: true } }
+          : { select: { total: true, paidAmount: true } },
+      },
+    });
+
+    const receivables = customers
+      .map((c) => {
+        const total = c.salesInvoices.reduce((sum: Prisma.Decimal, inv: any) => sum.add(inv.total), new Prisma.Decimal(0));
+        const paid = c.salesInvoices.reduce((sum: Prisma.Decimal, inv: any) => sum.add(inv.paidAmount || 0), new Prisma.Decimal(0));
+        const remaining = total.sub(paid);
+        return {
+          id: c.id,
+          name: c.name,
+          division: c.division,
+          total: total.toFixed(2),
+          paid: paid.toFixed(2),
+          remaining: remaining.toFixed(2),
+        };
+      })
+      .filter((r) => new Prisma.Decimal(r.remaining).greaterThan(0));
+
+    // Suppliers payables: sum procurement orders total - paidAmount, excluding cancelled
+    const suppliers = await prisma.supplier.findMany({
+      include: {
+        procOrders: section
+          ? { where: { status: { not: 'CANCELLED' }, section: section as any }, select: { total: true, paidAmount: true } }
+          : { where: { status: { not: 'CANCELLED' } }, select: { total: true, paidAmount: true } },
+      },
+    });
+
+    const payables = suppliers
+      .map((s) => {
+        const total = s.procOrders.reduce((sum: Prisma.Decimal, o: any) => sum.add(o.total), new Prisma.Decimal(0));
+        const paid = s.procOrders.reduce((sum: Prisma.Decimal, o: any) => sum.add(o.paidAmount || 0), new Prisma.Decimal(0));
+        const remaining = total.sub(paid);
+        return {
+          id: s.id,
+          name: s.name,
+          total: total.toFixed(2),
+          paid: paid.toFixed(2),
+          remaining: remaining.toFixed(2),
+        };
+      })
+      .filter((p) => new Prisma.Decimal(p.remaining).greaterThan(0));
+
+    const totals = {
+      receivables: receivables.reduce((sum, r) => sum.add(r.remaining), new Prisma.Decimal(0)).toFixed(2),
+      payables: payables.reduce((sum, p) => sum.add(p.remaining), new Prisma.Decimal(0)).toFixed(2),
+    };
+
+    res.json({ receivables, payables, totals });
+  } catch (error) {
+    console.error('Get receivables/payables error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
 router.post('/balance/close', requireRole('ACCOUNTANT', 'MANAGER'), async (req: AuthRequest, res) => {
   try {
     // Close all opening balances for CASHBOX scope only - optimized with indexed query
