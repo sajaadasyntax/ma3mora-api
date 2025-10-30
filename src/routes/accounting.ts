@@ -2453,44 +2453,48 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
       BANK_NILE: new Prisma.Decimal(0),
     };
 
+    // Define valid payment methods and type guard
+    const validMethods = ['CASH', 'BANK', 'BANK_NILE'] as const;
+    const isValidMethod = (m: any): m is 'CASH' | 'BANK' | 'BANK_NILE' => validMethods.includes(m);
+
     prePeriodSalesPayments.forEach((p) => {
-      const m = p.method as any;
+      const m = p.method;
       if (isValidMethod(m)) {
         prePeriodImpact[m] = prePeriodImpact[m].add(p.amount);
       }
     });
 
     prePeriodProcPayments.forEach((p) => {
-      const m = p.method as any;
+      const m = p.method;
       if (isValidMethod(m)) {
         prePeriodImpact[m] = prePeriodImpact[m].sub(p.amount);
       }
     });
 
     prePeriodExpenses.forEach((e) => {
-      const m = e.method as any;
+      const m = e.method;
       if (isValidMethod(m)) {
         prePeriodImpact[m] = prePeriodImpact[m].sub(e.amount);
       }
     });
 
     prePeriodSalaries.forEach((s: any) => {
-      const m = s.paymentMethod as any;
+      const m = s.paymentMethod;
       if (isValidMethod(m)) {
         prePeriodImpact[m] = prePeriodImpact[m].sub(s.amount);
       }
     });
 
     prePeriodAdvances.forEach((a: any) => {
-      const m = a.paymentMethod as any;
+      const m = a.paymentMethod;
       if (isValidMethod(m)) {
         prePeriodImpact[m] = prePeriodImpact[m].sub(a.amount);
       }
     });
 
     prePeriodCashExchanges.forEach((e: any) => {
-      const fromM = e.fromMethod as any;
-      const toM = e.toMethod as any;
+      const fromM = e.fromMethod;
+      const toM = e.toMethod;
       if (isValidMethod(fromM)) {
         prePeriodImpact[fromM] = prePeriodImpact[fromM].sub(e.amount);
       }
@@ -2513,9 +2517,6 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
       BANK_NILE: openingBalanceByMethod.BANK_NILE,
     };
 
-    // Convert to array and calculate totals for each day with opening/closing balances
-    const validMethods = ['CASH', 'BANK', 'BANK_NILE'] as const;
-    const isValidMethod = (m: any): m is 'CASH' | 'BANK' | 'BANK_NILE' => validMethods.includes(m);
 
     const dailyReports = sortedDates.map((dateKey) => {
       const dayData = transactionsByDate[dateKey];
@@ -2533,14 +2534,14 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
       };
 
       dayData.income.forEach((t: any) => {
-        const method = t.method as any;
+        const method = t.method;
         if (isValidMethod(method)) {
           incomeByMethod[method] = incomeByMethod[method].add(new Prisma.Decimal(t.amount));
         }
       });
 
       dayData.losses.forEach((t: any) => {
-        const method = t.method as any;
+        const method = t.method;
         if (isValidMethod(method)) {
           lossesByMethod[method] = lossesByMethod[method].add(new Prisma.Decimal(t.amount));
         }
@@ -2559,14 +2560,14 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
       };
 
       dayData.income.forEach((t: any) => {
-        const method = t.method as any;
+        const method = t.method;
         if (isValidMethod(method)) {
           realIncomeByMethod[method] = realIncomeByMethod[method].add(new Prisma.Decimal(t.amount));
         }
       });
 
       dayData.losses.forEach((t: any) => {
-        const method = t.method as any;
+        const method = t.method;
         if (isValidMethod(method)) {
           realLossesByMethod[method] = realLossesByMethod[method].add(new Prisma.Decimal(t.amount));
         }
@@ -2574,8 +2575,8 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
 
       // Process cash exchanges - affect balances but NOT income/loss totals
       (dayData.transfers || []).forEach((transfer: any) => {
-        const fromM = transfer.fromMethod as any;
-        const toM = transfer.toMethod as any;
+        const fromM = transfer.fromMethod;
+        const toM = transfer.toMethod;
         if (isValidMethod(fromM)) {
           lossesByMethod[fromM] = lossesByMethod[fromM].add(new Prisma.Decimal(transfer.amount));
         }
