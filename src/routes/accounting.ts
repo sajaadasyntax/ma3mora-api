@@ -2843,5 +2843,220 @@ router.get('/commissions', requireRole('ACCOUNTANT', 'MANAGER'), async (req: Aut
   }
 });
 
+// Customer Report endpoint
+router.get('/customer-report', requireRole('ACCOUNTANT', 'MANAGER', 'SALES_GROCERY', 'SALES_BAKERY'), async (req: AuthRequest, res) => {
+  try {
+    const { startDate, endDate, type, customerId, paymentMethod } = req.query;
+    
+    const where: any = {};
+    
+    // Date filtering
+    if (startDate && endDate) {
+      where.createdAt = {
+        gte: new Date(startDate as string),
+        lte: new Date(endDate as string),
+      };
+    } else if (startDate) {
+      where.createdAt = {
+        gte: new Date(startDate as string),
+      };
+    } else if (endDate) {
+      where.createdAt = {
+        lte: new Date(endDate as string),
+      };
+    }
+    
+    // Filter by customer
+    if (customerId) {
+      where.customerId = customerId;
+    }
+    
+    // Filter by payment method
+    if (paymentMethod) {
+      where.paymentMethod = paymentMethod;
+    }
+    
+    // Get invoices with related data
+    const invoices = await prisma.salesInvoice.findMany({
+      where,
+      include: {
+        customer: true,
+        inventory: true,
+        items: {
+          include: {
+            item: true,
+          },
+        },
+        payments: {
+          include: {
+            recordedByUser: {
+              select: { id: true, username: true },
+            },
+          },
+          orderBy: { paidAt: 'desc' },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    
+    // Filter by customer type if specified
+    let filteredInvoices = invoices;
+    if (type) {
+      filteredInvoices = invoices.filter(inv => inv.customer?.type === type);
+    }
+    
+    // Transform to report format
+    const reportData = filteredInvoices.map(invoice => ({
+      invoiceNumber: invoice.invoiceNumber,
+      date: invoice.createdAt,
+      customer: invoice.customer?.name || 'غير محدد',
+      customerType: invoice.customer?.type || 'غير محدد',
+      paymentMethod: invoice.paymentMethod,
+      subtotal: invoice.subtotal.toString(),
+      discount: invoice.discount.toString(),
+      total: invoice.total.toString(),
+      paidAmount: invoice.paidAmount.toString(),
+      outstanding: invoice.total.sub(invoice.paidAmount).toString(),
+      paymentStatus: invoice.paymentStatus,
+      items: invoice.items.map(item => ({
+        itemName: item.item.name,
+        quantity: item.quantity.toString(),
+        unitPrice: item.unitPrice.toString(),
+        lineTotal: item.lineTotal.toString(),
+      })),
+      payments: invoice.payments.map(payment => ({
+        amount: payment.amount.toString(),
+        method: payment.method,
+        paidAt: payment.paidAt,
+        recordedBy: payment.recordedByUser?.username || 'غير محدد',
+      })),
+    }));
+    
+    // Calculate summary
+    const totalInvoices = filteredInvoices.length;
+    const totalSales = filteredInvoices.reduce((sum, inv) => sum.add(inv.total), new Prisma.Decimal(0));
+    const totalPaid = filteredInvoices.reduce((sum, inv) => sum.add(inv.paidAmount), new Prisma.Decimal(0));
+    const totalOutstanding = totalSales.sub(totalPaid);
+    
+    res.json({
+      data: reportData,
+      summary: {
+        totalInvoices,
+        totalSales: totalSales.toString(),
+        totalPaid: totalPaid.toString(),
+        totalOutstanding: totalOutstanding.toString(),
+      },
+    });
+  } catch (error) {
+    console.error('Customer report error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
+// Supplier Report endpoint
+router.get('/supplier-report', requireRole('ACCOUNTANT', 'MANAGER', 'PROCUREMENT'), async (req: AuthRequest, res) => {
+  try {
+    const { startDate, endDate, supplierId, paymentMethod } = req.query;
+    
+    const where: any = {};
+    
+    // Date filtering
+    if (startDate && endDate) {
+      where.createdAt = {
+        gte: new Date(startDate as string),
+        lte: new Date(endDate as string),
+      };
+    } else if (startDate) {
+      where.createdAt = {
+        gte: new Date(startDate as string),
+      };
+    } else if (endDate) {
+      where.createdAt = {
+        lte: new Date(endDate as string),
+      };
+    }
+    
+    // Filter by supplier
+    if (supplierId) {
+      where.supplierId = supplierId;
+    }
+    
+    // Get orders with related data
+    const orders = await prisma.procOrder.findMany({
+      where,
+      include: {
+        supplier: true,
+        inventory: true,
+        items: {
+          include: {
+            item: true,
+          },
+        },
+        payments: {
+          include: {
+            recordedByUser: {
+              select: { id: true, username: true },
+            },
+          },
+          orderBy: { paidAt: 'desc' },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    
+    // Filter by payment method from payments
+    let filteredOrders = orders;
+    if (paymentMethod) {
+      filteredOrders = orders.filter(order => 
+        order.payments.some(p => p.method === paymentMethod) || 
+        (!order.payments.length && paymentMethod === 'CASH')
+      );
+    }
+    
+    // Transform to report format
+    const reportData = filteredOrders.map(order => ({
+      orderNumber: order.orderNumber,
+      date: order.createdAt,
+      supplier: order.supplier.name,
+      total: order.total.toString(),
+      paidAmount: order.paidAmount.toString(),
+      outstanding: order.total.sub(order.paidAmount).toString(),
+      paymentStatus: order.paymentConfirmed ? 'CONFIRMED' : 'PENDING',
+      status: order.status,
+      items: order.items.map(item => ({
+        itemName: item.item.name,
+        quantity: item.quantity.toString(),
+        unitCost: item.unitCost.toString(),
+        lineTotal: item.lineTotal.toString(),
+      })),
+      payments: order.payments.map(payment => ({
+        amount: payment.amount.toString(),
+        method: payment.method,
+        paidAt: payment.paidAt,
+        recordedBy: payment.recordedByUser?.username || 'غير محدد',
+      })),
+    }));
+    
+    // Calculate summary
+    const totalOrders = filteredOrders.length;
+    const totalPurchases = filteredOrders.reduce((sum, order) => sum.add(order.total), new Prisma.Decimal(0));
+    const totalPaid = filteredOrders.reduce((sum, order) => sum.add(order.paidAmount), new Prisma.Decimal(0));
+    const totalOutstanding = totalPurchases.sub(totalPaid);
+    
+    res.json({
+      data: reportData,
+      summary: {
+        totalOrders,
+        totalPurchases: totalPurchases.toString(),
+        totalPaid: totalPaid.toString(),
+        totalOutstanding: totalOutstanding.toString(),
+      },
+    });
+  } catch (error) {
+    console.error('Supplier report error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
 export default router;
 
