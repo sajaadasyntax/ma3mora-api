@@ -1059,12 +1059,60 @@ router.get('/receivables-payables', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGE
       })
       .filter((p) => new Prisma.Decimal(p.remaining).greaterThan(0));
 
+    // Expenses (regular + salaries + advances) should be counted toward liabilities ("عليه")
+    // Regular expenses - optionally filter by section if present
+    const expensesWhere: any = {};
+    if (section) expensesWhere.section = section;
+    const expenses = await prisma.expense.findMany({ where: expensesWhere });
+    const totalExpenses = expenses.reduce(
+      (sum: Prisma.Decimal, exp: any) => sum.add(exp.amount),
+      new Prisma.Decimal(0)
+    );
+
+    // Paid salaries (no section association)
+    const paidSalaries = await prisma.salary.findMany({ where: { paidAt: { not: null } } });
+    const totalSalaries = paidSalaries.reduce(
+      (sum: Prisma.Decimal, s: any) => sum.add(s.amount),
+      new Prisma.Decimal(0)
+    );
+
+    // Paid advances (no section association)
+    const paidAdvances = await prisma.advance.findMany({ where: { paidAt: { not: null } } });
+    const totalAdvances = paidAdvances.reduce(
+      (sum: Prisma.Decimal, a: any) => sum.add(a.amount),
+      new Prisma.Decimal(0)
+    );
+
+    const totalAllExpenses = totalExpenses.add(totalSalaries).add(totalAdvances);
+
+    // Totals
+    const receivablesTotal = receivables.reduce(
+      (sum: Prisma.Decimal, r: any) => sum.add(r.remaining),
+      new Prisma.Decimal(0)
+    );
+    const payablesTotal = payables.reduce(
+      (sum: Prisma.Decimal, p: any) => sum.add(p.remaining),
+      new Prisma.Decimal(0)
+    );
+
     const totals = {
-      receivables: receivables.reduce((sum, r) => sum.add(r.remaining), new Prisma.Decimal(0)).toFixed(2),
-      payables: payables.reduce((sum, p) => sum.add(p.remaining), new Prisma.Decimal(0)).toFixed(2),
+      receivables: receivablesTotal.toFixed(2),
+      payables: payablesTotal.toFixed(2),
+      expenses: totalAllExpenses.toFixed(2),
+      payablesWithExpenses: payablesTotal.add(totalAllExpenses).toFixed(2),
     };
 
-    res.json({ receivables, payables, totals });
+    res.json({ 
+      receivables, 
+      payables, 
+      expenses: {
+        regular: totalExpenses.toFixed(2),
+        salaries: totalSalaries.toFixed(2),
+        advances: totalAdvances.toFixed(2),
+        total: totalAllExpenses.toFixed(2),
+      },
+      totals 
+    });
   } catch (error) {
     console.error('Get receivables/payables error:', error);
     res.status(500).json({ error: 'خطأ في الخادم' });
