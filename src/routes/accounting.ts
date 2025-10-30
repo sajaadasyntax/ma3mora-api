@@ -619,15 +619,15 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), asyn
     });
 
     const cashSalaries = paidSalaries
-      .filter(s => (s as any).paymentMethod === 'CASH')
+      .filter(s => s.paymentMethod === 'CASH')
       .reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0));
 
     const bankSalaries = paidSalaries
-      .filter(s => (s as any).paymentMethod === 'BANK')
+      .filter(s => s.paymentMethod === 'BANK')
       .reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0));
 
     const bankNileSalaries = paidSalaries
-      .filter(s => (s as any).paymentMethod === 'BANK_NILE')
+      .filter(s => s.paymentMethod === 'BANK_NILE')
       .reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0));
 
     // Get paid advances (only where paidAt is not null)
@@ -641,15 +641,15 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), asyn
     });
 
     const cashAdvances = paidAdvances
-      .filter(a => (a as any).paymentMethod === 'CASH')
+      .filter(a => a.paymentMethod === 'CASH')
       .reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0));
 
     const bankAdvances = paidAdvances
-      .filter(a => (a as any).paymentMethod === 'BANK')
+      .filter(a => a.paymentMethod === 'BANK')
       .reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0));
 
     const bankNileAdvances = paidAdvances
-      .filter(a => (a as any).paymentMethod === 'BANK_NILE')
+      .filter(a => a.paymentMethod === 'BANK_NILE')
       .reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0));
 
     // Get cash exchanges (transfers between payment methods)
@@ -701,6 +701,7 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), asyn
       }
     });
 
+    // Exclude COMMISSION from liquid assets subtraction (commission is not an outflow)
     const cashProcPayments = procPayments
       .filter(p => p.method === 'CASH')
       .reduce((sum, p) => sum.add(p.amount), new Prisma.Decimal(0));
@@ -712,6 +713,8 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), asyn
     const bankNileProcPayments = procPayments
       .filter(p => p.method === 'BANK_NILE')
       .reduce((sum, p) => sum.add(p.amount), new Prisma.Decimal(0));
+
+    // Note: Commission payments are excluded by design and not subtracted
 
     // Get procurement orders with items for expenses tracking - exclude cancelled orders
     const procOrders = await prisma.procOrder.findMany({
@@ -912,30 +915,30 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), asyn
       salaries: {
         cash: {
           total: cashSalaries.toFixed(2),
-          count: paidSalaries.filter(s => (s as any).paymentMethod === 'CASH').length
+          count: paidSalaries.filter(s => s.paymentMethod === 'CASH').length
         },
         bank: {
           total: bankSalaries.toFixed(2),
-          count: paidSalaries.filter(s => (s as any).paymentMethod === 'BANK').length
+          count: paidSalaries.filter(s => s.paymentMethod === 'BANK').length
         },
         bankNile: {
           total: bankNileSalaries.toFixed(2),
-          count: paidSalaries.filter(s => (s as any).paymentMethod === 'BANK_NILE').length
+          count: paidSalaries.filter(s => s.paymentMethod === 'BANK_NILE').length
         },
         total: cashSalaries.add(bankSalaries).add(bankNileSalaries).toFixed(2)
       },
       advances: {
         cash: {
           total: cashAdvances.toFixed(2),
-          count: paidAdvances.filter(a => (a as any).paymentMethod === 'CASH').length
+          count: paidAdvances.filter(a => a.paymentMethod === 'CASH').length
         },
         bank: {
           total: bankAdvances.toFixed(2),
-          count: paidAdvances.filter(a => (a as any).paymentMethod === 'BANK').length
+          count: paidAdvances.filter(a => a.paymentMethod === 'BANK').length
         },
         bankNile: {
           total: bankNileAdvances.toFixed(2),
-          count: paidAdvances.filter(a => (a as any).paymentMethod === 'BANK_NILE').length
+          count: paidAdvances.filter(a => a.paymentMethod === 'BANK_NILE').length
         },
         total: cashAdvances.add(bankAdvances).add(bankNileAdvances).toFixed(2)
       },
