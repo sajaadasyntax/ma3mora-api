@@ -56,8 +56,8 @@ export class AggregationService {
       where: {
         date_inventoryId_section: {
           date: dateOnly,
-          inventoryId: inventoryId ?? null,
-          section: section ?? null,
+          inventoryId: (inventoryId ?? null) as string | null,
+          section: (section ?? null) as Section | null,
         },
       },
     });
@@ -324,15 +324,15 @@ export class AggregationService {
       where: {
         date_inventoryId_section: {
           date: dateOnly,
-          inventoryId: inventoryId ?? null,
-          section: section ?? null,
+          inventoryId: (inventoryId ?? null) as string | null,
+          section: (section ?? null) as Section | null,
         },
       },
       update: updateData,
       create: {
         date: dateOnly,
-        inventoryId: inventoryId ?? null,
-        section: section ?? null,
+        inventoryId: (inventoryId ?? null) as string | null,
+        section: (section ?? null) as Section | null,
         ...updateData,
       },
     });
