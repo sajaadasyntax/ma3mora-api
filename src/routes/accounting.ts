@@ -2037,33 +2037,162 @@ router.get('/bank-transactions', requireRole('ACCOUNTANT', 'MANAGER'), async (re
     // Sort by date (newest first)
     transactions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-    // Calculate totals
-    const totals = {
-      BANK: transactions
-        .filter(t => t.method === 'BANK')
-        .reduce((sum, t) => sum.add(t.amount), new Prisma.Decimal(0)),
-      BANK_NILE: transactions
-        .filter(t => t.method === 'BANK_NILE')
-        .reduce((sum, t) => sum.add(t.amount), new Prisma.Decimal(0)),
-      total: transactions
-        .reduce((sum, t) => sum.add(t.amount), new Prisma.Decimal(0)),
+    // Get opening balances for BANK and BANK_NILE
+    const openingBalances = await prisma.openingBalance.findMany({
+      where: { 
+        scope: 'CASHBOX',
+        isClosed: false 
+      },
+      orderBy: { openedAt: 'desc' },
+    });
+
+    const openingBank = openingBalances
+      .filter(b => (b as any).paymentMethod === 'BANK')
+      .reduce((sum, b) => sum.add(b.amount), new Prisma.Decimal(0));
+    
+    const openingBankNile = openingBalances
+      .filter(b => (b as any).paymentMethod === 'BANK_NILE')
+      .reduce((sum, b) => sum.add(b.amount), new Prisma.Decimal(0));
+
+    // Calculate income (sales payments only) by method
+    const bankIncome = salesPayments
+      .filter(p => p.method === 'BANK')
+      .reduce((sum, p) => sum.add(p.amount), new Prisma.Decimal(0));
+    
+    const bankNileIncome = salesPayments
+      .filter(p => p.method === 'BANK_NILE')
+      .reduce((sum, p) => sum.add(p.amount), new Prisma.Decimal(0));
+
+    // Calculate expenses (procurement payments, regular expenses, salaries, advances) by method
+    const bankProcPayments = procPayments
+      .filter(p => p.method === 'BANK')
+      .reduce((sum, p) => sum.add(p.amount), new Prisma.Decimal(0));
+    
+    const bankNileProcPayments = procPayments
+      .filter(p => p.method === 'BANK_NILE')
+      .reduce((sum, p) => sum.add(p.amount), new Prisma.Decimal(0));
+
+    const bankExpenses = expenses
+      .filter(e => e.method === 'BANK')
+      .reduce((sum, e) => sum.add(e.amount), new Prisma.Decimal(0));
+    
+    const bankNileExpenses = expenses
+      .filter(e => e.method === 'BANK_NILE')
+      .reduce((sum, e) => sum.add(e.amount), new Prisma.Decimal(0));
+
+    const bankSalaries = salaries
+      .filter(s => s.paymentMethod === 'BANK')
+      .reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0));
+    
+    const bankNileSalaries = salaries
+      .filter(s => s.paymentMethod === 'BANK_NILE')
+      .reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0));
+
+    const bankAdvances = advances
+      .filter(a => a.paymentMethod === 'BANK')
+      .reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0));
+    
+    const bankNileAdvances = advances
+      .filter(a => a.paymentMethod === 'BANK_NILE')
+      .reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0));
+
+    // Calculate cash exchange impact (only for BANK and BANK_NILE methods)
+    let cashExchangeImpact = {
+      BANK: new Prisma.Decimal(0),
+      BANK_NILE: new Prisma.Decimal(0)
     };
 
-    // Calculate totals by type
+    cashExchanges.forEach((exchange: any) => {
+      // If fromMethod is BANK or BANK_NILE, subtract
+      if (exchange.fromMethod === 'BANK') {
+        cashExchangeImpact.BANK = cashExchangeImpact.BANK.sub(exchange.amount);
+      } else if (exchange.fromMethod === 'BANK_NILE') {
+        cashExchangeImpact.BANK_NILE = cashExchangeImpact.BANK_NILE.sub(exchange.amount);
+      }
+      // If toMethod is BANK or BANK_NILE, add
+      if (exchange.toMethod === 'BANK') {
+        cashExchangeImpact.BANK = cashExchangeImpact.BANK.add(exchange.amount);
+      } else if (exchange.toMethod === 'BANK_NILE') {
+        cashExchangeImpact.BANK_NILE = cashExchangeImpact.BANK_NILE.add(exchange.amount);
+      }
+    });
+
+    // Calculate net balances (similar to liquid-cash)
+    // Net = opening + income - proc payments - expenses - salaries - advances + cash exchanges
+    const netBank = openingBank
+      .add(bankIncome)
+      .sub(bankProcPayments)
+      .sub(bankExpenses)
+      .sub(bankSalaries)
+      .sub(bankAdvances)
+      .add(cashExchangeImpact.BANK);
+    
+    const netBankNile = openingBankNile
+      .add(bankNileIncome)
+      .sub(bankNileProcPayments)
+      .sub(bankNileExpenses)
+      .sub(bankNileSalaries)
+      .sub(bankNileAdvances)
+      .add(cashExchangeImpact.BANK_NILE);
+    
+    const netTotal = netBank.add(netBankNile);
+
+    // Calculate totals by type (for display purposes)
     const totalsByType: Record<string, Prisma.Decimal> = {};
     transactions.forEach(t => {
       if (!totalsByType[t.type]) {
         totalsByType[t.type] = new Prisma.Decimal(0);
       }
-      totalsByType[t.type] = totalsByType[t.type].add(t.amount);
+      totalsByType[t.type] = totalsByType[t.type].add(new Prisma.Decimal(t.amount));
     });
+
+    // Calculate total expenses including salaries and advances
+    const totalBankExpenses = bankExpenses.add(bankSalaries).add(bankAdvances);
+    const totalBankNileExpenses = bankNileExpenses.add(bankNileSalaries).add(bankNileAdvances);
 
     res.json({
       transactions,
       summary: {
-        total: totals.total.toFixed(2),
-        BANK: totals.BANK.toFixed(2),
-        BANK_NILE: totals.BANK_NILE.toFixed(2),
+        opening: {
+          BANK: openingBank.toFixed(2),
+          BANK_NILE: openingBankNile.toFixed(2),
+          total: openingBank.add(openingBankNile).toFixed(2),
+        },
+        income: {
+          BANK: bankIncome.toFixed(2),
+          BANK_NILE: bankNileIncome.toFixed(2),
+          total: bankIncome.add(bankNileIncome).toFixed(2),
+        },
+        expenses: {
+          BANK: {
+            regular: bankExpenses.toFixed(2),
+            salaries: bankSalaries.toFixed(2),
+            advances: bankAdvances.toFixed(2),
+            total: totalBankExpenses.toFixed(2),
+          },
+          BANK_NILE: {
+            regular: bankNileExpenses.toFixed(2),
+            salaries: bankNileSalaries.toFixed(2),
+            advances: bankNileAdvances.toFixed(2),
+            total: totalBankNileExpenses.toFixed(2),
+          },
+          total: totalBankExpenses.add(totalBankNileExpenses).toFixed(2),
+        },
+        procurementPayments: {
+          BANK: bankProcPayments.toFixed(2),
+          BANK_NILE: bankNileProcPayments.toFixed(2),
+          total: bankProcPayments.add(bankNileProcPayments).toFixed(2),
+        },
+        cashExchanges: {
+          BANK: cashExchangeImpact.BANK.toFixed(2),
+          BANK_NILE: cashExchangeImpact.BANK_NILE.toFixed(2),
+          total: cashExchangeImpact.BANK.add(cashExchangeImpact.BANK_NILE).toFixed(2),
+        },
+        net: {
+          BANK: netBank.toFixed(2),
+          BANK_NILE: netBankNile.toFixed(2),
+          total: netTotal.toFixed(2),
+        },
         count: transactions.length,
         byType: Object.fromEntries(
           Object.entries(totalsByType).map(([type, amount]) => [type, amount.toFixed(2)])
