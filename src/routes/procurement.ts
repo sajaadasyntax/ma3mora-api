@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { requireAuth, requireRole, blockAuditorWrites } from '../middleware/auth';
 import { createAuditLog } from '../middleware/audit';
 import { AuthRequest } from '../types';
+import { aggregationService } from '../services/aggregationService';
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -168,6 +169,33 @@ router.post('/orders', requireRole('PROCUREMENT', 'MANAGER'), checkBalanceOpen, 
         inventory: true,
       },
     });
+
+    // Update aggregates (async, don't block response)
+    try {
+      const orderDate = order.createdAt;
+      await aggregationService.updateDailyFinancialAggregate(
+        orderDate,
+        {
+          procurementTotal: total,
+          procurementDebt: total, // No payment yet
+          procurementCount: 1,
+        },
+        data.inventoryId,
+        data.section
+      );
+
+      // Update supplier aggregate
+      await aggregationService.updateSupplierCumulativeAggregate(
+        order.supplierId,
+        orderDate,
+        {
+          totalPurchases: total,
+          orderCount: 1,
+        }
+      );
+    } catch (aggError) {
+      console.error('Aggregation update error (non-blocking):', aggError);
+    }
 
     res.status(201).json(order);
   } catch (error) {
@@ -999,8 +1027,49 @@ router.post('/orders/:id/payments', requireRole('MANAGER'), checkBalanceOpen, cr
           include: { recordedByUser: { select: { id: true, username: true } } },
           orderBy: { paidAt: 'desc' },
         },
+        supplier: true,
       },
     });
+
+    // Update aggregates (async, don't block response)
+    try {
+      if (paymentData.method !== 'COMMISSION') {
+        const paymentDate = payment.paidAt;
+        const paymentAmount = new Prisma.Decimal(paymentData.amount);
+        const procurementPaidByMethod = {
+          CASH: paymentData.method === 'CASH' ? paymentAmount : new Prisma.Decimal(0),
+          BANK: paymentData.method === 'BANK' ? paymentAmount : new Prisma.Decimal(0),
+          BANK_NILE: paymentData.method === 'BANK_NILE' ? paymentAmount : new Prisma.Decimal(0),
+        };
+
+        await aggregationService.updateDailyFinancialAggregate(
+          paymentDate,
+          {
+            procurementPaid: paymentAmount,
+            procurementDebt: paymentAmount.neg(), // Reduce debt
+            procurementCash: procurementPaidByMethod.CASH,
+            procurementBank: procurementPaidByMethod.BANK,
+            procurementBankNile: procurementPaidByMethod.BANK_NILE,
+          },
+          order.inventoryId,
+          order.section
+        );
+
+        // Update supplier aggregate
+        await aggregationService.updateSupplierCumulativeAggregate(
+          order.supplierId,
+          paymentDate,
+          {
+            totalPaid: paymentAmount,
+            purchasesCash: procurementPaidByMethod.CASH,
+            purchasesBank: procurementPaidByMethod.BANK,
+            purchasesBankNile: procurementPaidByMethod.BANK_NILE,
+          }
+        );
+      }
+    } catch (aggError) {
+      console.error('Aggregation update error (non-blocking):', aggError);
+    }
 
     res.json({ payment, order: updatedOrder });
   } catch (error) {
@@ -1253,6 +1322,79 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
       }
     });
 
+    // Add initial and final stock for inventory reports
+    let stockInfo: any = null;
+    if (inventoryId && startDate && endDate) {
+      const start = new Date(startDate as string);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(endDate as string);
+      end.setHours(23, 59, 59, 999);
+
+      // Get initial stock
+      const initialStocks = await prisma.inventoryStock.findMany({
+        where: { inventoryId: inventoryId as string },
+        include: { item: true },
+      });
+
+      // Get stock movements
+      const stockMovements = await prisma.stockMovement.findMany({
+        where: {
+          inventoryId: inventoryId as string,
+          movementDate: {
+            gte: start,
+            lte: end,
+          },
+        },
+        include: { item: true },
+      });
+
+      const initialStockByItem: Record<string, number> = {};
+      const finalStockByItem: Record<string, number> = {};
+
+      for (const stock of initialStocks) {
+        const firstMovement = stockMovements
+          .filter(m => m.itemId === stock.itemId)
+          .sort((a, b) => a.movementDate.getTime() - b.movementDate.getTime())[0];
+        
+        if (firstMovement) {
+          initialStockByItem[stock.itemId] = parseFloat(firstMovement.openingBalance.toString());
+        } else {
+          const changes = stockMovements
+            .filter(m => m.itemId === stock.itemId)
+            .reduce((sum, m) => 
+              sum + parseFloat(m.incoming.toString()) 
+              - parseFloat(m.outgoing.toString())
+              - parseFloat(m.pendingOutgoing.toString())
+              + parseFloat(m.incomingGifts.toString())
+              - parseFloat(m.outgoingGifts.toString()), 0
+            );
+          initialStockByItem[stock.itemId] = Math.max(0, parseFloat(stock.quantity.toString()) - changes);
+        }
+      }
+
+      for (const stock of initialStocks) {
+        const initial = initialStockByItem[stock.itemId] || 0;
+        const movements = stockMovements.filter(m => m.itemId === stock.itemId);
+        const totalIncoming = movements.reduce((sum, m) => sum + parseFloat(m.incoming.toString()), 0);
+        const totalOutgoing = movements.reduce((sum, m) => sum + parseFloat(m.outgoing.toString()) + parseFloat(m.pendingOutgoing.toString()), 0);
+        const totalIncomingGifts = movements.reduce((sum, m) => sum + parseFloat(m.incomingGifts.toString()), 0);
+        const totalOutgoingGifts = movements.reduce((sum, m) => sum + parseFloat(m.outgoingGifts.toString()), 0);
+        
+        finalStockByItem[stock.itemId] = initial + totalIncoming - totalOutgoing + totalIncomingGifts - totalOutgoingGifts;
+      }
+
+      stockInfo = {
+        initial: initialStockByItem,
+        final: finalStockByItem,
+        items: initialStocks.map(s => ({
+          itemId: s.itemId,
+          itemName: s.item.name,
+          initialStock: initialStockByItem[s.itemId] || 0,
+          finalStock: finalStockByItem[s.itemId] || 0,
+        })),
+      };
+    }
+
     res.json({
       period,
       data: reportData,
@@ -1262,6 +1404,7 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
         paidOrders: orders.filter(order => order.paymentConfirmed).length,
         unpaidOrders: orders.filter(order => !order.paymentConfirmed).length,
       },
+      ...(stockInfo && { stockInfo }),
     });
   } catch (error) {
     console.error('Procurement reports error:', error);

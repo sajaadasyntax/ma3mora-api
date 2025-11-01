@@ -103,6 +103,10 @@ model Inventory {
   transfersFrom     InventoryTransfer[] @relation("FromInventory")
   transfersTo       InventoryTransfer[] @relation("ToInventory")
   stockMovements    StockMovement[]
+  dailyFinancialAggregates DailyFinancialAggregate[]
+  monthlyFinancialAggregates MonthlyFinancialAggregate[]
+  dailyItemSalesAggregates DailyItemSalesAggregate[]
+  cumulativeBalanceSnapshots CumulativeBalanceSnapshot[]
 
   @@map("inventories")
 }
@@ -137,6 +141,7 @@ model Item {
   giftItems         SalesInvoiceItem[] @relation("GiftItem")
   giftProcItems     ProcOrderItem[] @relation("GiftProcItem")
   giftDeliveryItems InventoryDeliveryItem[] @relation("GiftDeliveryItem")
+  dailyItemSalesAggregates DailyItemSalesAggregate[]
 
   @@map("items")
 }
@@ -248,6 +253,7 @@ model Customer {
 
   salesInvoices  SalesInvoice[]
   openingBalance OpeningBalance[]
+  cumulativeAggregates CustomerCumulativeAggregate[]
 
   @@map("customers")
 }
@@ -262,6 +268,7 @@ model Supplier {
 
   procOrders     ProcOrder[]
   openingBalance OpeningBalance[]
+  cumulativeAggregates SupplierCumulativeAggregate[]
 
   @@map("suppliers")
 }
@@ -594,5 +601,267 @@ model CashExchange {
   createdByUser User          @relation(fields: [createdBy], references: [id])
 
   @@map("cash_exchanges")
+}
+
+// Daily Financial Aggregates - Cumulative daily totals for all financial transactions
+model DailyFinancialAggregate {
+  id              String   @id @default(cuid())
+  date            DateTime @db.Date
+  inventoryId     String?
+  section         Section?
+  
+  // Sales aggregates
+  salesTotal      Decimal  @default(0) @db.Decimal(10, 2)
+  salesReceived   Decimal  @default(0) @db.Decimal(10, 2)
+  salesDebt       Decimal  @default(0) @db.Decimal(10, 2)
+  salesCount      Int      @default(0)
+  
+  // Sales by payment method
+  salesCash       Decimal  @default(0) @db.Decimal(10, 2)
+  salesBank       Decimal  @default(0) @db.Decimal(10, 2)
+  salesBankNile   Decimal  @default(0) @db.Decimal(10, 2)
+  
+  // Procurement aggregates
+  procurementTotal      Decimal  @default(0) @db.Decimal(10, 2)
+  procurementPaid        Decimal  @default(0) @db.Decimal(10, 2)
+  procurementDebt       Decimal  @default(0) @db.Decimal(10, 2)
+  procurementCount       Int      @default(0)
+  procurementCancelled   Decimal  @default(0) @db.Decimal(10, 2)
+  
+  // Procurement by payment method
+  procurementCash        Decimal  @default(0) @db.Decimal(10, 2)
+  procurementBank        Decimal  @default(0) @db.Decimal(10, 2)
+  procurementBankNile    Decimal  @default(0) @db.Decimal(10, 2)
+  
+  // Expenses aggregates
+  expensesTotal   Decimal  @default(0) @db.Decimal(10, 2)
+  expensesCount   Int      @default(0)
+  
+  // Expenses by payment method
+  expensesCash       Decimal  @default(0) @db.Decimal(10, 2)
+  expensesBank       Decimal  @default(0) @db.Decimal(10, 2)
+  expensesBankNile   Decimal  @default(0) @db.Decimal(10, 2)
+  
+  // Salaries aggregates
+  salariesTotal     Decimal  @default(0) @db.Decimal(10, 2)
+  salariesCount     Int      @default(0)
+  salariesCash      Decimal  @default(0) @db.Decimal(10, 2)
+  salariesBank      Decimal  @default(0) @db.Decimal(10, 2)
+  salariesBankNile  Decimal  @default(0) @db.Decimal(10, 2)
+  
+  // Advances aggregates
+  advancesTotal     Decimal  @default(0) @db.Decimal(10, 2)
+  advancesCount     Int      @default(0)
+  advancesCash      Decimal  @default(0) @db.Decimal(10, 2)
+  advancesBank      Decimal  @default(0) @db.Decimal(10, 2)
+  advancesBankNile  Decimal  @default(0) @db.Decimal(10, 2)
+  
+  // Cash exchanges (net impact)
+  cashExchangesCash       Decimal  @default(0) @db.Decimal(10, 2)
+  cashExchangesBank       Decimal  @default(0) @db.Decimal(10, 2)
+  cashExchangesBankNile   Decimal  @default(0) @db.Decimal(10, 2)
+  
+  // Net calculations (calculated fields, updated on aggregate changes)
+  netCash         Decimal  @default(0) @db.Decimal(10, 2)
+  netBank         Decimal  @default(0) @db.Decimal(10, 2)
+  netBankNile     Decimal  @default(0) @db.Decimal(10, 2)
+  netTotal        Decimal  @default(0) @db.Decimal(10, 2)
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  inventory Inventory? @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+
+  @@unique([date, inventoryId, section])
+  @@index([date])
+  @@index([inventoryId, date])
+  @@index([section, date])
+  @@map("daily_financial_aggregates")
+}
+
+// Monthly Financial Aggregates - Rollup of daily aggregates for monthly reports
+model MonthlyFinancialAggregate {
+  id              String   @id @default(cuid())
+  year            Int
+  month           Int      // 1-12
+  inventoryId     String?
+  section         Section?
+  
+  // Same structure as DailyFinancialAggregate
+  salesTotal      Decimal  @default(0) @db.Decimal(10, 2)
+  salesReceived   Decimal  @default(0) @db.Decimal(10, 2)
+  salesDebt       Decimal  @default(0) @db.Decimal(10, 2)
+  salesCount      Int      @default(0)
+  salesCash       Decimal  @default(0) @db.Decimal(10, 2)
+  salesBank       Decimal  @default(0) @db.Decimal(10, 2)
+  salesBankNile   Decimal  @default(0) @db.Decimal(10, 2)
+  
+  procurementTotal      Decimal  @default(0) @db.Decimal(10, 2)
+  procurementPaid        Decimal  @default(0) @db.Decimal(10, 2)
+  procurementDebt       Decimal  @default(0) @db.Decimal(10, 2)
+  procurementCount       Int      @default(0)
+  procurementCancelled   Decimal  @default(0) @db.Decimal(10, 2)
+  procurementCash        Decimal  @default(0) @db.Decimal(10, 2)
+  procurementBank        Decimal  @default(0) @db.Decimal(10, 2)
+  procurementBankNile    Decimal  @default(0) @db.Decimal(10, 2)
+  
+  expensesTotal   Decimal  @default(0) @db.Decimal(10, 2)
+  expensesCount   Int      @default(0)
+  expensesCash    Decimal  @default(0) @db.Decimal(10, 2)
+  expensesBank    Decimal  @default(0) @db.Decimal(10, 2)
+  expensesBankNile Decimal @default(0) @db.Decimal(10, 2)
+  
+  salariesTotal     Decimal  @default(0) @db.Decimal(10, 2)
+  salariesCount     Int      @default(0)
+  salariesCash      Decimal  @default(0) @db.Decimal(10, 2)
+  salariesBank      Decimal  @default(0) @db.Decimal(10, 2)
+  salariesBankNile  Decimal  @default(0) @db.Decimal(10, 2)
+  
+  advancesTotal     Decimal  @default(0) @db.Decimal(10, 2)
+  advancesCount     Int      @default(0)
+  advancesCash      Decimal  @default(0) @db.Decimal(10, 2)
+  advancesBank      Decimal  @default(0) @db.Decimal(10, 2)
+  advancesBankNile  Decimal  @default(0) @db.Decimal(10, 2)
+  
+  cashExchangesCash       Decimal  @default(0) @db.Decimal(10, 2)
+  cashExchangesBank       Decimal  @default(0) @db.Decimal(10, 2)
+  cashExchangesBankNile   Decimal  @default(0) @db.Decimal(10, 2)
+  
+  netCash         Decimal  @default(0) @db.Decimal(10, 2)
+  netBank         Decimal  @default(0) @db.Decimal(10, 2)
+  netBankNile     Decimal  @default(0) @db.Decimal(10, 2)
+  netTotal        Decimal  @default(0) @db.Decimal(10, 2)
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  inventory Inventory? @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+
+  @@unique([year, month, inventoryId, section])
+  @@index([year, month])
+  @@index([inventoryId, year, month])
+  @@index([section, year, month])
+  @@map("monthly_financial_aggregates")
+}
+
+// Daily Item Sales Aggregates - Per-item daily sales totals
+model DailyItemSalesAggregate {
+  id              String   @id @default(cuid())
+  date            DateTime @db.Date
+  inventoryId     String?
+  itemId          String
+  section         Section?
+  
+  // Quantity aggregates
+  totalQuantity   Decimal  @default(0) @db.Decimal(10, 2)
+  totalGiftQty    Decimal  @default(0) @db.Decimal(10, 2)
+  
+  // Revenue aggregates
+  totalAmount     Decimal  @default(0) @db.Decimal(10, 2)
+  averageUnitPrice Decimal @default(0) @db.Decimal(10, 2)
+  
+  // Count
+  invoiceCount    Int      @default(0)
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  inventory Inventory? @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+  item      Item        @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@unique([date, inventoryId, itemId, section])
+  @@index([date])
+  @@index([itemId, date])
+  @@index([inventoryId, date])
+  @@index([section, date])
+  @@map("daily_item_sales_aggregates")
+}
+
+// Customer Cumulative Aggregates - Running totals per customer
+model CustomerCumulativeAggregate {
+  id              String   @id @default(cuid())
+  customerId      String
+  date            DateTime @db.Date
+  
+  // Cumulative totals
+  totalInvoices   Int      @default(0)
+  totalSales      Decimal  @default(0) @db.Decimal(10, 2)
+  totalPaid       Decimal  @default(0) @db.Decimal(10, 2)
+  totalOutstanding Decimal @default(0) @db.Decimal(10, 2)
+  
+  // By payment method
+  salesCash       Decimal  @default(0) @db.Decimal(10, 2)
+  salesBank       Decimal  @default(0) @db.Decimal(10, 2)
+  salesBankNile   Decimal  @default(0) @db.Decimal(10, 2)
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, date])
+  @@index([customerId])
+  @@index([date])
+  @@map("customer_cumulative_aggregates")
+}
+
+// Supplier Cumulative Aggregates - Running totals per supplier
+model SupplierCumulativeAggregate {
+  id              String   @id @default(cuid())
+  supplierId      String
+  date            DateTime @db.Date
+  
+  // Cumulative totals
+  totalOrders     Int      @default(0)
+  totalPurchases  Decimal  @default(0) @db.Decimal(10, 2)
+  totalPaid       Decimal  @default(0) @db.Decimal(10, 2)
+  totalOutstanding Decimal @default(0) @db.Decimal(10, 2)
+  
+  // By payment method
+  purchasesCash   Decimal  @default(0) @db.Decimal(10, 2)
+  purchasesBank   Decimal  @default(0) @db.Decimal(10, 2)
+  purchasesBankNile Decimal @default(0) @db.Decimal(10, 2)
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
+  @@unique([supplierId, date])
+  @@index([supplierId])
+  @@index([date])
+  @@map("supplier_cumulative_aggregates")
+}
+
+// Cumulative Balance Snapshots - Daily balance snapshots
+model CumulativeBalanceSnapshot {
+  id              String   @id @default(cuid())
+  date            DateTime @db.Date
+  inventoryId     String?
+  section         Section?
+  
+  // Opening balances (cumulative from previous day)
+  openingCash     Decimal  @default(0) @db.Decimal(10, 2)
+  openingBank     Decimal  @default(0) @db.Decimal(10, 2)
+  openingBankNile Decimal  @default(0) @db.Decimal(10, 2)
+  
+  // Closing balances (calculated)
+  closingCash     Decimal  @default(0) @db.Decimal(10, 2)
+  closingBank     Decimal  @default(0) @db.Decimal(10, 2)
+  closingBankNile Decimal  @default(0) @db.Decimal(10, 2)
+  
+  // Receivables/Payables
+  receivablesTotal Decimal @default(0) @db.Decimal(10, 2)
+  payablesTotal    Decimal @default(0) @db.Decimal(10, 2)
+  payablesWithExpenses Decimal @default(0) @db.Decimal(10, 2)
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  inventory Inventory? @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+
+  @@unique([date, inventoryId, section])
+  @@index([date])
+  @@map("cumulative_balance_snapshots")
 }
 

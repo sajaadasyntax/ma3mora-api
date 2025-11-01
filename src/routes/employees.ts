@@ -1,9 +1,10 @@
 import { Router } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { requireAuth, requireRole, blockAuditorWrites } from '../middleware/auth';
 import { createAuditLog } from '../middleware/audit';
 import { AuthRequest } from '../types';
+import { aggregationService } from '../services/aggregationService';
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -197,6 +198,33 @@ router.post('/salaries/:id/pay', requireRole('ACCOUNTANT', 'MANAGER'), createAud
         },
       },
     });
+
+    // Update aggregates (async, don't block response)
+    try {
+      if (salary.paidAt) {
+        const paymentDate = salary.paidAt;
+        const salaryAmount = salary.amount;
+        const paymentMethod = (salary as any).paymentMethod || 'CASH';
+        const salariesByMethod = {
+          CASH: paymentMethod === 'CASH' ? salaryAmount : new Prisma.Decimal(0),
+          BANK: paymentMethod === 'BANK' ? salaryAmount : new Prisma.Decimal(0),
+          BANK_NILE: paymentMethod === 'BANK_NILE' ? salaryAmount : new Prisma.Decimal(0),
+        };
+
+        await aggregationService.updateDailyFinancialAggregate(
+          paymentDate,
+          {
+            salariesTotal: salaryAmount,
+            salariesCount: 1,
+            salariesCash: salariesByMethod.CASH,
+            salariesBank: salariesByMethod.BANK,
+            salariesBankNile: salariesByMethod.BANK_NILE,
+          }
+        );
+      }
+    } catch (aggError) {
+      console.error('Aggregation update error (non-blocking):', aggError);
+    }
     
     res.json(salary);
   } catch (error) {
@@ -276,6 +304,33 @@ router.post('/advances/:id/pay', requireRole('ACCOUNTANT', 'MANAGER'), createAud
         },
       },
     });
+
+    // Update aggregates (async, don't block response)
+    try {
+      if (advance.paidAt) {
+        const paymentDate = advance.paidAt;
+        const advanceAmount = advance.amount;
+        const paymentMethod = (advance as any).paymentMethod || 'CASH';
+        const advancesByMethod = {
+          CASH: paymentMethod === 'CASH' ? advanceAmount : new Prisma.Decimal(0),
+          BANK: paymentMethod === 'BANK' ? advanceAmount : new Prisma.Decimal(0),
+          BANK_NILE: paymentMethod === 'BANK_NILE' ? advanceAmount : new Prisma.Decimal(0),
+        };
+
+        await aggregationService.updateDailyFinancialAggregate(
+          paymentDate,
+          {
+            advancesTotal: advanceAmount,
+            advancesCount: 1,
+            advancesCash: advancesByMethod.CASH,
+            advancesBank: advancesByMethod.BANK,
+            advancesBankNile: advancesByMethod.BANK_NILE,
+          }
+        );
+      }
+    } catch (aggError) {
+      console.error('Aggregation update error (non-blocking):', aggError);
+    }
     
     res.json(advance);
   } catch (error) {

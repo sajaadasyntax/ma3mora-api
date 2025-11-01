@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { requireAuth, requireRole, blockAuditorWrites } from '../middleware/auth';
 import { createAuditLog } from '../middleware/audit';
 import { AuthRequest } from '../types';
+import { aggregationService } from '../services/aggregationService';
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -248,6 +249,64 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'MANAGER')
       },
     });
 
+    // Update aggregates (async, don't block response)
+    try {
+      const invoiceDate = invoice.createdAt;
+      const salesByMethod = {
+        CASH: data.paymentMethod === 'CASH' ? total : new Prisma.Decimal(0),
+        BANK: data.paymentMethod === 'BANK' ? total : new Prisma.Decimal(0),
+        BANK_NILE: data.paymentMethod === 'BANK_NILE' ? total : new Prisma.Decimal(0),
+      };
+
+      await aggregationService.updateDailyFinancialAggregate(
+        invoiceDate,
+        {
+          salesTotal: total,
+          salesDebt: total, // No payment yet
+          salesCount: 1,
+          salesCash: salesByMethod.CASH,
+          salesBank: salesByMethod.BANK,
+          salesBankNile: salesByMethod.BANK_NILE,
+        },
+        data.inventoryId,
+        data.section
+      );
+
+      // Update item aggregates
+      for (const item of invoiceItems) {
+        await aggregationService.updateDailyItemSalesAggregate(
+          invoiceDate,
+          item.itemId,
+          {
+            quantity: new Prisma.Decimal(item.quantity),
+            giftQty: item.giftQuantity || new Prisma.Decimal(0),
+            amount: item.lineTotal,
+            invoiceCount: 1,
+          },
+          data.inventoryId,
+          data.section
+        );
+      }
+
+      // Update customer aggregate if applicable
+      if (invoice.customerId) {
+        await aggregationService.updateCustomerCumulativeAggregate(
+          invoice.customerId,
+          invoiceDate,
+          {
+            totalSales: total,
+            invoiceCount: 1,
+            salesCash: salesByMethod.CASH,
+            salesBank: salesByMethod.BANK,
+            salesBankNile: salesByMethod.BANK_NILE,
+          }
+        );
+      }
+    } catch (aggError) {
+      console.error('Aggregation update error (non-blocking):', aggError);
+      // Don't fail the request if aggregation fails
+    }
+
     res.status(201).json(invoice);
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -430,8 +489,50 @@ router.post('/invoices/:id/payments', requireRole('ACCOUNTANT', 'SALES_GROCERY',
       data: updateData,
       include: {
         payments: true,
+        customer: true,
       },
     });
+
+    // Update aggregates (async, don't block response)
+    try {
+      const paymentDate = payment.paidAt;
+      const paymentAmount = new Prisma.Decimal(paymentData.amount);
+      const salesReceivedByMethod = {
+        CASH: paymentData.method === 'CASH' ? paymentAmount : new Prisma.Decimal(0),
+        BANK: paymentData.method === 'BANK' ? paymentAmount : new Prisma.Decimal(0),
+        BANK_NILE: paymentData.method === 'BANK_NILE' ? paymentAmount : new Prisma.Decimal(0),
+      };
+
+      await aggregationService.updateDailyFinancialAggregate(
+        paymentDate,
+        {
+          salesReceived: paymentAmount,
+          salesDebt: paymentAmount.neg(), // Reduce debt
+          salesCash: salesReceivedByMethod.CASH,
+          salesBank: salesReceivedByMethod.BANK,
+          salesBankNile: salesReceivedByMethod.BANK_NILE,
+        },
+        invoice.inventoryId,
+        invoice.section
+      );
+
+      // Update customer aggregate if applicable
+      if (invoice.customerId) {
+        await aggregationService.updateCustomerCumulativeAggregate(
+          invoice.customerId,
+          paymentDate,
+          {
+            totalPaid: paymentAmount,
+            salesCash: salesReceivedByMethod.CASH,
+            salesBank: salesReceivedByMethod.BANK,
+            salesBankNile: salesReceivedByMethod.BANK_NILE,
+          }
+        );
+      }
+    } catch (aggError) {
+      console.error('Aggregation update error (non-blocking):', aggError);
+      // Don't fail the request if aggregation fails
+    }
 
     res.json({ payment, invoice: updatedInvoice });
   } catch (error) {
@@ -1117,6 +1218,83 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
       }
     });
 
+    // Add initial and final stock for inventory reports
+    let stockInfo: any = null;
+    if (inventoryId && startDate && endDate) {
+      const start = new Date(startDate as string);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(endDate as string);
+      end.setHours(23, 59, 59, 999);
+
+      // Get initial stock (opening balance at start date)
+      const initialStocks = await prisma.inventoryStock.findMany({
+        where: { inventoryId: inventoryId as string },
+        include: { item: true },
+      });
+
+      // Get stock movements to calculate final stock
+      const stockMovements = await prisma.stockMovement.findMany({
+        where: {
+          inventoryId: inventoryId as string,
+          movementDate: {
+            gte: start,
+            lte: end,
+          },
+        },
+        include: { item: true },
+      });
+
+      // Calculate initial stock (from StockMovement if available, otherwise from InventoryStock)
+      const initialStockByItem: Record<string, number> = {};
+      const finalStockByItem: Record<string, number> = {};
+
+      // Get opening balances from first movement or use current stock as reference
+      for (const stock of initialStocks) {
+        const firstMovement = stockMovements
+          .filter(m => m.itemId === stock.itemId)
+          .sort((a, b) => a.movementDate.getTime() - b.movementDate.getTime())[0];
+        
+        if (firstMovement) {
+          initialStockByItem[stock.itemId] = parseFloat(firstMovement.openingBalance.toString());
+        } else {
+          // Use current stock minus changes in period
+          const changes = stockMovements
+            .filter(m => m.itemId === stock.itemId)
+            .reduce((sum, m) => 
+              sum + parseFloat(m.incoming.toString()) 
+              - parseFloat(m.outgoing.toString())
+              - parseFloat(m.pendingOutgoing.toString())
+              + parseFloat(m.incomingGifts.toString())
+              - parseFloat(m.outgoingGifts.toString()), 0
+            );
+          initialStockByItem[stock.itemId] = Math.max(0, parseFloat(stock.quantity.toString()) - changes);
+        }
+      }
+
+      // Calculate final stock
+      for (const stock of initialStocks) {
+        const initial = initialStockByItem[stock.itemId] || 0;
+        const movements = stockMovements.filter(m => m.itemId === stock.itemId);
+        const totalIncoming = movements.reduce((sum, m) => sum + parseFloat(m.incoming.toString()), 0);
+        const totalOutgoing = movements.reduce((sum, m) => sum + parseFloat(m.outgoing.toString()) + parseFloat(m.pendingOutgoing.toString()), 0);
+        const totalIncomingGifts = movements.reduce((sum, m) => sum + parseFloat(m.incomingGifts.toString()), 0);
+        const totalOutgoingGifts = movements.reduce((sum, m) => sum + parseFloat(m.outgoingGifts.toString()), 0);
+        
+        finalStockByItem[stock.itemId] = initial + totalIncoming - totalOutgoing + totalIncomingGifts - totalOutgoingGifts;
+      }
+
+      stockInfo = {
+        initial: initialStockByItem,
+        final: finalStockByItem,
+        items: initialStocks.map(s => ({
+          itemId: s.itemId,
+          itemName: s.item.name,
+          initialStock: initialStockByItem[s.itemId] || 0,
+          finalStock: finalStockByItem[s.itemId] || 0,
+        })),
+      };
+    }
+
     res.json({
       period,
       data: reportData,
@@ -1126,6 +1304,7 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
         totalPaid: invoices.reduce((sum, inv) => sum + parseFloat(inv.paidAmount.toString()), 0),
         totalOutstanding: invoices.reduce((sum, inv) => sum + parseFloat(inv.total.toString()) - parseFloat(inv.paidAmount.toString()), 0),
       },
+      ...(stockInfo && { stockInfo }),
     });
   } catch (error) {
     console.error('Sales reports error:', error);

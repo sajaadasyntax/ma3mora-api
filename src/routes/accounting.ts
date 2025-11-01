@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { requireAuth, requireRole, blockAuditorWrites } from '../middleware/auth';
 import { createAuditLog } from '../middleware/audit';
 import { AuthRequest } from '../types';
+import { aggregationService } from '../services/aggregationService';
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -290,6 +291,32 @@ router.post('/expenses', requireRole('ACCOUNTANT', 'MANAGER'), checkBalanceOpen,
         inventory: true,
       },
     });
+
+    // Update aggregates (async, don't block response)
+    try {
+      const expenseDate = expense.createdAt;
+      const expenseAmount = new Prisma.Decimal(data.amount);
+      const expensesByMethod = {
+        CASH: data.method === 'CASH' ? expenseAmount : new Prisma.Decimal(0),
+        BANK: data.method === 'BANK' ? expenseAmount : new Prisma.Decimal(0),
+        BANK_NILE: data.method === 'BANK_NILE' ? expenseAmount : new Prisma.Decimal(0),
+      };
+
+      await aggregationService.updateDailyFinancialAggregate(
+        expenseDate,
+        {
+          expensesTotal: expenseAmount,
+          expensesCount: 1,
+          expensesCash: expensesByMethod.CASH,
+          expensesBank: expensesByMethod.BANK,
+          expensesBankNile: expensesByMethod.BANK_NILE,
+        },
+        data.inventoryId || undefined,
+        data.section || undefined
+      );
+    } catch (aggError) {
+      console.error('Aggregation update error (non-blocking):', aggError);
+    }
 
     res.status(201).json(expense);
   } catch (error) {
@@ -1469,6 +1496,28 @@ router.post('/cash-exchanges', requireRole('ACCOUNTANT', 'MANAGER'), checkBalanc
         },
       },
     });
+
+    // Update aggregates (async, don't block response)
+    try {
+      const exchangeDate = exchange.createdAt;
+      const exchangeAmount = new Prisma.Decimal(data.amount);
+      const cashExchangesByMethod = {
+        CASH: data.fromMethod === 'CASH' ? exchangeAmount.neg() : (data.toMethod === 'CASH' ? exchangeAmount : new Prisma.Decimal(0)),
+        BANK: data.fromMethod === 'BANK' ? exchangeAmount.neg() : (data.toMethod === 'BANK' ? exchangeAmount : new Prisma.Decimal(0)),
+        BANK_NILE: data.fromMethod === 'BANK_NILE' ? exchangeAmount.neg() : (data.toMethod === 'BANK_NILE' ? exchangeAmount : new Prisma.Decimal(0)),
+      };
+
+      await aggregationService.updateDailyFinancialAggregate(
+        exchangeDate,
+        {
+          cashExchangesCash: cashExchangesByMethod.CASH,
+          cashExchangesBank: cashExchangesByMethod.BANK,
+          cashExchangesBankNile: cashExchangesByMethod.BANK_NILE,
+        }
+      );
+    } catch (aggError) {
+      console.error('Aggregation update error (non-blocking):', aggError);
+    }
 
     res.status(201).json(exchange);
   } catch (error) {
@@ -3118,6 +3167,81 @@ router.get('/customer-report', requireRole('ACCOUNTANT', 'MANAGER', 'SALES_GROCE
     const totalPaid = filteredInvoices.reduce((sum, inv) => sum.add(inv.paidAmount), new Prisma.Decimal(0));
     const totalOutstanding = totalSales.sub(totalPaid);
     
+    // Add initial and final stock for inventory reports
+    let stockInfo: any = null;
+    if (startDate && endDate && filteredInvoices.length > 0) {
+      // Get unique inventory IDs from invoices
+      const inventoryIds = [...new Set(filteredInvoices.map(inv => inv.inventoryId))];
+      
+      for (const invId of inventoryIds) {
+        const start = new Date(startDate as string);
+        start.setHours(0, 0, 0, 0);
+        const end = new Date(endDate as string);
+        end.setHours(23, 59, 59, 999);
+
+        // Get initial stock
+        const initialStocks = await prisma.inventoryStock.findMany({
+          where: { inventoryId: invId },
+          include: { item: true },
+        });
+
+        // Get stock movements
+        const stockMovements = await prisma.stockMovement.findMany({
+          where: {
+            inventoryId: invId,
+            movementDate: {
+              gte: start,
+              lte: end,
+            },
+          },
+          include: { item: true },
+        });
+
+        const initialStockByItem: Record<string, number> = {};
+        const finalStockByItem: Record<string, number> = {};
+
+        for (const stock of initialStocks) {
+          const firstMovement = stockMovements
+            .filter(m => m.itemId === stock.itemId)
+            .sort((a, b) => a.movementDate.getTime() - b.movementDate.getTime())[0];
+          
+          if (firstMovement) {
+            initialStockByItem[stock.itemId] = parseFloat(firstMovement.openingBalance.toString());
+          } else {
+            const changes = stockMovements
+              .filter(m => m.itemId === stock.itemId)
+              .reduce((sum, m) => 
+                sum + parseFloat(m.incoming.toString()) 
+                - parseFloat(m.outgoing.toString())
+                - parseFloat(m.pendingOutgoing.toString())
+                + parseFloat(m.incomingGifts.toString())
+                - parseFloat(m.outgoingGifts.toString()), 0
+              );
+            initialStockByItem[stock.itemId] = Math.max(0, parseFloat(stock.quantity.toString()) - changes);
+          }
+        }
+
+        for (const stock of initialStocks) {
+          const initial = initialStockByItem[stock.itemId] || 0;
+          const movements = stockMovements.filter(m => m.itemId === stock.itemId);
+          const totalIncoming = movements.reduce((sum, m) => sum + parseFloat(m.incoming.toString()), 0);
+          const totalOutgoing = movements.reduce((sum, m) => sum + parseFloat(m.outgoing.toString()) + parseFloat(m.pendingOutgoing.toString()), 0);
+          const totalIncomingGifts = movements.reduce((sum, m) => sum + parseFloat(m.incomingGifts.toString()), 0);
+          const totalOutgoingGifts = movements.reduce((sum, m) => sum + parseFloat(m.outgoingGifts.toString()), 0);
+          
+          finalStockByItem[stock.itemId] = initial + totalIncoming - totalOutgoing + totalIncomingGifts - totalOutgoingGifts;
+        }
+
+        if (!stockInfo) stockInfo = { items: [] };
+        stockInfo.items.push(...initialStocks.map(s => ({
+          itemId: s.itemId,
+          itemName: s.item.name,
+          initialStock: initialStockByItem[s.itemId] || 0,
+          finalStock: finalStockByItem[s.itemId] || 0,
+        })));
+      }
+    }
+
     res.json({
       data: reportData,
       summary: {
@@ -3126,6 +3250,7 @@ router.get('/customer-report', requireRole('ACCOUNTANT', 'MANAGER', 'SALES_GROCE
         totalPaid: totalPaid.toString(),
         totalOutstanding: totalOutstanding.toString(),
       },
+      ...(stockInfo && { stockInfo }),
     });
   } catch (error) {
     console.error('Customer report error:', error);
@@ -3223,6 +3348,81 @@ router.get('/supplier-report', requireRole('ACCOUNTANT', 'MANAGER', 'PROCUREMENT
     const totalPaid = filteredOrders.reduce((sum, order) => sum.add(order.paidAmount), new Prisma.Decimal(0));
     const totalOutstanding = totalPurchases.sub(totalPaid);
     
+    // Add initial and final stock for inventory reports
+    let stockInfo: any = null;
+    if (startDate && endDate && filteredOrders.length > 0) {
+      // Get unique inventory IDs from orders
+      const inventoryIds = [...new Set(filteredOrders.map(order => order.inventoryId))];
+      
+      for (const invId of inventoryIds) {
+        const start = new Date(startDate as string);
+        start.setHours(0, 0, 0, 0);
+        const end = new Date(endDate as string);
+        end.setHours(23, 59, 59, 999);
+
+        // Get initial stock
+        const initialStocks = await prisma.inventoryStock.findMany({
+          where: { inventoryId: invId },
+          include: { item: true },
+        });
+
+        // Get stock movements
+        const stockMovements = await prisma.stockMovement.findMany({
+          where: {
+            inventoryId: invId,
+            movementDate: {
+              gte: start,
+              lte: end,
+            },
+          },
+          include: { item: true },
+        });
+
+        const initialStockByItem: Record<string, number> = {};
+        const finalStockByItem: Record<string, number> = {};
+
+        for (const stock of initialStocks) {
+          const firstMovement = stockMovements
+            .filter(m => m.itemId === stock.itemId)
+            .sort((a, b) => a.movementDate.getTime() - b.movementDate.getTime())[0];
+          
+          if (firstMovement) {
+            initialStockByItem[stock.itemId] = parseFloat(firstMovement.openingBalance.toString());
+          } else {
+            const changes = stockMovements
+              .filter(m => m.itemId === stock.itemId)
+              .reduce((sum, m) => 
+                sum + parseFloat(m.incoming.toString()) 
+                - parseFloat(m.outgoing.toString())
+                - parseFloat(m.pendingOutgoing.toString())
+                + parseFloat(m.incomingGifts.toString())
+                - parseFloat(m.outgoingGifts.toString()), 0
+              );
+            initialStockByItem[stock.itemId] = Math.max(0, parseFloat(stock.quantity.toString()) - changes);
+          }
+        }
+
+        for (const stock of initialStocks) {
+          const initial = initialStockByItem[stock.itemId] || 0;
+          const movements = stockMovements.filter(m => m.itemId === stock.itemId);
+          const totalIncoming = movements.reduce((sum, m) => sum + parseFloat(m.incoming.toString()), 0);
+          const totalOutgoing = movements.reduce((sum, m) => sum + parseFloat(m.outgoing.toString()) + parseFloat(m.pendingOutgoing.toString()), 0);
+          const totalIncomingGifts = movements.reduce((sum, m) => sum + parseFloat(m.incomingGifts.toString()), 0);
+          const totalOutgoingGifts = movements.reduce((sum, m) => sum + parseFloat(m.outgoingGifts.toString()), 0);
+          
+          finalStockByItem[stock.itemId] = initial + totalIncoming - totalOutgoing + totalIncomingGifts - totalOutgoingGifts;
+        }
+
+        if (!stockInfo) stockInfo = { items: [] };
+        stockInfo.items.push(...initialStocks.map(s => ({
+          itemId: s.itemId,
+          itemName: s.item.name,
+          initialStock: initialStockByItem[s.itemId] || 0,
+          finalStock: finalStockByItem[s.itemId] || 0,
+        })));
+      }
+    }
+    
     res.json({
       data: reportData,
       summary: {
@@ -3231,6 +3431,7 @@ router.get('/supplier-report', requireRole('ACCOUNTANT', 'MANAGER', 'PROCUREMENT
         totalPaid: totalPaid.toString(),
         totalOutstanding: totalOutstanding.toString(),
       },
+      ...(stockInfo && { stockInfo }),
     });
   } catch (error) {
     console.error('Supplier report error:', error);
