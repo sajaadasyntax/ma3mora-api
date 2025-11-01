@@ -188,6 +188,9 @@ async function main() {
             ],
           },
         },
+        include: {
+          prices: true,
+        },
       })
     )
   );
@@ -204,6 +207,9 @@ async function main() {
               { tier: CustomerType.RETAIL, price: item.retailPrice },
             ],
           },
+        },
+        include: {
+          prices: true,
         },
       })
     )
@@ -448,7 +454,11 @@ async function main() {
 
     const orderItems = selectedItems.map(item => {
       const quantity = Math.floor(Math.random() * 50) + 10;
-      const unitCost = item.prices[0].price.mul(0.7); // 70% of retail price
+      // Use first available price or default to 10 if no prices exist
+      const basePrice = item.prices && item.prices.length > 0 
+        ? item.prices[0].price 
+        : new Prisma.Decimal(10);
+      const unitCost = basePrice.mul(0.7); // 70% of retail price
       return {
         itemId: item.id,
         quantity: new Prisma.Decimal(quantity),
