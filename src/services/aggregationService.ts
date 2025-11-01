@@ -358,8 +358,8 @@ export class AggregationService {
         year_month_inventoryId_section: {
           year,
           month,
-          inventoryId: inventoryId ?? null,
-          section: section ?? null,
+          inventoryId: (inventoryId ?? null) as string | null,
+          section: (section ?? null) as Section | null,
         },
       },
     });
@@ -378,8 +378,8 @@ export class AggregationService {
           gte: startOfMonth,
           lte: endOfMonth,
         },
-        inventoryId: inventoryId ?? null,
-        section: section ?? null,
+        inventoryId: (inventoryId ?? null) as string | null,
+        section: (section ?? null) as Section | null,
       },
     });
 
@@ -501,8 +501,8 @@ export class AggregationService {
         year_month_inventoryId_section: {
           year,
           month,
-          inventoryId: inventoryId ?? null,
-          section: section ?? null,
+          inventoryId: (inventoryId ?? null) as string | null,
+          section: (section ?? null) as Section | null,
         },
       },
       update: {
@@ -515,8 +515,8 @@ export class AggregationService {
       create: {
         year,
         month,
-        inventoryId: inventoryId ?? null,
-        section: section ?? null,
+        inventoryId: (inventoryId ?? null) as string | null,
+        section: (section ?? null) as Section | null,
         ...monthlyTotals,
         netCash,
         netBank,
@@ -779,15 +779,15 @@ export class AggregationService {
       where: {
         date_inventoryId_section: {
           date: dateOnly,
-          inventoryId: inventoryId ?? null,
-          section: section ?? null,
+          inventoryId: (inventoryId ?? null) as string | null,
+          section: (section ?? null) as Section | null,
         },
       },
       update: updates,
       create: {
         date: dateOnly,
-        inventoryId: inventoryId ?? null,
-        section: section ?? null,
+        inventoryId: (inventoryId ?? null) as string | null,
+        section: (section ?? null) as Section | null,
         openingCash: updates.openingCash || new Prisma.Decimal(0),
         openingBank: updates.openingBank || new Prisma.Decimal(0),
         openingBankNile: updates.openingBankNile || new Prisma.Decimal(0),
