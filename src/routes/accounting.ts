@@ -1534,6 +1534,49 @@ router.post('/cash-exchanges', requireRole('ACCOUNTANT', 'MANAGER'), checkBalanc
   }
 });
 
+// Recalculate aggregators for date range
+router.post('/aggregators/recalculate', requireRole('ACCOUNTANT', 'MANAGER'), async (req: AuthRequest, res) => {
+  try {
+    const { startDate, endDate, inventoryId, section } = req.body;
+    
+    if (!startDate || !endDate) {
+      return res.status(400).json({ error: 'تاريخ البداية والنهاية مطلوبان' });
+    }
+
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999);
+
+    // Recalculate for each day in the range
+    const currentDate = new Date(start);
+    let recalculatedCount = 0;
+
+    while (currentDate <= end) {
+      const dateToRecalc = new Date(currentDate);
+      await aggregationService.recalculateDate(
+        dateToRecalc,
+        inventoryId || undefined,
+        section || undefined
+      );
+      recalculatedCount++;
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
+
+    res.json({
+      message: 'تم إعادة حساب المجمعات بنجاح',
+      recalculatedDays: recalculatedCount,
+      dateRange: {
+        start: start.toISOString().split('T')[0],
+        end: end.toISOString().split('T')[0],
+      },
+    });
+  } catch (error) {
+    console.error('Recalculate aggregators error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
 router.get('/audit', requireRole('AUDITOR', 'ACCOUNTANT', 'MANAGER'), async (req: AuthRequest, res) => {
   try {
     const { entity, entityId, userId } = req.query;
