@@ -54,8 +54,8 @@ export class AggregationService {
     // Get existing aggregate or create default
     const whereClause: any = {
       date: dateOnly,
-      inventoryId: inventoryId ?? null,
-      section: section ?? null,
+      inventoryId: (inventoryId ?? null) as any,
+      section: (section ?? null) as any,
     };
     const existing = await prisma.dailyFinancialAggregate.findUnique({
       where: {
@@ -323,8 +323,8 @@ export class AggregationService {
     // Upsert the aggregate
     const upsertWhereClause: any = {
       date: dateOnly,
-      inventoryId: inventoryId ?? null,
-      section: section ?? null,
+      inventoryId: (inventoryId ?? null) as any,
+      section: (section ?? null) as any,
     };
     await prisma.dailyFinancialAggregate.upsert({
       where: {
@@ -333,8 +333,8 @@ export class AggregationService {
       update: updateData,
       create: {
         date: dateOnly,
-        inventoryId: inventoryId ?? null,
-        section: section ?? null,
+        inventoryId: (inventoryId ?? null) as any,
+        section: (section ?? null) as any,
         ...updateData,
       },
     });
@@ -358,8 +358,8 @@ export class AggregationService {
     const monthlyWhereClause: any = {
       year,
       month,
-      inventoryId: inventoryId ?? null,
-      section: section ?? null,
+      inventoryId: (inventoryId ?? null) as any,
+      section: (section ?? null) as any,
     };
     const existing = await prisma.monthlyFinancialAggregate.findUnique({
       where: {
@@ -375,15 +375,16 @@ export class AggregationService {
     const startOfMonth = new Date(year, month - 1, 1);
     const endOfMonth = new Date(year, month, 0, 23, 59, 59, 999);
 
-    const dailyAggregates = await prisma.dailyFinancialAggregate.findMany({
-      where: {
-        date: {
-          gte: startOfMonth,
-          lte: endOfMonth,
-        },
-        inventoryId: inventoryId ?? null,
-        section: section ?? null,
+    const dailyAggregatesWhere: any = {
+      date: {
+        gte: startOfMonth,
+        lte: endOfMonth,
       },
+      inventoryId: (inventoryId ?? null) as any,
+      section: (section ?? null) as any,
+    };
+    const dailyAggregates = await prisma.dailyFinancialAggregate.findMany({
+      where: dailyAggregatesWhere,
     });
 
     // Sum all daily aggregates
@@ -502,8 +503,8 @@ export class AggregationService {
     const monthlyUpsertWhereClause: any = {
       year,
       month,
-      inventoryId: inventoryId ?? null,
-      section: section ?? null,
+      inventoryId: (inventoryId ?? null) as any,
+      section: (section ?? null) as any,
     };
     await prisma.monthlyFinancialAggregate.upsert({
       where: {
@@ -519,8 +520,8 @@ export class AggregationService {
       create: {
         year,
         month,
-        inventoryId: inventoryId ?? null,
-        section: section ?? null,
+        inventoryId: (inventoryId ?? null) as any,
+        section: (section ?? null) as any,
         ...monthlyTotals,
         netCash,
         netBank,
@@ -550,9 +551,9 @@ export class AggregationService {
 
     const itemSalesWhereClause: any = {
       date: dateOnly,
-      inventoryId: inventoryId ?? null,
+      inventoryId: (inventoryId ?? null) as any,
       itemId,
-      section: section ?? null,
+      section: (section ?? null) as any,
     };
     const existing = await prisma.dailyItemSalesAggregate.findUnique({
       where: {
@@ -578,9 +579,9 @@ export class AggregationService {
 
     const itemSalesUpsertWhereClause: any = {
       date: dateOnly,
-      inventoryId: inventoryId ?? null,
+      inventoryId: (inventoryId ?? null) as any,
       itemId,
-      section: section ?? null,
+      section: (section ?? null) as any,
     };
     await prisma.dailyItemSalesAggregate.upsert({
       where: {
@@ -595,9 +596,9 @@ export class AggregationService {
       },
       create: {
         date: dateOnly,
-        inventoryId: inventoryId ?? null,
+        inventoryId: (inventoryId ?? null) as any,
         itemId,
-        section: section ?? null,
+        section: (section ?? null) as any,
         totalQuantity,
         totalGiftQty,
         totalAmount,
@@ -783,8 +784,8 @@ export class AggregationService {
 
     const balanceSnapshotWhereClause: any = {
       date: dateOnly,
-      inventoryId: inventoryId ?? null,
-      section: section ?? null,
+      inventoryId: (inventoryId ?? null) as any,
+      section: (section ?? null) as any,
     };
     await prisma.cumulativeBalanceSnapshot.upsert({
       where: {
@@ -793,8 +794,8 @@ export class AggregationService {
       update: updates,
       create: {
         date: dateOnly,
-        inventoryId: inventoryId ?? null,
-        section: section ?? null,
+        inventoryId: (inventoryId ?? null) as any,
+        section: (section ?? null) as any,
         openingCash: updates.openingCash || new Prisma.Decimal(0),
         openingBank: updates.openingBank || new Prisma.Decimal(0),
         openingBankNile: updates.openingBankNile || new Prisma.Decimal(0),
