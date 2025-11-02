@@ -163,9 +163,18 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'MANAGER')
       where: { id: { in: allItemIds } },
       include: {
         prices: {
-          where: { tier: pricingTier },
-          orderBy: { validFrom: 'desc' },
-          take: 1,
+          where: {
+            tier: pricingTier,
+            OR: [
+              { inventoryId: data.inventoryId }, // Inventory-specific price
+              { inventoryId: null }, // Global price (applies to all inventories)
+            ],
+          },
+          orderBy: [
+            { inventoryId: 'desc' }, // Prefer inventory-specific over global (null comes last with desc)
+            { validFrom: 'desc' },
+          ],
+          take: 1, // Get the most relevant price (inventory-specific if available, otherwise global)
         },
       },
     });

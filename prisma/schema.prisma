@@ -107,6 +107,7 @@ model Inventory {
   monthlyFinancialAggregates MonthlyFinancialAggregate[]
   dailyItemSalesAggregates DailyItemSalesAggregate[]
   cumulativeBalanceSnapshots CumulativeBalanceSnapshot[]
+  itemPrices        ItemPrice[]
 
   @@map("inventories")
 }
@@ -147,15 +148,17 @@ model Item {
 }
 
 model ItemPrice {
-  id        String       @id @default(cuid())
-  itemId    String
-  tier      CustomerType
-  price     Decimal      @db.Decimal(10, 2)
-  validFrom DateTime     @default(now())
+  id          String       @id @default(cuid())
+  itemId      String
+  inventoryId String?      // Nullable for backward compatibility, null means applies to all inventories
+  tier        CustomerType
+  price       Decimal      @db.Decimal(10, 2)
+  validFrom   DateTime     @default(now())
 
-  item Item @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  item      Item       @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  inventory Inventory? @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
 
-  @@index([itemId, tier])
+  @@index([itemId, tier, inventoryId])
   @@map("item_prices")
 }
 

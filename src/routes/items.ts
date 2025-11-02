@@ -21,6 +21,7 @@ const createItemSchema = z.object({
 const updatePriceSchema = z.object({
   wholesalePrice: z.number().positive().optional(),
   retailPrice: z.number().positive().optional(),
+  inventoryId: z.string().optional(), // If provided, update price for specific inventory
 });
 
 router.get('/', async (req: AuthRequest, res) => {
@@ -35,6 +36,9 @@ router.get('/', async (req: AuthRequest, res) => {
       where,
       include: {
         prices: {
+          include: {
+            inventory: true,
+          },
           orderBy: { validFrom: 'desc' },
         },
         stocks: {
@@ -106,9 +110,22 @@ router.post('/', requireRole('PROCUREMENT', 'MANAGER'), createAuditLog('Item'), 
 router.get('/:id/prices', async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
+    const { inventoryId } = req.query;
+
+    const where: any = { itemId: id };
+    if (inventoryId) {
+      // Get prices for specific inventory OR global prices (inventoryId is null)
+      where.OR = [
+        { inventoryId: inventoryId as string },
+        { inventoryId: null },
+      ];
+    }
 
     const prices = await prisma.itemPrice.findMany({
-      where: { itemId: id },
+      where,
+      include: {
+        inventory: true,
+      },
       orderBy: { validFrom: 'desc' },
     });
 
@@ -122,7 +139,7 @@ router.get('/:id/prices', async (req: AuthRequest, res) => {
 router.put('/:id/prices', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('ItemPrice'), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
-    const { wholesalePrice, retailPrice } = updatePriceSchema.parse(req.body);
+    const { wholesalePrice, retailPrice, inventoryId } = updatePriceSchema.parse(req.body);
 
     const updates = [];
 
@@ -131,6 +148,7 @@ router.put('/:id/prices', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('
         prisma.itemPrice.create({
           data: {
             itemId: id,
+            inventoryId: inventoryId || null, // null means applies to all inventories
             tier: 'WHOLESALE',
             price: wholesalePrice,
           },
@@ -143,6 +161,7 @@ router.put('/:id/prices', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('
         prisma.itemPrice.create({
           data: {
             itemId: id,
+            inventoryId: inventoryId || null, // null means applies to all inventories
             tier: 'RETAIL',
             price: retailPrice,
           },

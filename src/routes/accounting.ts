@@ -1727,150 +1727,177 @@ router.get('/daily-report', requireRole('AUDITOR', 'MANAGER'), async (req: AuthR
 // Get outstanding fees report for customers and suppliers
 router.get('/outstanding-fees', requireRole('ACCOUNTANT', 'MANAGER', 'SALES_GROCERY', 'SALES_BAKERY'), async (req: AuthRequest, res) => {
   try {
-    const { section, period } = req.query;
+    const { section, period, startDate, endDate: endDateParam } = req.query;
     
-    // Calculate date range based on period
-    let startDate: Date | null = null;
-    const endDate = new Date();
-    endDate.setHours(23, 59, 59, 999);
+    // Calculate date range based on period or use provided dates
+    let startDateFilter: Date | null = null;
+    let endDateFilter: Date = new Date();
+    endDateFilter.setHours(23, 59, 59, 999);
     
-    if (period === 'today') {
-      startDate = new Date();
-      startDate.setHours(0, 0, 0, 0);
+    if (startDate && endDateParam) {
+      startDateFilter = new Date(startDate as string);
+      startDateFilter.setHours(0, 0, 0, 0);
+      endDateFilter = new Date(endDateParam as string);
+      endDateFilter.setHours(23, 59, 59, 999);
+    } else if (period === 'today') {
+      startDateFilter = new Date();
+      startDateFilter.setHours(0, 0, 0, 0);
     } else if (period === 'week') {
-      startDate = new Date();
-      startDate.setDate(startDate.getDate() - 7);
-      startDate.setHours(0, 0, 0, 0);
+      startDateFilter = new Date();
+      startDateFilter.setDate(startDateFilter.getDate() - 7);
+      startDateFilter.setHours(0, 0, 0, 0);
     } else if (period === 'month') {
-      startDate = new Date();
-      startDate.setMonth(startDate.getMonth() - 1);
-      startDate.setHours(0, 0, 0, 0);
+      startDateFilter = new Date();
+      startDateFilter.setMonth(startDateFilter.getMonth() - 1);
+      startDateFilter.setHours(0, 0, 0, 0);
     } else if (period === 'year') {
-      startDate = new Date();
-      startDate.setFullYear(startDate.getFullYear() - 1);
-      startDate.setHours(0, 0, 0, 0);
+      startDateFilter = new Date();
+      startDateFilter.setFullYear(startDateFilter.getFullYear() - 1);
+      startDateFilter.setHours(0, 0, 0, 0);
     }
     
-    // Get customers with outstanding balances
-    const customerWhere: any = {};
+    // Get customers invoices with outstanding balances
+    const customerInvoiceWhere: any = {};
     if (section) {
-      customerWhere.division = section;
+      customerInvoiceWhere.customer = { division: section };
+    }
+    if (startDateFilter) {
+      customerInvoiceWhere.createdAt = { gte: startDateFilter, lte: endDateFilter };
     }
     
-    const customers = await prisma.customer.findMany({
-      where: customerWhere,
+    const customerInvoices = await prisma.salesInvoice.findMany({
+      where: customerInvoiceWhere,
       include: {
-        salesInvoices: {
-          where: startDate ? {
-            createdAt: { gte: startDate, lte: endDate },
-          } : undefined,
-        },
-        openingBalance: {
-          where: {
-            isClosed: false,
-            openedAt: startDate ? { gte: startDate, lte: endDate } : undefined,
+        customer: true,
+        inventory: true,
+        items: {
+          include: {
+            item: true,
           },
         },
+        payments: {
+          include: {
+            recordedByUser: {
+              select: { id: true, username: true },
+            },
+          },
+          orderBy: { paidAt: 'desc' },
+        },
       },
+      orderBy: { createdAt: 'desc' },
     });
     
-    // Get suppliers with outstanding balances
-    const suppliers = await prisma.supplier.findMany({
+    // Filter invoices with outstanding balances
+    const customerInvoicesOutstanding = customerInvoices.filter(inv => {
+      const outstanding = new Prisma.Decimal(inv.total).sub(inv.paidAmount);
+      return outstanding.greaterThan(0);
+    });
+    
+    // Transform customer invoices to report format
+    const customerReportData = customerInvoicesOutstanding.map(invoice => ({
+      invoiceNumber: invoice.invoiceNumber,
+      date: invoice.createdAt,
+      customer: invoice.customer?.name || 'بدون عميل',
+      customerType: invoice.customer?.type || 'غير محدد',
+      inventory: invoice.inventory.name,
+      notes: invoice.notes || null,
+      total: invoice.total.toString(),
+      paidAmount: invoice.paidAmount.toString(),
+      outstanding: new Prisma.Decimal(invoice.total).sub(invoice.paidAmount).toString(),
+      paymentStatus: invoice.paymentStatus,
+      deliveryStatus: invoice.deliveryStatus,
+      items: invoice.items.map(item => ({
+        itemName: item.item.name,
+        quantity: item.quantity.toString(),
+        unitPrice: item.unitPrice.toString(),
+        lineTotal: item.lineTotal.toString(),
+      })),
+      payments: invoice.payments.map(payment => ({
+        amount: payment.amount.toString(),
+        method: payment.method,
+        paidAt: payment.paidAt,
+        recordedBy: payment.recordedByUser?.username || 'غير محدد',
+      })),
+    }));
+    
+    // Get suppliers orders with outstanding balances
+    const supplierOrderWhere: any = {};
+    if (startDateFilter) {
+      supplierOrderWhere.createdAt = { gte: startDateFilter, lte: endDateFilter };
+    }
+    
+    const supplierOrders = await prisma.procOrder.findMany({
+      where: supplierOrderWhere,
       include: {
-        procOrders: {
-          where: startDate ? {
-            createdAt: { gte: startDate, lte: endDate },
-          } : undefined,
-        },
-        openingBalance: {
-          where: {
-            isClosed: false,
-            openedAt: startDate ? { gte: startDate, lte: endDate } : undefined,
+        supplier: true,
+        inventory: true,
+        items: {
+          include: {
+            item: true,
           },
         },
+        payments: {
+          include: {
+            recordedByUser: {
+              select: { id: true, username: true },
+            },
+          },
+          orderBy: { paidAt: 'desc' },
+        },
       },
+      orderBy: { createdAt: 'desc' },
     });
     
-    // Calculate outstanding for customers
-    const customersOutstanding = customers.map(customer => {
-      // Accounts receivable (what customer owes us)
-      const invoicesTotal = customer.salesInvoices.reduce((sum, inv) => 
-        sum.add(new Prisma.Decimal(inv.total)), new Prisma.Decimal(0));
-      const invoicesPaid = customer.salesInvoices.reduce((sum, inv) => 
-        sum.add(new Prisma.Decimal(inv.paidAmount)), new Prisma.Decimal(0));
-      const accountsReceivable = invoicesTotal.sub(invoicesPaid);
-      
-      // Opening balance (what we owe customer - negative means they owe us, positive means we owe them)
-      const openingBalance = customer.openingBalance.reduce((sum, ob) => 
-        sum.add(new Prisma.Decimal(ob.amount)), new Prisma.Decimal(0));
-      
-      // Net outstanding: positive = customer owes us, negative = we owe customer
-      const netOutstanding = accountsReceivable.add(openingBalance);
-      
-      return {
-        id: customer.id,
-        name: customer.name,
-        type: customer.type,
-        division: customer.division,
-        phone: customer.phone,
-        address: customer.address,
-        accountsReceivable: accountsReceivable.toString(),
-        openingBalance: openingBalance.toString(),
-        netOutstanding: netOutstanding.toString(),
-        outstandingType: netOutstanding.greaterThan(0) ? 'OWES_US' : netOutstanding.lessThan(0) ? 'WE_OWE' : 'SETTLED',
-      };
-    }).filter(c => c.netOutstanding !== '0');
+    // Filter orders with outstanding balances
+    const supplierOrdersOutstanding = supplierOrders.filter(order => {
+      const outstanding = new Prisma.Decimal(order.total).sub(order.paidAmount);
+      return outstanding.greaterThan(0);
+    });
     
-    // Calculate outstanding for suppliers
-    const suppliersOutstanding = suppliers.map(supplier => {
-      // Accounts payable (what we owe supplier)
-      const ordersTotal = supplier.procOrders.reduce((sum, order) => 
-        sum.add(new Prisma.Decimal(order.total)), new Prisma.Decimal(0));
-      const ordersPaid = supplier.procOrders.reduce((sum, order) => 
-        sum.add(new Prisma.Decimal(order.paidAmount)), new Prisma.Decimal(0));
-      const accountsPayable = ordersTotal.sub(ordersPaid);
-      
-      // Opening balance (what supplier owes us - negative means we owe them, positive means they owe us)
-      const openingBalance = supplier.openingBalance.reduce((sum, ob) => 
-        sum.add(new Prisma.Decimal(ob.amount)), new Prisma.Decimal(0));
-      
-      // Net outstanding: positive = we owe supplier, negative = supplier owes us
-      const netOutstanding = accountsPayable.sub(openingBalance);
-      
-      return {
-        id: supplier.id,
-        name: supplier.name,
-        phone: supplier.phone,
-        address: supplier.address,
-        accountsPayable: accountsPayable.toString(),
-        openingBalance: openingBalance.toString(),
-        netOutstanding: netOutstanding.toString(),
-        outstandingType: netOutstanding.greaterThan(0) ? 'WE_OWE' : netOutstanding.lessThan(0) ? 'OWES_US' : 'SETTLED',
-      };
-    }).filter(s => s.netOutstanding !== '0');
+    // Transform supplier orders to report format
+    const supplierReportData = supplierOrdersOutstanding.map(order => ({
+      orderNumber: order.orderNumber,
+      date: order.createdAt,
+      supplier: order.supplier.name,
+      inventory: order.inventory.name,
+      notes: order.notes || null,
+      total: order.total.toString(),
+      paidAmount: order.paidAmount.toString(),
+      outstanding: new Prisma.Decimal(order.total).sub(order.paidAmount).toString(),
+      paymentStatus: order.paymentConfirmed ? 'CONFIRMED' : 'PENDING',
+      status: order.status,
+      items: order.items.map(item => ({
+        itemName: item.item.name,
+        quantity: item.quantity.toString(),
+        unitCost: item.unitCost.toString(),
+        lineTotal: item.lineTotal.toString(),
+      })),
+      payments: order.payments.map(payment => ({
+        amount: payment.amount.toString(),
+        method: payment.method,
+        paidAt: payment.paidAt,
+        recordedBy: payment.recordedByUser?.username || 'غير محدد',
+      })),
+    }));
+    
+    // Calculate summary
+    const customersOwesUs = customerInvoicesOutstanding.reduce((sum, inv) => 
+      sum.add(new Prisma.Decimal(inv.total).sub(inv.paidAmount)), new Prisma.Decimal(0));
+    const weOweSuppliers = supplierOrdersOutstanding.reduce((sum, order) => 
+      sum.add(new Prisma.Decimal(order.total).sub(order.paidAmount)), new Prisma.Decimal(0));
     
     res.json({
       section: section || 'ALL',
       period: period || 'ALL',
-      customers: customersOutstanding,
-      suppliers: suppliersOutstanding,
+      startDate: startDateFilter?.toISOString().split('T')[0] || null,
+      endDate: endDateFilter.toISOString().split('T')[0],
+      customers: customerReportData,
+      suppliers: supplierReportData,
       summary: {
-        customersOwesUs: customersOutstanding
-          .filter(c => c.outstandingType === 'OWES_US')
-          .reduce((sum, c) => sum.add(new Prisma.Decimal(c.netOutstanding)), new Prisma.Decimal(0))
-          .toString(),
-        weOweCustomers: customersOutstanding
-          .filter(c => c.outstandingType === 'WE_OWE')
-          .reduce((sum, c) => sum.add(new Prisma.Decimal(c.netOutstanding).abs()), new Prisma.Decimal(0))
-          .toString(),
-        weOweSuppliers: suppliersOutstanding
-          .filter(s => s.outstandingType === 'WE_OWE')
-          .reduce((sum, s) => sum.add(new Prisma.Decimal(s.netOutstanding)), new Prisma.Decimal(0))
-          .toString(),
-        suppliersOwesUs: suppliersOutstanding
-          .filter(s => s.outstandingType === 'OWES_US')
-          .reduce((sum, s) => sum.add(new Prisma.Decimal(s.netOutstanding).abs()), new Prisma.Decimal(0))
-          .toString(),
+        customersOwesUs: customersOwesUs.toString(),
+        weOweSuppliers: weOweSuppliers.toString(),
+        totalCustomersOutstanding: customerReportData.length,
+        totalSuppliersOutstanding: supplierReportData.length,
       },
     });
   } catch (error) {
