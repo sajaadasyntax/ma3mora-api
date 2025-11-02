@@ -3343,7 +3343,7 @@ router.get('/customer-report', requireRole('ACCOUNTANT', 'MANAGER', 'SALES_GROCE
 // Supplier Report endpoint
 router.get('/supplier-report', requireRole('ACCOUNTANT', 'MANAGER', 'PROCUREMENT'), async (req: AuthRequest, res) => {
   try {
-    const { startDate, endDate, supplierId, supplierIds, paymentMethod } = req.query;
+    const { startDate, endDate, supplierId, supplierIds, paymentMethod, outstandingOnly } = req.query;
     
     const where: any = {};
     
@@ -3405,6 +3405,14 @@ router.get('/supplier-report', requireRole('ACCOUNTANT', 'MANAGER', 'PROCUREMENT
         order.payments.some(p => p.method === paymentMethod) || 
         (!order.payments.length && paymentMethod === 'CASH')
       );
+    }
+    
+    // Filter by outstanding only (orders with outstanding balance > 0)
+    if (outstandingOnly === 'true') {
+      filteredOrders = filteredOrders.filter(order => {
+        const outstanding = order.total.sub(order.paidAmount);
+        return outstanding.greaterThan(0);
+      });
     }
     
     // Transform to report format
