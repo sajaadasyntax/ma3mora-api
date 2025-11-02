@@ -3145,7 +3145,7 @@ router.get('/commissions', requireRole('ACCOUNTANT', 'MANAGER'), async (req: Aut
 // Customer Report endpoint
 router.get('/customer-report', requireRole('ACCOUNTANT', 'MANAGER', 'SALES_GROCERY', 'SALES_BAKERY'), async (req: AuthRequest, res) => {
   try {
-    const { startDate, endDate, type, customerId, paymentMethod } = req.query;
+    const { startDate, endDate, type, customerId, customerIds, paymentMethod, section } = req.query;
     
     const where: any = {};
     
@@ -3165,9 +3165,21 @@ router.get('/customer-report', requireRole('ACCOUNTANT', 'MANAGER', 'SALES_GROCE
       };
     }
     
-    // Filter by customer
-    if (customerId) {
+    // Filter by customer(s) - support both single customerId (backward compatibility) and multiple customerIds
+    if (customerIds) {
+      // Handle comma-separated string of customer IDs
+      const ids = (customerIds as string).split(',').filter(id => id.trim());
+      if (ids.length > 0) {
+        where.customerId = { in: ids };
+      }
+    } else if (customerId) {
+      // Backward compatibility: single customer ID
       where.customerId = customerId;
+    }
+    
+    // Filter by section
+    if (section) {
+      where.section = section;
     }
     
     // Filter by payment method
