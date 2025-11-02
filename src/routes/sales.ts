@@ -1536,6 +1536,22 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
       }
     }
 
+    // If viewType is 'items', always return item-level data (force item report)
+    if (viewType === 'items') {
+      // If no item report data was generated, return empty array
+      return res.json({
+        period,
+        data: itemReportData,
+        summary: {
+          totalInvoices: invoices.length,
+          totalSales: invoices.reduce((sum, inv) => sum + parseFloat(inv.total.toString()), 0),
+          totalPaid: invoices.reduce((sum, inv) => sum + parseFloat(inv.paidAmount.toString()), 0),
+          totalOutstanding: invoices.reduce((sum, inv) => sum + parseFloat(inv.total.toString()) - parseFloat(inv.paidAmount.toString()), 0),
+        },
+        ...(stockInfo && { stockInfo }),
+      });
+    }
+
     res.json({
       period,
       data: itemReportData.length > 0 ? itemReportData : reportData, // Return item data if available, otherwise grouped invoice data
