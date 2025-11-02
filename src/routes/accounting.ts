@@ -3373,6 +3373,7 @@ router.get('/supplier-report', requireRole('ACCOUNTANT', 'MANAGER', 'PROCUREMENT
       orderNumber: order.orderNumber,
       date: order.createdAt,
       supplier: order.supplier.name,
+      notes: order.notes || null,
       total: order.total.toString(),
       paidAmount: order.paidAmount.toString(),
       outstanding: order.total.sub(order.paidAmount).toString(),

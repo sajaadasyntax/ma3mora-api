@@ -1068,7 +1068,8 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
       inventoryId, 
       section,
       paymentMethod,
-      groupBy = 'date'
+      groupBy = 'date',
+      viewType = 'grouped' // 'grouped' for period grouping, 'invoices' for invoice-level
     } = req.query;
 
     const where: any = {};
@@ -1109,10 +1110,129 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
             giftItem: true, // Include gift item details
           },
         },
-        payments: true,
+        payments: {
+          include: {
+            recordedByUser: {
+              select: { id: true, username: true },
+            },
+          },
+          orderBy: { paidAt: 'desc' },
+        },
       },
       orderBy: { createdAt: 'desc' },
     });
+
+    // If viewType is 'invoices', return invoice-level data similar to supplier report
+    if (viewType === 'invoices') {
+      const invoiceReportData = invoices.map(invoice => ({
+        invoiceNumber: invoice.invoiceNumber,
+        date: invoice.createdAt,
+        customer: invoice.customer?.name || 'بدون عميل',
+        inventory: invoice.inventory.name,
+        notes: invoice.notes || null,
+        total: invoice.total.toString(),
+        paidAmount: invoice.paidAmount.toString(),
+        outstanding: new Prisma.Decimal(invoice.total).sub(invoice.paidAmount).toString(),
+        paymentStatus: invoice.paymentStatus,
+        deliveryStatus: invoice.deliveryStatus,
+        paymentConfirmed: invoice.paymentConfirmed,
+        items: invoice.items.map(item => ({
+          itemName: item.item.name,
+          quantity: item.quantity.toString(),
+          unitPrice: item.unitPrice.toString(),
+          lineTotal: item.lineTotal.toString(),
+        })),
+        payments: invoice.payments.map(payment => ({
+          amount: payment.amount.toString(),
+          method: payment.method,
+          paidAt: payment.paidAt,
+          recordedBy: payment.recordedByUser?.username || 'غير محدد',
+        })),
+      }));
+
+      // Add initial and final stock for inventory reports
+      let stockInfo: any = null;
+      if (inventoryId && startDate && endDate) {
+        const start = new Date(startDate as string);
+        start.setHours(0, 0, 0, 0);
+        const end = new Date(endDate as string);
+        end.setHours(23, 59, 59, 999);
+
+        const initialStocks = await prisma.inventoryStock.findMany({
+          where: { inventoryId: inventoryId as string },
+          include: { item: true },
+        });
+
+        const stockMovements = await prisma.stockMovement.findMany({
+          where: {
+            inventoryId: inventoryId as string,
+            movementDate: {
+              gte: start,
+              lte: end,
+            },
+          },
+          include: { item: true },
+        });
+
+        const initialStockByItem: Record<string, number> = {};
+        const finalStockByItem: Record<string, number> = {};
+
+        for (const stock of initialStocks) {
+          const firstMovement = stockMovements
+            .filter(m => m.itemId === stock.itemId)
+            .sort((a, b) => a.movementDate.getTime() - b.movementDate.getTime())[0];
+          
+          if (firstMovement) {
+            initialStockByItem[stock.itemId] = parseFloat(firstMovement.openingBalance.toString());
+          } else {
+            const changes = stockMovements
+              .filter(m => m.itemId === stock.itemId)
+              .reduce((sum, m) => 
+                sum + parseFloat(m.incoming.toString()) 
+                - parseFloat(m.outgoing.toString())
+                - parseFloat(m.pendingOutgoing.toString())
+                + parseFloat(m.incomingGifts.toString())
+                - parseFloat(m.outgoingGifts.toString()), 0
+              );
+            initialStockByItem[stock.itemId] = Math.max(0, parseFloat(stock.quantity.toString()) - changes);
+          }
+        }
+
+        for (const stock of initialStocks) {
+          const initial = initialStockByItem[stock.itemId] || 0;
+          const movements = stockMovements.filter(m => m.itemId === stock.itemId);
+          const totalIncoming = movements.reduce((sum, m) => sum + parseFloat(m.incoming.toString()), 0);
+          const totalOutgoing = movements.reduce((sum, m) => sum + parseFloat(m.outgoing.toString()) + parseFloat(m.pendingOutgoing.toString()), 0);
+          const totalIncomingGifts = movements.reduce((sum, m) => sum + parseFloat(m.incomingGifts.toString()), 0);
+          const totalOutgoingGifts = movements.reduce((sum, m) => sum + parseFloat(m.outgoingGifts.toString()), 0);
+          
+          finalStockByItem[stock.itemId] = initial + totalIncoming - totalOutgoing + totalIncomingGifts - totalOutgoingGifts;
+        }
+
+        stockInfo = {
+          initial: initialStockByItem,
+          final: finalStockByItem,
+          items: initialStocks.map(s => ({
+            itemId: s.itemId,
+            itemName: s.item.name,
+            initialStock: initialStockByItem[s.itemId] || 0,
+            finalStock: finalStockByItem[s.itemId] || 0,
+          })),
+        };
+      }
+
+      return res.json({
+        period,
+        data: invoiceReportData,
+        summary: {
+          totalInvoices: invoices.length,
+          totalSales: invoices.reduce((sum, inv) => sum + parseFloat(inv.total.toString()), 0),
+          totalPaid: invoices.reduce((sum, inv) => sum + parseFloat(inv.paidAmount.toString()), 0),
+          totalOutstanding: invoices.reduce((sum, inv) => sum + parseFloat(inv.total.toString()) - parseFloat(inv.paidAmount.toString()), 0),
+        },
+        ...(stockInfo && { stockInfo }),
+      });
+    }
 
     // Group data based on period
     let groupedData: any = {};
@@ -1295,9 +1415,121 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
       };
     }
 
+    // Get item-level stock movement data
+    let itemReportData: any[] = [];
+    if (startDate && endDate) {
+      // Get unique inventory IDs from invoices
+      const inventoryIds = invoices.length > 0 
+        ? [...new Set(invoices.map(inv => inv.inventoryId))]
+        : [];
+      
+      // If no invoices but we have inventory filter, use it
+      let targetInventoryIds = inventoryIds;
+      if (inventoryIds.length === 0 && inventoryId) {
+        targetInventoryIds = [inventoryId as string];
+      } else if (inventoryIds.length === 0) {
+        // Get all inventories that have stock movements in the date range
+        const start = new Date(startDate as string);
+        start.setHours(0, 0, 0, 0);
+        const end = new Date(endDate as string);
+        end.setHours(23, 59, 59, 999);
+        
+        const movements = await prisma.stockMovement.findMany({
+          where: {
+            movementDate: {
+              gte: start,
+              lte: end,
+            },
+            ...(inventoryId && { inventoryId: inventoryId as string }),
+            ...(section && { 
+              inventory: { section: section as any }
+            }),
+          },
+          select: { inventoryId: true },
+          distinct: ['inventoryId'],
+        });
+        targetInventoryIds = movements.map(m => m.inventoryId);
+      }
+      
+      for (const invId of targetInventoryIds) {
+        const start = new Date(startDate as string);
+        start.setHours(0, 0, 0, 0);
+        const end = new Date(endDate as string);
+        end.setHours(23, 59, 59, 999);
+
+        // Get all items in this inventory
+        const inventoryStocks = await prisma.inventoryStock.findMany({
+          where: { inventoryId: invId },
+          include: { item: true },
+        });
+
+        // Get stock movements for this inventory in the date range
+        const stockMovements = await prisma.stockMovement.findMany({
+          where: {
+            inventoryId: invId,
+            movementDate: {
+              gte: start,
+              lte: end,
+            },
+          },
+          include: { item: true },
+        });
+
+        // Group movements by item
+        const movementsByItem: Record<string, typeof stockMovements> = {};
+        stockMovements.forEach(movement => {
+          if (!movementsByItem[movement.itemId]) {
+            movementsByItem[movement.itemId] = [];
+          }
+          movementsByItem[movement.itemId].push(movement);
+        });
+
+        // Process each item - only include items with activity in the period
+        for (const stock of inventoryStocks) {
+          const itemMovements = movementsByItem[stock.itemId] || [];
+          
+          // Skip items with no activity
+          if (itemMovements.length === 0) {
+            continue;
+          }
+          
+          // Get opening balance from first movement
+          const firstMovement = itemMovements.sort((a, b) => a.movementDate.getTime() - b.movementDate.getTime())[0];
+          const openingBalance = parseFloat(firstMovement.openingBalance.toString());
+
+          // Aggregate movements
+          const totalOutgoing = itemMovements.reduce((sum, m) => 
+            sum + parseFloat(m.outgoing.toString()) + parseFloat(m.pendingOutgoing.toString()), 0
+          );
+          const totalOutgoingGifts = itemMovements.reduce((sum, m) => 
+            sum + parseFloat(m.outgoingGifts.toString()), 0
+          );
+          const totalIncoming = itemMovements.reduce((sum, m) => 
+            sum + parseFloat(m.incoming.toString()), 0
+          );
+          const totalIncomingGifts = itemMovements.reduce((sum, m) => 
+            sum + parseFloat(m.incomingGifts.toString()), 0
+          );
+          
+          const closingBalance = openingBalance + totalIncoming + totalIncomingGifts - totalOutgoing - totalOutgoingGifts;
+
+          itemReportData.push({
+            itemId: stock.itemId,
+            itemName: stock.item.name,
+            openingBalance: openingBalance,
+            outgoing: totalOutgoing,
+            outgoingGifts: totalOutgoingGifts,
+            incoming: totalIncoming,
+            incomingGifts: totalIncomingGifts,
+            closingBalance: closingBalance,
+          });
+        }
+      }
+    }
+
     res.json({
       period,
-      data: reportData,
+      data: itemReportData.length > 0 ? itemReportData : reportData, // Return item data if available, otherwise grouped invoice data
       summary: {
         totalInvoices: invoices.length,
         totalSales: invoices.reduce((sum, inv) => sum + parseFloat(inv.total.toString()), 0),
