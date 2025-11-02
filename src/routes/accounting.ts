@@ -3304,7 +3304,7 @@ router.get('/customer-report', requireRole('ACCOUNTANT', 'MANAGER', 'SALES_GROCE
 // Supplier Report endpoint
 router.get('/supplier-report', requireRole('ACCOUNTANT', 'MANAGER', 'PROCUREMENT'), async (req: AuthRequest, res) => {
   try {
-    const { startDate, endDate, supplierId, paymentMethod } = req.query;
+    const { startDate, endDate, supplierId, supplierIds, paymentMethod } = req.query;
     
     const where: any = {};
     
@@ -3324,8 +3324,15 @@ router.get('/supplier-report', requireRole('ACCOUNTANT', 'MANAGER', 'PROCUREMENT
       };
     }
     
-    // Filter by supplier
-    if (supplierId) {
+    // Filter by supplier(s) - support both single supplierId (backward compatibility) and multiple supplierIds
+    if (supplierIds) {
+      // Handle comma-separated string of supplier IDs
+      const ids = (supplierIds as string).split(',').filter(id => id.trim());
+      if (ids.length > 0) {
+        where.supplierId = { in: ids };
+      }
+    } else if (supplierId) {
+      // Backward compatibility: single supplier ID
       where.supplierId = supplierId;
     }
     

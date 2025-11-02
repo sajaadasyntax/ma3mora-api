@@ -67,6 +67,14 @@ router.get('/:id/orders', requireRole('PROCUREMENT', 'ACCOUNTANT', 'AUDITOR', 'M
             item: true,
           },
         },
+        payments: {
+          include: {
+            recordedByUser: {
+              select: { id: true, username: true },
+            },
+          },
+          orderBy: { paidAt: 'desc' },
+        },
         receipts: {
           include: {
             receivedByUser: {
