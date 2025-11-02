@@ -1506,6 +1506,76 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
         }
       }
       
+      // Calculate stockInfo first if not already calculated (for items viewType)
+      if (viewType === 'items' && inventoryId && !stockInfo) {
+        const start = new Date(startDate as string);
+        start.setHours(0, 0, 0, 0);
+        const end = new Date(endDate as string);
+        end.setHours(23, 59, 59, 999);
+
+        const initialStocks = await prisma.inventoryStock.findMany({
+          where: { inventoryId: inventoryId as string },
+          include: { item: true },
+        });
+
+        const stockMovements = await prisma.stockMovement.findMany({
+          where: {
+            inventoryId: inventoryId as string,
+            movementDate: {
+              gte: start,
+              lte: end,
+            },
+          },
+          include: { item: true },
+        });
+
+        const initialStockByItem: Record<string, number> = {};
+        const finalStockByItem: Record<string, number> = {};
+
+        for (const stock of initialStocks) {
+          const firstMovement = stockMovements
+            .filter(m => m.itemId === stock.itemId)
+            .sort((a, b) => a.movementDate.getTime() - b.movementDate.getTime())[0];
+          
+          if (firstMovement) {
+            initialStockByItem[stock.itemId] = parseFloat(firstMovement.openingBalance.toString());
+          } else {
+            const changes = stockMovements
+              .filter(m => m.itemId === stock.itemId)
+              .reduce((sum, m) => 
+                sum + parseFloat(m.incoming.toString()) 
+                - parseFloat(m.outgoing.toString())
+                - parseFloat(m.pendingOutgoing.toString())
+                + parseFloat(m.incomingGifts.toString())
+                - parseFloat(m.outgoingGifts.toString()), 0
+              );
+            initialStockByItem[stock.itemId] = Math.max(0, parseFloat(stock.quantity.toString()) - changes);
+          }
+        }
+
+        for (const stock of initialStocks) {
+          const initial = initialStockByItem[stock.itemId] || 0;
+          const movements = stockMovements.filter(m => m.itemId === stock.itemId);
+          const totalIncoming = movements.reduce((sum, m) => sum + parseFloat(m.incoming.toString()), 0);
+          const totalOutgoing = movements.reduce((sum, m) => sum + parseFloat(m.outgoing.toString()) + parseFloat(m.pendingOutgoing.toString()), 0);
+          const totalIncomingGifts = movements.reduce((sum, m) => sum + parseFloat(m.incomingGifts.toString()), 0);
+          const totalOutgoingGifts = movements.reduce((sum, m) => sum + parseFloat(m.outgoingGifts.toString()), 0);
+          
+          finalStockByItem[stock.itemId] = initial + totalIncoming - totalOutgoing + totalIncomingGifts - totalOutgoingGifts;
+        }
+
+        stockInfo = {
+          initial: initialStockByItem,
+          final: finalStockByItem,
+          items: initialStocks.map(s => ({
+            itemId: s.itemId,
+            itemName: s.item.name,
+            initialStock: initialStockByItem[s.itemId] || 0,
+            finalStock: finalStockByItem[s.itemId] || 0,
+          })),
+        };
+      }
+
       for (const invId of targetInventoryIds) {
         const start = new Date(startDate as string);
         start.setHours(0, 0, 0, 0);
@@ -1547,32 +1617,52 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
           movementsByItem[movement.itemId].push(movement);
         });
 
-        // Process each item - only include items with activity in the period
+        // Process each item
+        // For 'items' viewType, show all items even if they have no movements
+        // For other viewTypes, only show items with activity
         for (const stock of inventoryStocks) {
           const itemMovements = movementsByItem[stock.itemId] || [];
           
-          // Skip items with no activity
-          if (itemMovements.length === 0) {
-            continue;
-          }
+          let openingBalance = 0;
+          let totalOutgoing = 0;
+          let totalOutgoingGifts = 0;
+          let totalIncoming = 0;
+          let totalIncomingGifts = 0;
           
-          // Get opening balance from first movement
-          const firstMovement = itemMovements.sort((a, b) => a.movementDate.getTime() - b.movementDate.getTime())[0];
-          const openingBalance = parseFloat(firstMovement.openingBalance.toString());
+          if (itemMovements.length > 0) {
+            // Get opening balance from first movement
+            const firstMovement = itemMovements.sort((a, b) => a.movementDate.getTime() - b.movementDate.getTime())[0];
+            openingBalance = parseFloat(firstMovement.openingBalance.toString());
 
-          // Aggregate movements
-          const totalOutgoing = itemMovements.reduce((sum, m) => 
-            sum + parseFloat(m.outgoing.toString()) + parseFloat(m.pendingOutgoing.toString()), 0
-          );
-          const totalOutgoingGifts = itemMovements.reduce((sum, m) => 
-            sum + parseFloat(m.outgoingGifts.toString()), 0
-          );
-          const totalIncoming = itemMovements.reduce((sum, m) => 
-            sum + parseFloat(m.incoming.toString()), 0
-          );
-          const totalIncomingGifts = itemMovements.reduce((sum, m) => 
-            sum + parseFloat(m.incomingGifts.toString()), 0
-          );
+            // Aggregate movements
+            totalOutgoing = itemMovements.reduce((sum, m) => 
+              sum + parseFloat(m.outgoing.toString()) + parseFloat(m.pendingOutgoing.toString()), 0
+            );
+            totalOutgoingGifts = itemMovements.reduce((sum, m) => 
+              sum + parseFloat(m.outgoingGifts.toString()), 0
+            );
+            totalIncoming = itemMovements.reduce((sum, m) => 
+              sum + parseFloat(m.incoming.toString()), 0
+            );
+            totalIncomingGifts = itemMovements.reduce((sum, m) => 
+              sum + parseFloat(m.incomingGifts.toString()), 0
+            );
+          } else {
+            // No movements in the period - for 'items' viewType, show item with zero values
+            // Get opening balance from current stock minus any changes (if stockInfo is available)
+            if (viewType === 'items') {
+              // For items viewType, use the initial stock from stockInfo if available
+              // Otherwise use current stock quantity
+              openingBalance = parseFloat(stock.quantity.toString());
+              // If stockInfo has initial stock for this item, use it
+              if (stockInfo && stockInfo.initial && stockInfo.initial[stock.itemId] !== undefined) {
+                openingBalance = stockInfo.initial[stock.itemId];
+              }
+            } else {
+              // For non-items viewType, skip items with no activity
+              continue;
+            }
+          }
           
           const closingBalance = openingBalance + totalIncoming + totalIncomingGifts - totalOutgoing - totalOutgoingGifts;
 
