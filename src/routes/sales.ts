@@ -1425,16 +1425,21 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
     }
 
     // Get item-level stock movement data
+    // For 'items' viewType, always generate item report data if dates are provided
     let itemReportData: any[] = [];
     if (startDate && endDate) {
-      // Get unique inventory IDs from invoices
-      const inventoryIds = invoices.length > 0 
+      // Get unique inventory IDs from invoices (for non-items viewType)
+      const inventoryIds = (viewType !== 'items' && invoices.length > 0)
         ? [...new Set(invoices.map(inv => inv.inventoryId))]
         : [];
       
       // If no invoices but we have inventory filter, use it
+      // For 'items' viewType, prioritize inventoryId filter
       let targetInventoryIds = inventoryIds;
-      if (inventoryIds.length === 0 && inventoryId) {
+      if (viewType === 'items' && inventoryId) {
+        // When viewType is 'items', use the selected inventory
+        targetInventoryIds = [inventoryId as string];
+      } else if (inventoryIds.length === 0 && inventoryId) {
         targetInventoryIds = [inventoryId as string];
       } else if (inventoryIds.length === 0) {
         // Get all inventories that have stock movements in the date range
@@ -1466,21 +1471,29 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
         const end = new Date(endDate as string);
         end.setHours(23, 59, 59, 999);
 
-        // Get all items in this inventory
+        // Get all items in this inventory (filter by section if provided)
+        const stocksWhere: any = { inventoryId: invId };
+        if (section) {
+          stocksWhere.item = { section: section as any };
+        }
         const inventoryStocks = await prisma.inventoryStock.findMany({
-          where: { inventoryId: invId },
+          where: stocksWhere,
           include: { item: true },
         });
 
-        // Get stock movements for this inventory in the date range
-        const stockMovements = await prisma.stockMovement.findMany({
-          where: {
-            inventoryId: invId,
-            movementDate: {
-              gte: start,
-              lte: end,
-            },
+        // Get stock movements for this inventory in the date range (filter by section if provided)
+        const movementsWhere: any = {
+          inventoryId: invId,
+          movementDate: {
+            gte: start,
+            lte: end,
           },
+        };
+        if (section) {
+          movementsWhere.item = { section: section as any };
+        }
+        const stockMovements = await prisma.stockMovement.findMany({
+          where: movementsWhere,
           include: { item: true },
         });
 
