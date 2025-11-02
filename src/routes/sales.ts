@@ -1435,34 +1435,75 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
       
       // If no invoices but we have inventory filter, use it
       // For 'items' viewType, prioritize inventoryId filter
-      let targetInventoryIds = inventoryIds;
-      if (viewType === 'items' && inventoryId) {
-        // When viewType is 'items', use the selected inventory
-        targetInventoryIds = [inventoryId as string];
-      } else if (inventoryIds.length === 0 && inventoryId) {
-        targetInventoryIds = [inventoryId as string];
-      } else if (inventoryIds.length === 0) {
-        // Get all inventories that have stock movements in the date range
-        const start = new Date(startDate as string);
-        start.setHours(0, 0, 0, 0);
-        const end = new Date(endDate as string);
-        end.setHours(23, 59, 59, 999);
-        
-        const movements = await prisma.stockMovement.findMany({
-          where: {
-            movementDate: {
-              gte: start,
-              lte: end,
+      let targetInventoryIds: string[] = [];
+      
+      if (viewType === 'items') {
+        // When viewType is 'items', determine which inventories to process
+        if (inventoryId) {
+          // Use the selected inventory
+          targetInventoryIds = [inventoryId as string];
+        } else {
+          // No inventory filter - get all inventories that have stock movements in the date range
+          const start = new Date(startDate as string);
+          start.setHours(0, 0, 0, 0);
+          const end = new Date(endDate as string);
+          end.setHours(23, 59, 59, 999);
+          
+          const movements = await prisma.stockMovement.findMany({
+            where: {
+              movementDate: {
+                gte: start,
+                lte: end,
+              },
+              ...(section && { 
+                item: { section: section as any }
+              }),
             },
-            ...(inventoryId && { inventoryId: inventoryId as string }),
-            ...(section && { 
-              item: { section: section as any }
-            }),
-          },
-          select: { inventoryId: true },
-          distinct: ['inventoryId'],
-        });
-        targetInventoryIds = movements.map(m => m.inventoryId);
+            select: { inventoryId: true },
+            distinct: ['inventoryId'],
+          });
+          targetInventoryIds = movements.map(m => m.inventoryId);
+          
+          // If no movements found but we have section filter, try to get inventories from InventoryStock
+          if (targetInventoryIds.length === 0 && section) {
+            const stocks = await prisma.inventoryStock.findMany({
+              where: {
+                item: { section: section as any }
+              },
+              select: { inventoryId: true },
+              distinct: ['inventoryId'],
+            });
+            targetInventoryIds = stocks.map(s => s.inventoryId);
+          }
+        }
+      } else {
+        // For non-items viewType, use existing logic
+        targetInventoryIds = inventoryIds;
+        if (inventoryIds.length === 0 && inventoryId) {
+          targetInventoryIds = [inventoryId as string];
+        } else if (inventoryIds.length === 0) {
+          // Get all inventories that have stock movements in the date range
+          const start = new Date(startDate as string);
+          start.setHours(0, 0, 0, 0);
+          const end = new Date(endDate as string);
+          end.setHours(23, 59, 59, 999);
+          
+          const movements = await prisma.stockMovement.findMany({
+            where: {
+              movementDate: {
+                gte: start,
+                lte: end,
+              },
+              ...(inventoryId && { inventoryId: inventoryId as string }),
+              ...(section && { 
+                item: { section: section as any }
+              }),
+            },
+            select: { inventoryId: true },
+            distinct: ['inventoryId'],
+          });
+          targetInventoryIds = movements.map(m => m.inventoryId);
+        }
       }
       
       for (const invId of targetInventoryIds) {
