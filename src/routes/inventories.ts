@@ -38,7 +38,18 @@ router.get('/:id/stocks', requireRole('INVENTORY', 'MANAGER', 'ACCOUNTANT', 'AUD
       include: {
         item: {
           include: {
-            prices: true,
+            prices: {
+              where: {
+                OR: [
+                  { inventoryId: id }, // Inventory-specific prices
+                  { inventoryId: null }, // Global prices
+                ],
+              },
+              orderBy: [
+                { inventoryId: 'desc' }, // Prefer inventory-specific over global
+                { validFrom: 'desc' },
+              ],
+            },
           },
         },
         batches: {
