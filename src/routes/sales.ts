@@ -1451,7 +1451,7 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
             },
             ...(inventoryId && { inventoryId: inventoryId as string }),
             ...(section && { 
-              inventory: { section: section as any }
+              item: { section: section as any }
             }),
           },
           select: { inventoryId: true },
