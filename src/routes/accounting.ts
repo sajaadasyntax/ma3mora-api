@@ -1571,9 +1571,14 @@ router.post('/aggregators/recalculate', requireRole('ACCOUNTANT', 'MANAGER'), as
         end: end.toISOString().split('T')[0],
       },
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Recalculate aggregators error:', error);
-    res.status(500).json({ error: 'خطأ في الخادم' });
+    console.error('Error stack:', error?.stack);
+    res.status(500).json({ 
+      error: 'خطأ في الخادم',
+      message: error?.message || 'Unknown error',
+      details: process.env.NODE_ENV === 'development' ? error?.stack : undefined
+    });
   }
 });
 

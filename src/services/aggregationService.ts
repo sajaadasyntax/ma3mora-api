@@ -953,7 +953,32 @@ export class AggregationService {
       BANK_NILE: advances.filter(a => a.paymentMethod === 'BANK_NILE').reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0)),
     };
 
-    // Update aggregate
+    // Update aggregate - use absolute values instead of increments for recalculation
+    // First, get existing aggregate to clear it
+    const dateOnly = new Date(date);
+    dateOnly.setHours(0, 0, 0, 0);
+    const whereClause: any = {
+      date: dateOnly,
+      inventoryId: (inventoryId ?? null) as any,
+      section: (section ?? null) as any,
+    };
+    
+    const existing = await prisma.dailyFinancialAggregate.findUnique({
+      where: {
+        date_inventoryId_section: whereClause,
+      },
+    });
+
+    // Delete existing aggregate if it exists to avoid double-counting
+    if (existing) {
+      await prisma.dailyFinancialAggregate.delete({
+        where: {
+          date_inventoryId_section: whereClause,
+        },
+      });
+    }
+
+    // Create new aggregate with absolute values
     await this.updateDailyFinancialAggregate(date, {
       salesTotal,
       salesReceived,

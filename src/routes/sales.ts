@@ -1608,6 +1608,41 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
           include: { item: true },
         });
 
+        // Also get deliveries directly if StockMovement records are missing or incomplete
+        // This ensures we capture sales even if aggregators haven't run
+        const deliveriesWhere: any = {
+          invoice: {
+            inventoryId: invId,
+            deliveryStatus: 'DELIVERED',
+            createdAt: {
+              gte: start,
+              lte: end,
+            },
+          },
+        };
+        if (section) {
+          deliveriesWhere.items = {
+            some: {
+              item: { section: section as any }
+            }
+          };
+        }
+        const deliveries = await prisma.inventoryDelivery.findMany({
+          where: deliveriesWhere,
+          include: {
+            items: {
+              include: {
+                item: true,
+              },
+            },
+            invoice: {
+              include: {
+                items: true,
+              },
+            },
+          },
+        });
+
         // Group movements by item
         const movementsByItem: Record<string, typeof stockMovements> = {};
         stockMovements.forEach(movement => {
@@ -1616,6 +1651,74 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
           }
           movementsByItem[movement.itemId].push(movement);
         });
+
+        // If we have deliveries but no movements for an item, create synthetic movement data
+        // This handles cases where aggregators haven't run yet
+        for (const delivery of deliveries) {
+          for (const deliveryItem of delivery.items) {
+            const itemId = deliveryItem.itemId;
+            
+            // Filter by section if provided
+            if (section && deliveryItem.item.section !== section) {
+              continue;
+            }
+            
+            const movementDate = new Date(delivery.deliveredAt);
+            movementDate.setHours(0, 0, 0, 0);
+            
+            // Check if we already have a real movement for this item on this date
+            const existingMovement = stockMovements.find(
+              m => m.itemId === itemId && 
+              m.movementDate.getTime() === movementDate.getTime()
+            );
+            
+            if (!existingMovement) {
+              // Create a synthetic movement entry
+              if (!movementsByItem[itemId]) {
+                movementsByItem[itemId] = [];
+              }
+              
+              // Check if we already added a synthetic movement for this date
+              const syntheticMovement = movementsByItem[itemId].find(
+                (m: any) => m.isSynthetic && m.movementDate?.getTime() === movementDate.getTime()
+              );
+              
+              if (syntheticMovement) {
+                // Add to existing synthetic movement
+                const currentOutgoing = typeof syntheticMovement.outgoing === 'object' && 'toString' in syntheticMovement.outgoing
+                  ? parseFloat(syntheticMovement.outgoing.toString())
+                  : (typeof syntheticMovement.outgoing === 'number' ? syntheticMovement.outgoing : 0);
+                const currentGifts = typeof syntheticMovement.outgoingGifts === 'object' && 'toString' in syntheticMovement.outgoingGifts
+                  ? parseFloat(syntheticMovement.outgoingGifts.toString())
+                  : (typeof syntheticMovement.outgoingGifts === 'number' ? syntheticMovement.outgoingGifts : 0);
+                
+                syntheticMovement.outgoing = new Prisma.Decimal(currentOutgoing)
+                  .add(deliveryItem.quantity);
+                syntheticMovement.outgoingGifts = new Prisma.Decimal(currentGifts)
+                  .add(deliveryItem.giftQty || 0);
+              } else {
+                // Create new synthetic movement
+                movementsByItem[itemId].push({
+                  id: `synthetic-${itemId}-${movementDate.toISOString()}`,
+                  inventoryId: invId,
+                  itemId: itemId,
+                  movementDate: movementDate,
+                  openingBalance: new Prisma.Decimal(0), // Will be calculated from first real movement or stock
+                  outgoing: deliveryItem.quantity,
+                  pendingOutgoing: new Prisma.Decimal(0),
+                  incoming: new Prisma.Decimal(0),
+                  incomingGifts: new Prisma.Decimal(0),
+                  outgoingGifts: deliveryItem.giftQty || new Prisma.Decimal(0),
+                  closingBalance: new Prisma.Decimal(0),
+                  createdAt: delivery.deliveredAt,
+                  updatedAt: delivery.deliveredAt,
+                  item: deliveryItem.item,
+                  isSynthetic: true,
+                } as any);
+              }
+            }
+          }
+        }
 
         // Process each item
         // For 'items' viewType, show all items even if they have no movements
@@ -1630,23 +1733,56 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
           let totalIncomingGifts = 0;
           
           if (itemMovements.length > 0) {
-            // Get opening balance from first movement
-            const firstMovement = itemMovements.sort((a, b) => a.movementDate.getTime() - b.movementDate.getTime())[0];
-            openingBalance = parseFloat(firstMovement.openingBalance.toString());
+            // Sort movements by date
+            const sortedMovements = itemMovements.sort((a, b) => {
+              const dateA = a.movementDate?.getTime() || 0;
+              const dateB = b.movementDate?.getTime() || 0;
+              return dateA - dateB;
+            });
+            
+            // Get opening balance from first non-synthetic movement, or calculate from stockInfo
+            const firstRealMovement = sortedMovements.find((m: any) => !m.isSynthetic);
+            if (firstRealMovement) {
+              openingBalance = parseFloat(firstRealMovement.openingBalance.toString());
+            } else if (stockInfo && stockInfo.initial && stockInfo.initial[stock.itemId] !== undefined) {
+              // Use stockInfo initial if no real movements
+              openingBalance = stockInfo.initial[stock.itemId];
+            } else {
+              // Fallback to current stock
+              openingBalance = parseFloat(stock.quantity.toString());
+            }
 
-            // Aggregate movements
-            totalOutgoing = itemMovements.reduce((sum, m) => 
-              sum + parseFloat(m.outgoing.toString()) + parseFloat(m.pendingOutgoing.toString()), 0
-            );
-            totalOutgoingGifts = itemMovements.reduce((sum, m) => 
-              sum + parseFloat(m.outgoingGifts.toString()), 0
-            );
-            totalIncoming = itemMovements.reduce((sum, m) => 
-              sum + parseFloat(m.incoming.toString()), 0
-            );
-            totalIncomingGifts = itemMovements.reduce((sum, m) => 
-              sum + parseFloat(m.incomingGifts.toString()), 0
-            );
+            // Aggregate movements (including synthetic ones)
+            totalOutgoing = sortedMovements.reduce((sum, m) => {
+              const outgoing = typeof m.outgoing === 'object' && 'toString' in m.outgoing
+                ? parseFloat(m.outgoing.toString())
+                : (typeof m.outgoing === 'number' ? m.outgoing : 0);
+              const pending = typeof m.pendingOutgoing === 'object' && 'toString' in m.pendingOutgoing
+                ? parseFloat(m.pendingOutgoing.toString())
+                : (typeof m.pendingOutgoing === 'number' ? m.pendingOutgoing : 0);
+              return sum + outgoing + pending;
+            }, 0);
+            
+            totalOutgoingGifts = sortedMovements.reduce((sum, m) => {
+              const gifts = typeof m.outgoingGifts === 'object' && 'toString' in m.outgoingGifts
+                ? parseFloat(m.outgoingGifts.toString())
+                : (typeof m.outgoingGifts === 'number' ? m.outgoingGifts : 0);
+              return sum + gifts;
+            }, 0);
+            
+            totalIncoming = sortedMovements.reduce((sum, m) => {
+              const incoming = typeof m.incoming === 'object' && 'toString' in m.incoming
+                ? parseFloat(m.incoming.toString())
+                : (typeof m.incoming === 'number' ? m.incoming : 0);
+              return sum + incoming;
+            }, 0);
+            
+            totalIncomingGifts = sortedMovements.reduce((sum, m) => {
+              const gifts = typeof m.incomingGifts === 'object' && 'toString' in m.incomingGifts
+                ? parseFloat(m.incomingGifts.toString())
+                : (typeof m.incomingGifts === 'number' ? m.incomingGifts : 0);
+              return sum + gifts;
+            }, 0);
           } else {
             // No movements in the period - for 'items' viewType, show item with zero values
             // Get opening balance from current stock minus any changes (if stockInfo is available)
