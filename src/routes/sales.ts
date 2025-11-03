@@ -1529,6 +1529,45 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
           include: { item: true },
         });
 
+        // Get deliveries to calculate opening balance when StockMovement records don't exist
+        const deliveries = await prisma.inventoryDelivery.findMany({
+          where: {
+            invoice: {
+              inventoryId: inventoryId as string,
+              deliveryStatus: 'DELIVERED',
+              deliveredAt: {
+                gte: start,
+                lte: end,
+              },
+            },
+          },
+          include: {
+            items: {
+              include: { item: true },
+            },
+          },
+        });
+
+        // Get procurement receipts for incoming calculations
+        const receipts = await prisma.inventoryReceipt.findMany({
+          where: {
+            order: {
+              inventoryId: inventoryId as string,
+              receivedAt: {
+                gte: start,
+                lte: end,
+              },
+            },
+          },
+          include: {
+            order: {
+              include: {
+                items: true,
+              },
+            },
+          },
+        });
+
         const initialStockByItem: Record<string, number> = {};
         const finalStockByItem: Record<string, number> = {};
 
@@ -1538,18 +1577,58 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
             .sort((a, b) => a.movementDate.getTime() - b.movementDate.getTime())[0];
           
           if (firstMovement) {
+            // Use opening balance from first StockMovement record
             initialStockByItem[stock.itemId] = parseFloat(firstMovement.openingBalance.toString());
           } else {
-            const changes = stockMovements
-              .filter(m => m.itemId === stock.itemId)
-              .reduce((sum, m) => 
-                sum + parseFloat(m.incoming.toString()) 
-                - parseFloat(m.outgoing.toString())
-                - parseFloat(m.pendingOutgoing.toString())
-                + parseFloat(m.incomingGifts.toString())
-                - parseFloat(m.outgoingGifts.toString()), 0
-              );
-            initialStockByItem[stock.itemId] = Math.max(0, parseFloat(stock.quantity.toString()) - changes);
+            // No StockMovement records in period - try to get the last movement BEFORE the period
+            const dayBeforeStart = new Date(start);
+            dayBeforeStart.setDate(dayBeforeStart.getDate() - 1);
+            dayBeforeStart.setHours(23, 59, 59, 999);
+            
+            const lastMovementBeforePeriod = await prisma.stockMovement.findFirst({
+              where: {
+                inventoryId: inventoryId as string,
+                itemId: stock.itemId,
+                movementDate: {
+                  lte: dayBeforeStart,
+                },
+              },
+              orderBy: {
+                movementDate: 'desc',
+              },
+            });
+            
+            if (lastMovementBeforePeriod) {
+              // Use closing balance from the last movement before the period as opening balance
+              initialStockByItem[stock.itemId] = parseFloat(lastMovementBeforePeriod.closingBalance.toString());
+            } else {
+              // No movements at all - calculate opening balance from current stock and changes in period
+              const currentStock = parseFloat(stock.quantity.toString());
+              
+              // Calculate total outgoing from deliveries in the period
+              const totalOutgoingFromDeliveries = deliveries.reduce((sum, delivery) => {
+                const deliveryItem = delivery.items.find(di => di.itemId === stock.itemId);
+                if (deliveryItem) {
+                  return sum + parseFloat(deliveryItem.quantity.toString()) + 
+                         parseFloat((deliveryItem.giftQty || 0).toString());
+                }
+                return sum;
+              }, 0);
+              
+              // Calculate total incoming from procurement receipts in the period
+              const totalIncomingFromReceipts = receipts.reduce((sum, receipt) => {
+                const receiptItem = receipt.order.items.find(i => i.itemId === stock.itemId);
+                if (receiptItem) {
+                  return sum + parseFloat(receiptItem.quantity.toString());
+                }
+                return sum;
+              }, 0);
+              
+              // Opening balance = current stock + outgoing in period - incoming in period
+              // This reverses the changes that happened in the period to get the opening balance
+              const calculatedOpening = currentStock + totalOutgoingFromDeliveries - totalIncomingFromReceipts;
+              initialStockByItem[stock.itemId] = calculatedOpening;
+            }
           }
         }
 
@@ -1740,19 +1819,7 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
               return dateA - dateB;
             });
             
-            // Get opening balance from first non-synthetic movement, or calculate from stockInfo
-            const firstRealMovement = sortedMovements.find((m: any) => !m.isSynthetic);
-            if (firstRealMovement) {
-              openingBalance = parseFloat(firstRealMovement.openingBalance.toString());
-            } else if (stockInfo && stockInfo.initial && stockInfo.initial[stock.itemId] !== undefined) {
-              // Use stockInfo initial if no real movements
-              openingBalance = stockInfo.initial[stock.itemId];
-            } else {
-              // Fallback to current stock
-              openingBalance = parseFloat(stock.quantity.toString());
-            }
-
-            // Aggregate movements (including synthetic ones)
+            // Aggregate movements (including synthetic ones) FIRST
             totalOutgoing = sortedMovements.reduce((sum, m) => {
               const outgoing = typeof m.outgoing === 'object' && 'toString' in m.outgoing
                 ? parseFloat(m.outgoing.toString())
@@ -1783,6 +1850,21 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
                 : (typeof m.incomingGifts === 'number' ? m.incomingGifts : 0);
               return sum + gifts;
             }, 0);
+
+            // Get opening balance from first non-synthetic movement, or calculate from stockInfo/current stock
+            const firstRealMovement = sortedMovements.find((m: any) => !m.isSynthetic);
+            if (firstRealMovement) {
+              // Use opening balance from first real StockMovement record
+              openingBalance = parseFloat(firstRealMovement.openingBalance.toString());
+            } else if (stockInfo && stockInfo.initial && stockInfo.initial[stock.itemId] !== undefined) {
+              // Use stockInfo initial if no real movements
+              openingBalance = stockInfo.initial[stock.itemId];
+            } else {
+              // No real movements and no stockInfo - calculate from current stock by reversing the changes
+              // Opening balance = current stock + outgoing - incoming
+              const currentStock = parseFloat(stock.quantity.toString());
+              openingBalance = currentStock + totalOutgoing + totalOutgoingGifts - totalIncoming - totalIncomingGifts;
+            }
           } else {
             // No movements in the period - for 'items' viewType, show item with zero values
             // Get opening balance from current stock minus any changes (if stockInfo is available)
