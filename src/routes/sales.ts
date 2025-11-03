@@ -1535,10 +1535,10 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
             invoice: {
               inventoryId: inventoryId as string,
               deliveryStatus: 'DELIVERED',
-              deliveredAt: {
-                gte: start,
-                lte: end,
-              },
+            },
+            deliveredAt: {
+              gte: start,
+              lte: end,
             },
           },
           include: {
@@ -1553,10 +1553,10 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
           where: {
             order: {
               inventoryId: inventoryId as string,
-              receivedAt: {
-                gte: start,
-                lte: end,
-              },
+            },
+            receivedAt: {
+              gte: start,
+              lte: end,
             },
           },
           include: {
@@ -1607,7 +1607,7 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
               
               // Calculate total outgoing from deliveries in the period
               const totalOutgoingFromDeliveries = deliveries.reduce((sum, delivery) => {
-                const deliveryItem = delivery.items.find(di => di.itemId === stock.itemId);
+                const deliveryItem = delivery.items?.find((di: any) => di.itemId === stock.itemId);
                 if (deliveryItem) {
                   return sum + parseFloat(deliveryItem.quantity.toString()) + 
                          parseFloat((deliveryItem.giftQty || 0).toString());
@@ -1617,7 +1617,7 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
               
               // Calculate total incoming from procurement receipts in the period
               const totalIncomingFromReceipts = receipts.reduce((sum, receipt) => {
-                const receiptItem = receipt.order.items.find(i => i.itemId === stock.itemId);
+                const receiptItem = receipt.order?.items?.find((i: any) => i.itemId === stock.itemId);
                 if (receiptItem) {
                   return sum + parseFloat(receiptItem.quantity.toString());
                 }
