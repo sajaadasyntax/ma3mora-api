@@ -955,8 +955,6 @@ export class AggregationService {
 
     // Update aggregate - use absolute values instead of increments for recalculation
     // First, get existing aggregate to clear it
-    const dateOnly = new Date(date);
-    dateOnly.setHours(0, 0, 0, 0);
     const whereClause: any = {
       date: dateOnly,
       inventoryId: (inventoryId ?? null) as any,
