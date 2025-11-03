@@ -1693,10 +1693,10 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
           invoice: {
             inventoryId: invId,
             deliveryStatus: 'DELIVERED',
-            createdAt: {
-              gte: start,
-              lte: end,
-            },
+          },
+          deliveredAt: {
+            gte: start,
+            lte: end,
           },
         };
         if (section) {
