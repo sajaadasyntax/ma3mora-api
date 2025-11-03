@@ -1529,7 +1529,7 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
           include: { item: true },
         });
 
-        // Get deliveries to calculate opening balance when StockMovement records don't exist
+        // Get deliveries IN period to calculate opening balance when StockMovement records don't exist
         const deliveries = await prisma.inventoryDelivery.findMany({
           where: {
             invoice: {
@@ -1548,7 +1548,7 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
           },
         });
 
-        // Get procurement receipts for incoming calculations
+        // Get procurement receipts IN period for opening balance calculations
         const receipts = await prisma.inventoryReceipt.findMany({
           where: {
             order: {
@@ -1603,6 +1603,8 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
               initialStockByItem[stock.itemId] = parseFloat(lastMovementBeforePeriod.closingBalance.toString());
             } else {
               // No movements at all - calculate opening balance from current stock and changes in period
+              // Formula: Opening = Current + Outgoing_in_period - Incoming_in_period
+              // This works because: Current = Opening + Incoming_in_period - Outgoing_in_period
               const currentStock = parseFloat(stock.quantity.toString());
               
               // Calculate total outgoing from deliveries in the period

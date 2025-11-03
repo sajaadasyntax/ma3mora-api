@@ -217,10 +217,27 @@ async function main() {
 
   console.log(`✅ Created ${groceryItems.length + bakeryItems.length} items with prices`);
 
-  // Create initial stock
+  // Create initial stock with fixed values
   console.log('Creating initial stock...');
   const allInventories = [mainInventory, ...branchInventories];
   const allItems = [...createdGroceryItems, ...createdBakeryItems];
+
+  // Fixed stock quantities per item (predictable values)
+  const stockQuantities: Record<string, number> = {
+    'سكر': 500,
+    'رز': 500,
+    'زيت': 400,
+    'طحين': 600,
+    'معكرونة': 300,
+    'شاي': 350,
+    'قهوة': 250,
+    'ملح': 800,
+    'خبز طازج': 200,
+    'كعك': 150,
+    'معجنات': 180,
+    'بسكويت': 300,
+    'كرواسون': 120,
+  };
 
   for (const inventory of allInventories) {
     for (const item of allItems) {
@@ -228,7 +245,7 @@ async function main() {
         data: {
           inventoryId: inventory.id,
           itemId: item.id,
-          quantity: Math.floor(Math.random() * 500) + 100,
+          quantity: stockQuantities[item.name] || 200, // Use fixed quantity or default to 200
         },
       });
     }

@@ -73,8 +73,37 @@ npm run build
    - منصرف (dispatched) shows 270 (200 + 70)
    - رصيد ختامي (closing balance) shows -44 (226 - 270)
 
+## Additional Fixes Applied
+
+### 1. Delivery Date Query Fix
+- Changed deliveries query to use `deliveredAt` instead of `invoice.createdAt`
+- This ensures stock calculations use actual delivery dates, not invoice creation dates
+
+### 2. Seed File Fix (api/prisma/seed.ts)
+- **Changed initial stock from random values to fixed, predictable values**
+- Example: "رز" now always starts with 500 units (instead of random 100-599)
+- This makes testing and verification much easier
+
+**New Fixed Stock Quantities:**
+```typescript
+'سكر': 500
+'رز': 500      // Always starts with 500 units
+'زيت': 400
+'طحين': 600
+'معكرونة': 300
+'شاي': 350
+'قهوة': 250
+'ملح': 800
+'خبز طازج': 200
+'كعك': 150
+'معجنات': 180
+'بسكويت': 300
+'كرواسون': 120
+```
+
 ## Additional Notes
 - The fix ensures that all stock calculations use the actual delivery date (`deliveredAt`) rather than the invoice creation date
 - This is important because invoices can be created days before actual delivery happens
 - The report now accurately reflects stock movement on the dates when items were physically delivered
+- With fixed seed values, you can now predict and verify opening balances accurately
 
