@@ -911,6 +911,44 @@ router.post('/invoices/:id/deliver', requireRole('INVENTORY', 'MANAGER'), create
       return { delivery, invoice: updatedInvoice };
     });
 
+    // Update StockMovement records after successful delivery (outside transaction to avoid deadlocks)
+    try {
+      const { stockMovementService } = await import('../services/stockMovementService');
+      const deliveryDate = new Date(); // Use actual delivery timestamp
+      
+      for (const item of result.invoice.items) {
+        // Calculate delivered quantities for this delivery
+        const totalQty = new Prisma.Decimal(item.quantity);
+        const totalGiftQty = new Prisma.Decimal(item.giftQty || 0);
+        
+        // Update stock movement for main item (outgoing)
+        await stockMovementService.updateStockMovement(
+          result.invoice.inventoryId,
+          item.itemId,
+          deliveryDate,
+          {
+            outgoing: parseFloat(totalQty.toString()),
+            outgoingGifts: parseFloat(totalGiftQty.toString()),
+          }
+        );
+        
+        // Update stock movement for gift item if applicable
+        if (item.giftItemId && item.giftQuantity) {
+          await stockMovementService.updateStockMovement(
+            result.invoice.inventoryId,
+            item.giftItemId,
+            deliveryDate,
+            {
+              outgoingGifts: parseFloat(item.giftQuantity.toString()),
+            }
+          );
+        }
+      }
+    } catch (error) {
+      console.error('Failed to update stock movements:', error);
+      // Don't fail the delivery if stock movement update fails
+    }
+
     res.json(result);
   } catch (error) {
     console.error('Deliver invoice error:', error);
@@ -1071,8 +1109,9 @@ router.post('/invoices/:id/partial-deliver', requireRole('INVENTORY', 'MANAGER')
 router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (req: AuthRequest, res) => {
   try {
     const { 
-      startDate, 
-      endDate, 
+      date,       // Single date for daily report
+      startDate,  // Date range start
+      endDate,    // Date range end
       period = 'daily', 
       inventoryId, 
       section,
@@ -1083,8 +1122,20 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
 
     const where: any = {};
     
-    // Date filtering
-    if (startDate && endDate) {
+    // Date filtering - support single date or date range
+    if (date) {
+      // Single date - convert to start/end of day
+      const singleDate = new Date(date as string);
+      const startOfDay = new Date(singleDate);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(singleDate);
+      endOfDay.setHours(23, 59, 59, 999);
+      
+      where.createdAt = {
+        gte: startOfDay,
+        lte: endOfDay,
+      };
+    } else if (startDate && endDate) {
       where.createdAt = {
         gte: new Date(startDate as string),
         lte: new Date(endDate as string),
@@ -1349,11 +1400,21 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
 
     // Add initial and final stock for inventory reports
     let stockInfo: any = null;
-    if (inventoryId && startDate && endDate) {
-      const start = new Date(startDate as string);
-      start.setHours(0, 0, 0, 0);
-      const end = new Date(endDate as string);
-      end.setHours(23, 59, 59, 999);
+    if (inventoryId && (date || (startDate && endDate))) {
+      // Use single date or date range
+      let start: Date, end: Date;
+      
+      if (date) {
+        start = new Date(date as string);
+        start.setHours(0, 0, 0, 0);
+        end = new Date(date as string);
+        end.setHours(23, 59, 59, 999);
+      } else {
+        start = new Date(startDate as string);
+        start.setHours(0, 0, 0, 0);
+        end = new Date(endDate as string);
+        end.setHours(23, 59, 59, 999);
+      }
 
       // Get initial stock (opening balance at start date)
       const initialStocks = await prisma.inventoryStock.findMany({
@@ -1424,10 +1485,20 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
       };
     }
 
-    // Get item-level stock movement data
+    // Get item-level stock movement data from database
+    // The StockMovement table now stores opening and closing balances for each day
     // For 'items' viewType, always generate item report data if dates are provided
     let itemReportData: any[] = [];
-    if (startDate && endDate) {
+    if (date || (startDate && endDate)) {
+      // Determine actual start and end dates
+      let actualStart: string, actualEnd: string;
+      if (date) {
+        actualStart = date as string;
+        actualEnd = date as string;
+      } else {
+        actualStart = startDate as string;
+        actualEnd = endDate as string;
+      }
       // Get unique inventory IDs from invoices (for non-items viewType)
       const inventoryIds = (viewType !== 'items' && invoices.length > 0)
         ? [...new Set(invoices.map(inv => inv.inventoryId))]
@@ -1444,9 +1515,9 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
           targetInventoryIds = [inventoryId as string];
         } else {
           // No inventory filter - get all inventories that have stock movements in the date range
-          const start = new Date(startDate as string);
+          const start = new Date(actualStart);
           start.setHours(0, 0, 0, 0);
-          const end = new Date(endDate as string);
+          const end = new Date(actualEnd);
           end.setHours(23, 59, 59, 999);
           
           const movements = await prisma.stockMovement.findMany({
@@ -1483,9 +1554,9 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
           targetInventoryIds = [inventoryId as string];
         } else if (inventoryIds.length === 0) {
           // Get all inventories that have stock movements in the date range
-          const start = new Date(startDate as string);
+          const start = new Date(actualStart);
           start.setHours(0, 0, 0, 0);
-          const end = new Date(endDate as string);
+          const end = new Date(actualEnd);
           end.setHours(23, 59, 59, 999);
           
           const movements = await prisma.stockMovement.findMany({
@@ -1508,9 +1579,9 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
       
       // Calculate stockInfo first if not already calculated (for items viewType)
       if (viewType === 'items' && inventoryId && !stockInfo) {
-        const start = new Date(startDate as string);
+        const start = new Date(actualStart);
         start.setHours(0, 0, 0, 0);
-        const end = new Date(endDate as string);
+        const end = new Date(actualEnd);
         end.setHours(23, 59, 59, 999);
 
         const initialStocks = await prisma.inventoryStock.findMany({
@@ -1658,9 +1729,9 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
       }
 
       for (const invId of targetInventoryIds) {
-        const start = new Date(startDate as string);
+        const start = new Date(actualStart);
         start.setHours(0, 0, 0, 0);
-        const end = new Date(endDate as string);
+        const end = new Date(actualEnd);
         end.setHours(23, 59, 59, 999);
 
         // Get all items in this inventory (filter by section if provided)

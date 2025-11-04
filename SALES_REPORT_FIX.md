@@ -1,4 +1,4 @@
-# Sales Report Opening Balance Fix
+# Sales Report Opening Balance Fix & Stock Movement System
 
 ## Issue Description
 The sales report was showing incorrect opening balance (رصيد افتتاحي) values. For example:
@@ -101,9 +101,75 @@ npm run build
 'كرواسون': 120
 ```
 
+## Stock Movement System (New Implementation)
+
+### Overview
+We've implemented a proper stock movement tracking system where:
+1. **Opening balance (الرصيد الافتتاحي)** is stored in the database for each day
+2. **Closing balance (الرصيد النهائي)** is calculated and stored: `Closing = Opening + Incoming - Outgoing`
+3. **Next day's opening = Previous day's closing** (automatic propagation)
+
+### How It Works
+
+#### StockMovement Table
+```sql
+CREATE TABLE stock_movements (
+  id                 VARCHAR PRIMARY KEY,
+  inventory_id       VARCHAR NOT NULL,
+  item_id           VARCHAR NOT NULL,
+  movement_date     DATE NOT NULL,
+  opening_balance   DECIMAL(10,2),  -- Stored from previous day
+  incoming          DECIMAL(10,2),  -- Stock received
+  outgoing          DECIMAL(10,2),  -- Stock sold/delivered
+  pending_outgoing  DECIMAL(10,2),  -- Stock sold but not delivered
+  incoming_gifts    DECIMAL(10,2),  -- Gifts received
+  outgoing_gifts    DECIMAL(10,2),  -- Gifts given
+  closing_balance   DECIMAL(10,2),  -- Calculated and stored
+  UNIQUE(inventory_id, item_id, movement_date)
+);
+```
+
+#### Automatic Updates
+- **When sales are delivered**: System creates/updates StockMovement with `outgoing` and `outgoingGifts`
+- **When procurement is received**: System creates/updates StockMovement with `incoming` and `incomingGifts`
+- **Opening balance propagation**: When a day's closing balance changes, all future days' opening balances update automatically
+
+### Files Changed
+
+1. **`api/src/services/stockMovementService.ts`** (NEW)
+   - `updateStockMovement()`: Create or update daily stock movements
+   - `propagateClosingBalanceToFutureDays()`: Ensure next day opening = previous day closing
+   - `initializeStockMovement()`: Set up initial opening balances
+
+2. **`api/src/routes/sales.ts`**
+   - Added StockMovement update after delivery (line ~914-950)
+   - Sales report now reads from StockMovement table instead of calculating backwards
+
+3. **`api/src/routes/procurement.ts`**
+   - Added StockMovement update after receipt (line ~805-837)
+
+4. **`api/scripts/initialize-stock-movements.ts`** (NEW)
+   - Script to create initial StockMovement records for existing inventory
+
+### Initialization
+
+Run this once to create StockMovement records for all existing stock:
+
+```bash
+cd api
+npx ts-node scripts/initialize-stock-movements.ts
+```
+
+This will:
+- Create opening balance records for today for all items in all inventories
+- Use current stock quantities as the opening balance
+- Future deliveries and receipts will automatically maintain the chain
+
 ## Additional Notes
 - The fix ensures that all stock calculations use the actual delivery date (`deliveredAt`) rather than the invoice creation date
 - This is important because invoices can be created days before actual delivery happens
 - The report now accurately reflects stock movement on the dates when items were physically delivered
 - With fixed seed values, you can now predict and verify opening balances accurately
+- **Opening balances are now stored in the database**, not calculated on-the-fly
+- **Each day's closing balance becomes the next day's opening balance automatically**
 

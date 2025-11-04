@@ -626,15 +626,28 @@ router.get('/transfers/:id', requireRole('INVENTORY', 'MANAGER', 'ACCOUNTANT', '
 // Calculates: openingBalance, incoming, outgoing, pendingOutgoing, incomingGifts, outgoingGifts, closingBalance
 router.get('/stock-movements', requireRole('INVENTORY', 'SALES_GROCERY', 'SALES_BAKERY', 'MANAGER'), async (req: AuthRequest, res) => {
   try {
-    const { inventoryId, itemId, startDate, endDate, section } = req.query;
+    const { inventoryId, itemId, date, startDate, endDate, section } = req.query;
     
     if (!inventoryId) {
       return res.status(400).json({ error: 'المخزن مطلوب' });
     }
 
-    // Default to today if no date range provided
-    const targetStartDate = startDate ? new Date(startDate as string) : new Date();
-    const targetEndDate = endDate ? new Date(endDate as string) : new Date(startDate as string);
+    // Support single date or date range
+    let targetStartDate: Date, targetEndDate: Date;
+    
+    if (date) {
+      // Single date
+      targetStartDate = new Date(date as string);
+      targetEndDate = new Date(date as string);
+    } else if (startDate) {
+      // Date range
+      targetStartDate = new Date(startDate as string);
+      targetEndDate = endDate ? new Date(endDate as string) : new Date(startDate as string);
+    } else {
+      // Default to today
+      targetStartDate = new Date();
+      targetEndDate = new Date();
+    }
     
     targetStartDate.setHours(0, 0, 0, 0);
     targetEndDate.setHours(23, 59, 59, 999);
@@ -665,163 +678,82 @@ router.get('/stock-movements', requireRole('INVENTORY', 'SALES_GROCERY', 'SALES_
 
     const movementsReport = await Promise.all(
       stocks.map(async (stock) => {
-        // Calculate movements sequentially so each day can use previous day's closing balance
+        // Use StockMovement records from database (NEW SYSTEM)
         const itemMovements = [];
-        let previousClosingBalance: Prisma.Decimal | null = null;
         
-        // Get initial opening balance for first day
-        const firstDayMovement = await prisma.stockMovement.findFirst({
+        // Get stock movements for this item in the date range
+        const stockMovements = await prisma.stockMovement.findMany({
           where: {
             inventoryId: inventoryId as string,
             itemId: stock.itemId,
-            movementDate: { lt: targetStartDate },
+            movementDate: {
+              gte: targetStartDate,
+              lte: targetEndDate,
+            },
           },
-          orderBy: { movementDate: 'desc' },
+          orderBy: { movementDate: 'asc' },
         });
-        
-        if (firstDayMovement) {
-          previousClosingBalance = firstDayMovement.closingBalance;
-        } else {
-          // Calculate from current stock - all future movements
-          const currentStock = stock.quantity;
-          previousClosingBalance = currentStock;
-        }
 
         for (const date of dates) {
             const dateStart = new Date(date);
             dateStart.setHours(0, 0, 0, 0);
-            const dateEnd = new Date(date);
-            dateEnd.setHours(23, 59, 59, 999);
 
-            const openingBalance: Prisma.Decimal = previousClosingBalance || new Prisma.Decimal(0);
+            // Find the stock movement for this date (NEW SYSTEM)
+            const movement = stockMovements.find(m => 
+              m.movementDate.getTime() === dateStart.getTime()
+            );
 
-            // Get incoming from procurement receipts (InventoryReceipt) on this date
-            const receipts = await prisma.inventoryReceipt.findMany({
-              where: {
-                order: {
-                  inventoryId: inventoryId as string,
-                },
-                receivedAt: {
-                  gte: dateStart,
-                  lte: dateEnd,
-                },
-              },
-              include: {
-                order: {
-                  include: {
-                    items: {
-                      where: { itemId: stock.itemId },
-                    },
+            if (movement) {
+              // Use stored stock movement data
+              itemMovements.push({
+                date: date.toISOString().split('T')[0],
+                openingBalance: movement.openingBalance.toString(),
+                incoming: movement.incoming.toString(),
+                outgoing: movement.outgoing.toString(),
+                pendingOutgoing: movement.pendingOutgoing.toString(),
+                incomingGifts: movement.incomingGifts.toString(),
+                outgoingGifts: movement.outgoingGifts.toString(),
+                closingBalance: movement.closingBalance.toString(),
+              });
+            } else {
+              // No movement record for this date - show zeros with opening = previous closing
+              // Get previous day's closing or current stock
+              let openingBalance = new Prisma.Decimal(0);
+              
+              if (itemMovements.length > 0) {
+                // Use previous day's closing
+                openingBalance = new Prisma.Decimal(itemMovements[itemMovements.length - 1].closingBalance);
+              } else {
+                // First day - try to get last movement before start date
+                const lastMovementBefore = await prisma.stockMovement.findFirst({
+                  where: {
+                    inventoryId: inventoryId as string,
+                    itemId: stock.itemId,
+                    movementDate: { lt: dateStart },
                   },
-                },
-              },
-            });
+                  orderBy: { movementDate: 'desc' },
+                });
+                
+                if (lastMovementBefore) {
+                  openingBalance = lastMovementBefore.closingBalance;
+                } else {
+                  // Use current stock as fallback
+                  openingBalance = stock.quantity;
+                }
+              }
 
-            const incoming = receipts.reduce((sum, receipt) => {
-              const itemTotal = receipt.order.items.reduce((itemSum, item) => 
-                itemSum.add(item.quantity), new Prisma.Decimal(0));
-              return sum.add(itemTotal);
-            }, new Prisma.Decimal(0));
-
-            // Get incoming from transfers TO this inventory
-            const incomingTransfers = await prisma.inventoryTransfer.findMany({
-              where: {
-                toInventoryId: inventoryId as string,
-                itemId: stock.itemId,
-                transferredAt: {
-                  gte: dateStart,
-                  lte: dateEnd,
-                },
-              },
-            });
-
-            const incomingFromTransfers = incomingTransfers.reduce((sum, transfer) => 
-              sum.add(transfer.quantity), new Prisma.Decimal(0));
-
-            const totalIncoming = incoming.add(incomingFromTransfers);
-
-            // Get outgoing from sales (delivered)
-            const deliveredSales = await prisma.salesInvoiceItem.findMany({
-              where: {
-                itemId: stock.itemId,
-                invoice: {
-                  inventoryId: inventoryId as string,
-                  deliveryStatus: 'DELIVERED',
-                  createdAt: {
-                    gte: dateStart,
-                    lte: dateEnd,
-                  },
-                },
-              },
-            });
-
-            const outgoing = deliveredSales.reduce((sum, item) => 
-              sum.add(item.quantity), new Prisma.Decimal(0));
-
-            const outgoingGifts = deliveredSales.reduce((sum, item) => 
-              sum.add(item.giftQty || 0), new Prisma.Decimal(0));
-
-            // Get pending outgoing (not delivered)
-            const pendingSales = await prisma.salesInvoiceItem.findMany({
-              where: {
-                itemId: stock.itemId,
-                invoice: {
-                  inventoryId: inventoryId as string,
-                  deliveryStatus: { not: 'DELIVERED' },
-                  createdAt: {
-                    gte: dateStart,
-                    lte: dateEnd,
-                  },
-                },
-              },
-            });
-
-            const pendingOutgoing = pendingSales.reduce((sum, item) => 
-              sum.add(item.quantity), new Prisma.Decimal(0));
-
-            // Get outgoing from transfers FROM this inventory
-            const outgoingTransfers = await prisma.inventoryTransfer.findMany({
-              where: {
-                fromInventoryId: inventoryId as string,
-                itemId: stock.itemId,
-                transferredAt: {
-                  gte: dateStart,
-                  lte: dateEnd,
-                },
-              },
-            });
-
-            const outgoingFromTransfers = outgoingTransfers.reduce((sum, transfer) => 
-              sum.add(transfer.quantity), new Prisma.Decimal(0));
-
-            const totalOutgoing = outgoing.add(outgoingFromTransfers);
-            const totalPendingOutgoing = pendingOutgoing;
-
-            // Incoming gifts - from procurement (currently 0 as not tracked)
-            const incomingGifts = new Prisma.Decimal(0);
-
-            // Calculate closing balance
-            const closingBalance: Prisma.Decimal = openingBalance
-              .add(totalIncoming)
-              .sub(totalOutgoing)
-              .sub(totalPendingOutgoing)
-              .add(incomingGifts)
-              .sub(outgoingGifts);
-
-            // Update previousClosingBalance for next iteration
-            previousClosingBalance = closingBalance;
-
-            itemMovements.push({
-              date: date.toISOString().split('T')[0],
-              openingBalance: openingBalance.toString(),
-              incoming: totalIncoming.toString(),
-              outgoing: totalOutgoing.toString(),
-              pendingOutgoing: totalPendingOutgoing.toString(),
-              incomingGifts: incomingGifts.toString(),
-              outgoingGifts: outgoingGifts.toString(),
-              closingBalance: closingBalance.toString(),
-            });
-          }
+              itemMovements.push({
+                date: date.toISOString().split('T')[0],
+                openingBalance: openingBalance.toString(),
+                incoming: '0',
+                outgoing: '0',
+                pendingOutgoing: '0',
+                incomingGifts: '0',
+                outgoingGifts: '0',
+                closingBalance: openingBalance.toString(), // No changes
+              });
+            }
+        }
 
         return {
           itemId: stock.itemId,

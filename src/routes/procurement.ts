@@ -802,6 +802,40 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
       return { receipt, order: updatedOrder };
     });
 
+    // Update StockMovement records after successful receipt (outside transaction to avoid deadlocks)
+    try {
+      const { stockMovementService } = await import('../services/stockMovementService');
+      const receiptDate = new Date(); // Use actual receipt timestamp
+      
+      for (const item of result.order.items) {
+        // Update stock movement for main item (incoming)
+        await stockMovementService.updateStockMovement(
+          result.order.inventoryId,
+          item.itemId,
+          receiptDate,
+          {
+            incoming: parseFloat(item.quantity.toString()),
+            incomingGifts: parseFloat((item.giftQty || 0).toString()),
+          }
+        );
+        
+        // Update stock movement for gift item if applicable (new system)
+        if (item.giftItemId && item.giftQuantity) {
+          await stockMovementService.updateStockMovement(
+            result.order.inventoryId,
+            item.giftItemId,
+            receiptDate,
+            {
+              incomingGifts: parseFloat(item.giftQuantity.toString()),
+            }
+          );
+        }
+      }
+    } catch (error) {
+      console.error('Failed to update stock movements:', error);
+      // Don't fail the receipt if stock movement update fails
+    }
+
     res.json(result);
   } catch (error) {
     if (error instanceof z.ZodError) {
