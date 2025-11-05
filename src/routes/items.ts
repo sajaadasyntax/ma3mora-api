@@ -16,11 +16,13 @@ const createItemSchema = z.object({
   section: z.enum(['GROCERY', 'BAKERY']),
   wholesalePrice: z.number().positive(),
   retailPrice: z.number().positive(),
+  agentPrice: z.number().positive().optional(),
 });
 
 const updatePriceSchema = z.object({
   wholesalePrice: z.number().positive().optional(),
   retailPrice: z.number().positive().optional(),
+  agentPrice: z.number().positive().optional(),
   inventoryId: z.string().optional(), // If provided, update price for specific inventory
 });
 
@@ -65,17 +67,26 @@ router.get('/', async (req: AuthRequest, res) => {
 
 router.post('/', requireRole('PROCUREMENT', 'MANAGER'), createAuditLog('Item'), async (req: AuthRequest, res) => {
   try {
-    const { name, section, wholesalePrice, retailPrice } = createItemSchema.parse(req.body);
+    const { name, section, wholesalePrice, retailPrice, agentPrice } = createItemSchema.parse(req.body);
+
+    const pricesToCreate = [
+      { tier: 'WHOLESALE', price: wholesalePrice },
+      { tier: 'RETAIL', price: retailPrice },
+    ];
+    
+    // Add agent price if provided, otherwise use retail price as default
+    if (agentPrice !== undefined) {
+      pricesToCreate.push({ tier: 'AGENT', price: agentPrice });
+    } else {
+      pricesToCreate.push({ tier: 'AGENT', price: retailPrice });
+    }
 
     const item = await prisma.item.create({
       data: {
         name,
         section,
         prices: {
-          create: [
-            { tier: 'WHOLESALE', price: wholesalePrice },
-            { tier: 'RETAIL', price: retailPrice },
-          ],
+          create: pricesToCreate,
         },
       },
       include: {
@@ -139,7 +150,7 @@ router.get('/:id/prices', async (req: AuthRequest, res) => {
 router.put('/:id/prices', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('ItemPrice'), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
-    const { wholesalePrice, retailPrice, inventoryId } = updatePriceSchema.parse(req.body);
+    const { wholesalePrice, retailPrice, agentPrice, inventoryId } = updatePriceSchema.parse(req.body);
 
     const updates = [];
 
@@ -164,6 +175,19 @@ router.put('/:id/prices', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('
             inventoryId: inventoryId || null, // null means applies to all inventories
             tier: 'RETAIL',
             price: retailPrice,
+          },
+        })
+      );
+    }
+
+    if (agentPrice !== undefined) {
+      updates.push(
+        prisma.itemPrice.create({
+          data: {
+            itemId: id,
+            inventoryId: inventoryId || null, // null means applies to all inventories
+            tier: 'AGENT',
+            price: agentPrice,
           },
         })
       );

@@ -13,16 +13,28 @@ router.use(blockAuditorWrites);
 
 const createCustomerSchema = z.object({
   name: z.string().min(1),
-  type: z.enum(['WHOLESALE', 'RETAIL']),
+  type: z.enum(['WHOLESALE', 'RETAIL', 'AGENT']),
   division: z.enum(['GROCERY', 'BAKERY']),
+  isAgentCustomer: z.boolean().optional(),
   phone: z.string().optional(),
   address: z.string().optional(),
 });
 
-router.get('/', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (req: AuthRequest, res) => {
+router.get('/', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GROCERY', 'AGENT_BAKERY', 'ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (req: AuthRequest, res) => {
   try {
     const { type, division } = req.query;
     const where: any = {};
+    
+    // Filter customers based on user role
+    const user = req.user;
+    if (user?.role === 'AGENT_GROCERY' || user?.role === 'AGENT_BAKERY') {
+      // Agent users only see agent customers
+      where.isAgentCustomer = true;
+    } else if (user?.role === 'SALES_GROCERY' || user?.role === 'SALES_BAKERY') {
+      // Regular sales users only see non-agent customers
+      where.isAgentCustomer = false;
+    }
+    // ACCOUNTANT, AUDITOR, MANAGER can see all customers
     
     if (type) where.type = type;
     if (division) where.division = division;
@@ -39,12 +51,19 @@ router.get('/', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'ACCOUNTANT', 'AUDI
   }
 });
 
-router.post('/', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'MANAGER'), createAuditLog('Customer'), async (req: AuthRequest, res) => {
+router.post('/', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GROCERY', 'AGENT_BAKERY', 'MANAGER'), createAuditLog('Customer'), async (req: AuthRequest, res) => {
   try {
     const data = createCustomerSchema.parse(req.body);
+    
+    // Automatically set isAgentCustomer based on user role
+    const user = req.user;
+    const isAgentCustomer = user?.role === 'AGENT_GROCERY' || user?.role === 'AGENT_BAKERY';
 
     const customer = await prisma.customer.create({
-      data,
+      data: {
+        ...data,
+        isAgentCustomer: data.isAgentCustomer !== undefined ? data.isAgentCustomer : isAgentCustomer,
+      },
     });
 
     res.status(201).json(customer);
@@ -57,7 +76,7 @@ router.post('/', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'MANAGER'), create
   }
 });
 
-router.get('/:id', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (req: AuthRequest, res) => {
+router.get('/:id', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GROCERY', 'AGENT_BAKERY', 'ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
 

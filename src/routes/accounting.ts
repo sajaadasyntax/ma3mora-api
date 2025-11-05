@@ -524,6 +524,20 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
       where: expensesWhere,
     });
 
+    // Income summary (opposite of expenses - money coming IN)
+    const incomeWhere: any = {};
+    if (inventoryId) incomeWhere.inventoryId = inventoryId;
+    if (section) incomeWhere.section = section;
+
+    const income = await prisma.income.findMany({
+      where: incomeWhere,
+    });
+
+    const totalIncome = income.reduce(
+      (sum, inc) => sum.add(inc.amount),
+      new Prisma.Decimal(0)
+    );
+
     // Get paid salaries (only where paidAt is not null)
     const paidSalaries = await prisma.salary.findMany({
       where: {
@@ -608,10 +622,11 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
     });
     const totalCashExchangeImpact = cashExchangeImpact.CASH.add(cashExchangeImpact.BANK).add(cashExchangeImpact.BANK_NILE);
 
-    // Calculate net balance: opening + received - procurement payments - expenses + cash exchanges
+    // Calculate net balance: opening + received + income - procurement payments - expenses + cash exchanges
     // Note: Cash exchanges between methods cancel out in total, but we include for accuracy
     const netBalance = totalOpeningBalance
       .add(totalReceived)
+      .add(totalIncome)
       .sub(totalProcurementPaid)
       .sub(totalAllExpenses)
       .add(totalCashExchangeImpact);
@@ -639,6 +654,10 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
         regular: totalExpenses.toFixed(2),
         salaries: totalSalaries.toFixed(2),
         advances: totalAdvances.toFixed(2),
+      },
+      income: {
+        total: totalIncome.toFixed(2),
+        count: income.length,
       },
       balance: {
         opening: totalOpeningBalance.toFixed(2),
@@ -1435,7 +1454,21 @@ router.get('/balance/sessions', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'),
           sum.add(exp.amount), new Prisma.Decimal(0)
         );
 
-        const profit = totalReceived.sub(totalProcurement).sub(totalExpenses);
+        // Get income data for this session
+        const income = await prisma.income.findMany({
+          where: {
+            createdAt: {
+              gte: session.openedAt,
+              lte: session.closedAt || new Date(),
+            }
+          }
+        });
+
+        const totalIncome = income.reduce((sum, inc) => 
+          sum.add(inc.amount), new Prisma.Decimal(0)
+        );
+
+        const profit = totalReceived.add(totalIncome).sub(totalProcurement).sub(totalExpenses);
 
         return {
           ...session,
@@ -1457,6 +1490,10 @@ router.get('/balance/sessions', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'),
             expenses: {
               total: totalExpenses.toFixed(2),
               count: expenses.length,
+            },
+            income: {
+              total: totalIncome.toFixed(2),
+              count: income.length,
             },
             profit: profit.toFixed(2),
             netBalance: session.amount.add(profit).toFixed(2),

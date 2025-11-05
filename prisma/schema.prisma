@@ -10,6 +10,8 @@ datasource db {
 enum Role {
   SALES_GROCERY
   SALES_BAKERY
+  AGENT_GROCERY
+  AGENT_BAKERY
   INVENTORY
   PROCUREMENT
   ACCOUNTANT
@@ -25,6 +27,7 @@ enum Section {
 enum CustomerType {
   WHOLESALE
   RETAIL
+  AGENT
 }
 
 enum PaymentMethod {
@@ -251,6 +254,7 @@ model Customer {
   name      String
   type      CustomerType
   division  Section
+  isAgentCustomer Boolean  @default(false)  // true for agent users' customers, false for regular sales users
   phone     String?
   address   String?
   createdAt DateTime     @default(now())

@@ -153,7 +153,10 @@ npm start
 - **INVENTORY** - Deliver invoices, receive procurement orders
 - **SALES_GROCERY** - Create customers, sales invoices (grocery section)
 - **SALES_BAKERY** - Create customers, sales invoices (bakery section)
-- **AUDITOR** - Read-only access to everything
+- **AGENT_GROCERY** - Agent sales with separate customers and pricing (grocery section)
+- **AGENT_BAKERY** - Agent sales with separate customers and pricing (bakery section)
+- **AUDITOR** - Read-only access to all pages
+- **MANAGER** - Full access to all features
 
 ## Database Schema
 

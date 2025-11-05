@@ -52,7 +52,7 @@ const createInvoiceSchema = z.object({
   inventoryId: z.string(),
   section: z.enum(['GROCERY', 'BAKERY']),
   customerId: z.string().optional(),
-  pricingTier: z.enum(['WHOLESALE', 'RETAIL']).optional(), // Used when no customer selected
+  pricingTier: z.enum(['WHOLESALE', 'RETAIL', 'AGENT']).optional(), // Used when no customer selected
   paymentMethod: z.enum(['CASH', 'BANK', 'BANK_NILE']).default('CASH'),
   discount: z.number().min(0).default(0),
   items: z.array(invoiceItemSchema).min(1),
@@ -82,7 +82,7 @@ async function generateInvoiceNumber(): Promise<string> {
   return `INV-${String(count + 1).padStart(6, '0')}`;
 }
 
-router.get('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'ACCOUNTANT', 'AUDITOR', 'MANAGER', 'INVENTORY', 'PROCUREMENT'), async (req: AuthRequest, res) => {
+router.get('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GROCERY', 'AGENT_BAKERY', 'ACCOUNTANT', 'AUDITOR', 'MANAGER', 'INVENTORY', 'PROCUREMENT'), async (req: AuthRequest, res) => {
   try {
     const { status, inventoryId, section, deliveryStatus, paymentStatus } = req.query;
     const where: any = {};
@@ -93,8 +93,8 @@ router.get('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'ACCOUNTANT
     if (inventoryId) where.inventoryId = inventoryId;
     if (section) where.section = section;
 
-    // Sales users can only see their own invoices or filtered by their access
-    if (req.user?.role === 'SALES_GROCERY' || req.user?.role === 'SALES_BAKERY') {
+    // Sales users (including agents) can only see their own invoices or filtered by their access
+    if (req.user?.role === 'SALES_GROCERY' || req.user?.role === 'SALES_BAKERY' || req.user?.role === 'AGENT_GROCERY' || req.user?.role === 'AGENT_BAKERY') {
       where.salesUserId = req.user.id;
     }
 
@@ -131,13 +131,13 @@ router.get('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'ACCOUNTANT
   }
 });
 
-router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'MANAGER'), checkBalanceOpen, createAuditLog('SalesInvoice'), async (req: AuthRequest, res) => {
+router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GROCERY', 'AGENT_BAKERY', 'MANAGER'), checkBalanceOpen, createAuditLog('SalesInvoice'), async (req: AuthRequest, res) => {
   try {
     const data = createInvoiceSchema.parse(req.body);
 
     // Get customer to determine pricing tier (default to RETAIL if no customer)
     let customer = null;
-    let pricingTier: 'WHOLESALE' | 'RETAIL' = data.pricingTier || 'RETAIL';
+    let pricingTier: 'WHOLESALE' | 'RETAIL' | 'AGENT' = data.pricingTier || 'RETAIL';
     
     if (data.customerId) {
       customer = await prisma.customer.findUnique({
@@ -326,7 +326,7 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'MANAGER')
   }
 });
 
-router.get('/invoices/:id', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'ACCOUNTANT', 'AUDITOR', 'MANAGER', 'INVENTORY', 'PROCUREMENT'), async (req: AuthRequest, res) => {
+router.get('/invoices/:id', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GROCERY', 'AGENT_BAKERY', 'ACCOUNTANT', 'AUDITOR', 'MANAGER', 'INVENTORY', 'PROCUREMENT'), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
 
@@ -381,7 +381,7 @@ router.get('/invoices/:id', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'ACCOUN
   }
 });
 
-router.post('/invoices/:id/payments', requireRole('ACCOUNTANT', 'SALES_GROCERY', 'SALES_BAKERY', 'MANAGER'), checkBalanceOpen, createAuditLog('SalesPayment'), async (req: AuthRequest, res) => {
+router.post('/invoices/:id/payments', requireRole('ACCOUNTANT', 'SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GROCERY', 'AGENT_BAKERY', 'MANAGER'), checkBalanceOpen, createAuditLog('SalesPayment'), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
     const paymentData = paymentSchema.parse(req.body);
@@ -2005,7 +2005,7 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
 });
 
 // Daily Sales Report by Item
-router.get('/reports/daily-by-item', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'INVENTORY', 'MANAGER'), async (req: AuthRequest, res) => {
+router.get('/reports/daily-by-item', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GROCERY', 'AGENT_BAKERY', 'INVENTORY', 'MANAGER'), async (req: AuthRequest, res) => {
   try {
     const { date, inventoryId, section } = req.query;
     
