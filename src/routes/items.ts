@@ -69,16 +69,16 @@ router.post('/', requireRole('PROCUREMENT', 'MANAGER'), createAuditLog('Item'), 
   try {
     const { name, section, wholesalePrice, retailPrice, agentPrice } = createItemSchema.parse(req.body);
 
-    const pricesToCreate = [
-      { tier: 'WHOLESALE', price: wholesalePrice },
-      { tier: 'RETAIL', price: retailPrice },
+    const pricesToCreate: Array<{ tier: 'WHOLESALE' | 'RETAIL' | 'AGENT'; price: number }> = [
+      { tier: 'WHOLESALE' as const, price: wholesalePrice },
+      { tier: 'RETAIL' as const, price: retailPrice },
     ];
     
     // Add agent price if provided, otherwise use retail price as default
     if (agentPrice !== undefined) {
-      pricesToCreate.push({ tier: 'AGENT', price: agentPrice });
+      pricesToCreate.push({ tier: 'AGENT' as const, price: agentPrice });
     } else {
-      pricesToCreate.push({ tier: 'AGENT', price: retailPrice });
+      pricesToCreate.push({ tier: 'AGENT' as const, price: retailPrice });
     }
 
     const item = await prisma.item.create({
