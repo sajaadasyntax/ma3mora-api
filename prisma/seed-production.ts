@@ -52,7 +52,7 @@ async function main() {
   const branchInventories = await Promise.all([
     prisma.inventory.create({ data: { name: 'الفرعي', isMain: false } }),
     prisma.inventory.create({ data: { name: 'القرشي', isMain: false } }),
-    prisma.inventory.create({ data: { name: 'الهدى', isMain: false } }),
+    prisma.inventory.create({ data: { name: 'معتوق', isMain: false } }),
     prisma.inventory.create({ data: { name: 'عبود', isMain: false } }),
   ]);
 
@@ -300,7 +300,7 @@ async function main() {
     }),
     prisma.customer.create({
       data: {
-        name: 'سوبر ماركت الهدى',
+        name: 'سوبر ماركت معتوق',
         type: CustomerType.WHOLESALE,
         division: Section.GROCERY,
         phone: '0111111114',
@@ -343,13 +343,24 @@ async function main() {
   console.log(`✅ Created ${customers.length} customers`);
 
   // Create Opening Balance
+  // Calculated from November 2025 sales data analysis:
+  // - 3-day sales total: 14,327,750 SDG
+  // - Average daily sales: ~4,776,000 SDG
+  // - Monthly sales projection: ~143,280,000 SDG
+  // - Operating expenses estimate: ~5M/month (salaries, rent, utilities)
+  // - Working capital needed: 2-3 months operating expenses + inventory purchases
+  // - Opening balance set to cover initial operations and inventory purchases
   console.log('💰 Creating opening balance...');
+  
+  const openingCash = 12000000; // 12M SDG - Cash on hand for daily operations
+  const openingBank = 8000000;   // 8M SDG - Bank reserve for large purchases
+  
   await prisma.openingBalance.create({
     data: {
       scope: 'CASHBOX',
-      amount: 1000000, // 1 million SDG starting balance
+      amount: openingCash,
       paymentMethod: 'CASH',
-      notes: 'رأس المال الافتتاحي - نوفمبر 2025',
+      notes: 'رأس المال الافتتاحي - نقدية (محسوبة من بيانات نوفمبر 2025)',
       isClosed: false,
     },
   });
@@ -357,14 +368,14 @@ async function main() {
   await prisma.openingBalance.create({
     data: {
       scope: 'CASHBOX',
-      amount: 500000, // 500k SDG in bank
+      amount: openingBank,
       paymentMethod: 'BANK',
-      notes: 'رصيد افتتاحي - حساب بنكك',
+      notes: 'رصيد افتتاحي - حساب بنكي (محسوب من بيانات نوفمبر 2025)',
       isClosed: false,
     },
   });
 
-  console.log('✅ Created opening balances');
+  console.log(`✅ Created opening balances: ${formatSDG(openingCash)} cash + ${formatSDG(openingBank)} bank = ${formatSDG(openingCash + openingBank)} total`);
 
   console.log('\n🎉 Production seed completed successfully!');
   console.log('\n📝 Login Credentials:');
@@ -381,7 +392,7 @@ async function main() {
   console.log(`- ${createdItems.length} Products with real prices`);
   console.log(`- ${suppliers.length} Suppliers`);
   console.log(`- ${customers.length} Customers`);
-  console.log(`- Opening Balance: ${formatSDG(1500000)}`);
+  console.log(`- Opening Balance: ${formatSDG(openingCash + openingBank)} (${formatSDG(openingCash)} cash + ${formatSDG(openingBank)} bank)`);
   console.log('\n✨ System is ready for production use!');
 }
 
