@@ -16,27 +16,64 @@ async function main() {
   await new Promise(resolve => setTimeout(resolve, 5000));
 
   // Clear existing data
+  // Order matters: Delete child tables before parent tables to avoid foreign key violations
   console.log('🗑️  Clearing existing data...');
   await prisma.$transaction([
+    // Delete audit logs first (references User)
+    prisma.auditLog.deleteMany(),
+    
+    // Delete user-related records
+    prisma.salary.deleteMany(),
+    prisma.advance.deleteMany(),
+    prisma.cashExchange.deleteMany(),
+    prisma.expense.deleteMany(),
+    prisma.income.deleteMany(),
+    
+    // Delete sales-related records
     prisma.salesPayment.deleteMany(),
     prisma.salesInvoiceItem.deleteMany(),
     prisma.inventoryDeliveryBatch.deleteMany(),
     prisma.inventoryDeliveryItem.deleteMany(),
     prisma.inventoryDelivery.deleteMany(),
     prisma.salesInvoice.deleteMany(),
+    
+    // Delete procurement-related records
     prisma.procOrderPayment.deleteMany(),
     prisma.procOrderReturn.deleteMany(),
     prisma.procOrderItem.deleteMany(),
     prisma.inventoryReceipt.deleteMany(),
     prisma.procOrder.deleteMany(),
+    
+    // Delete inventory-related records
+    prisma.inventoryTransfer.deleteMany(),
     prisma.stockBatch.deleteMany(),
     prisma.inventoryStock.deleteMany(),
+    prisma.stockMovement.deleteMany(),
+    
+    // Delete aggregates and analytics
+    prisma.dailyItemSalesAggregate.deleteMany(),
+    prisma.dailyFinancialAggregate.deleteMany(),
+    prisma.monthlyFinancialAggregate.deleteMany(),
+    prisma.customerCumulativeAggregate.deleteMany(),
+    prisma.supplierCumulativeAggregate.deleteMany(),
+    prisma.cumulativeBalanceSnapshot.deleteMany(),
+    
+    // Delete items and prices
     prisma.itemPrice.deleteMany(),
     prisma.item.deleteMany(),
+    
+    // Delete employees (references Salary and Advance)
+    prisma.employee.deleteMany(),
+    
+    // Delete suppliers and customers
     prisma.supplier.deleteMany(),
     prisma.customer.deleteMany(),
+    
+    // Delete user access and opening balances
     prisma.userInventoryAccess.deleteMany(),
     prisma.openingBalance.deleteMany(),
+    
+    // Finally delete users and inventories
     prisma.user.deleteMany(),
     prisma.inventory.deleteMany(),
   ]);
