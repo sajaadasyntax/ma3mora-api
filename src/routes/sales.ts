@@ -1406,9 +1406,9 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
       
       if (date) {
         start = new Date(date as string);
-        start.setHours(0, 0, 0, 0);
+      start.setHours(0, 0, 0, 0);
         end = new Date(date as string);
-        end.setHours(23, 59, 59, 999);
+      end.setHours(23, 59, 59, 999);
       } else {
         start = new Date(startDate as string);
         start.setHours(0, 0, 0, 0);
@@ -1768,8 +1768,8 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
             deliveryStatus: 'DELIVERED',
           },
           deliveredAt: {
-            gte: start,
-            lte: end,
+              gte: start,
+              lte: end,
           },
         };
         if (section) {

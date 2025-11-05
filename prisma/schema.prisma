@@ -72,6 +72,7 @@ model User {
   salesInvoices          SalesInvoice[]
   procOrders             ProcOrder[]
   expenses               Expense[]
+  income                 Income[]
   auditLogs              AuditLog[]
   salesPayments          SalesPayment[]
   inventoryDelivery      InventoryDelivery[]
@@ -100,6 +101,7 @@ model Inventory {
   salesInvoices     SalesInvoice[]
   procOrders        ProcOrder[]
   expenses          Expense[]
+  income            Income[]
   transfersFrom     InventoryTransfer[] @relation("FromInventory")
   transfersTo       InventoryTransfer[] @relation("ToInventory")
   stockMovements    StockMovement[]
@@ -500,6 +502,22 @@ model Expense {
   creator   User       @relation(fields: [createdBy], references: [id])
 
   @@map("expenses")
+}
+
+model Income {
+  id          String        @id @default(cuid())
+  inventoryId String?
+  section     Section?
+  amount      Decimal       @db.Decimal(10, 2)
+  method      PaymentMethod
+  description String
+  createdBy   String
+  createdAt   DateTime      @default(now())
+
+  inventory Inventory? @relation(fields: [inventoryId], references: [id])
+  creator   User       @relation(fields: [createdBy], references: [id])
+
+  @@map("income")
 }
 
 model OpeningBalance {

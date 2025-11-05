@@ -20,6 +20,14 @@ const createExpenseSchema = z.object({
   description: z.string().min(1),
 });
 
+const createIncomeSchema = z.object({
+  inventoryId: z.string().optional(),
+  section: z.enum(['GROCERY', 'BAKERY']).optional(),
+  amount: z.number().positive(),
+  method: z.enum(['CASH', 'BANK', 'BANK_NILE']),
+  description: z.string().min(1),
+});
+
 const createOpeningBalanceSchema = z.object({
   scope: z.enum(['CASHBOX', 'CUSTOMER', 'SUPPLIER']),
   refId: z.string().optional(),
@@ -324,6 +332,83 @@ router.post('/expenses', requireRole('ACCOUNTANT', 'MANAGER'), checkBalanceOpen,
       return res.status(400).json({ error: 'بيانات غير صالحة', details: error.errors });
     }
     console.error('Create expense error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
+// Income routes (opposite of expenses - money coming IN)
+router.get('/income', async (req: AuthRequest, res) => {
+  try {
+    const { inventoryId, section } = req.query;
+    
+    const incomeWhere: any = {};
+    if (inventoryId) incomeWhere.inventoryId = inventoryId;
+    if (section) incomeWhere.section = section;
+
+    const income = await prisma.income.findMany({
+      where: incomeWhere,
+      include: {
+        inventory: true,
+        creator: {
+          select: { id: true, username: true },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    res.json(income);
+  } catch (error) {
+    console.error('Get income error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
+router.post('/income', requireRole('ACCOUNTANT', 'MANAGER'), checkBalanceOpen, createAuditLog('Income'), async (req: AuthRequest, res) => {
+  try {
+    const data = createIncomeSchema.parse(req.body);
+
+    const income = await prisma.income.create({
+      data: {
+        ...data,
+        createdBy: req.user!.id,
+      },
+      include: {
+        inventory: true,
+      },
+    });
+
+    // Update aggregates (async, don't block response)
+    try {
+      const incomeDate = income.createdAt;
+      const incomeAmount = new Prisma.Decimal(data.amount);
+      const incomeByMethod = {
+        CASH: data.method === 'CASH' ? incomeAmount : new Prisma.Decimal(0),
+        BANK: data.method === 'BANK' ? incomeAmount : new Prisma.Decimal(0),
+        BANK_NILE: data.method === 'BANK_NILE' ? incomeAmount : new Prisma.Decimal(0),
+      };
+
+      await aggregationService.updateDailyFinancialAggregate(
+        incomeDate,
+        {
+          incomeTotal: incomeAmount,
+          incomeCount: 1,
+          incomeCash: incomeByMethod.CASH,
+          incomeBank: incomeByMethod.BANK,
+          incomeBankNile: incomeByMethod.BANK_NILE,
+        },
+        data.inventoryId || undefined,
+        data.section || undefined
+      );
+    } catch (aggError) {
+      console.error('Aggregation update error (non-blocking):', aggError);
+    }
+
+    res.status(201).json(income);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: 'بيانات غير صالحة', details: error.errors });
+    }
+    console.error('Create income error:', error);
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
 });

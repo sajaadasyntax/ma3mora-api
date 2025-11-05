@@ -726,11 +726,11 @@ router.get('/stock-movements', requireRole('INVENTORY', 'SALES_GROCERY', 'SALES_
               } else {
                 // First day - try to get last movement before start date
                 const lastMovementBefore = await prisma.stockMovement.findFirst({
-                  where: {
-                    inventoryId: inventoryId as string,
-                    itemId: stock.itemId,
+              where: {
+                  inventoryId: inventoryId as string,
+                itemId: stock.itemId,
                     movementDate: { lt: dateStart },
-                  },
+                },
                   orderBy: { movementDate: 'desc' },
                 });
                 
@@ -742,18 +742,18 @@ router.get('/stock-movements', requireRole('INVENTORY', 'SALES_GROCERY', 'SALES_
                 }
               }
 
-              itemMovements.push({
-                date: date.toISOString().split('T')[0],
-                openingBalance: openingBalance.toString(),
+            itemMovements.push({
+              date: date.toISOString().split('T')[0],
+              openingBalance: openingBalance.toString(),
                 incoming: '0',
                 outgoing: '0',
                 pendingOutgoing: '0',
                 incomingGifts: '0',
                 outgoingGifts: '0',
                 closingBalance: openingBalance.toString(), // No changes
-              });
+            });
             }
-        }
+          }
 
         return {
           itemId: stock.itemId,
