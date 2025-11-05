@@ -663,6 +663,15 @@ model DailyFinancialAggregate {
   expensesBank       Decimal  @default(0) @db.Decimal(10, 2)
   expensesBankNile   Decimal  @default(0) @db.Decimal(10, 2)
   
+  // Income aggregates (opposite of expenses)
+  incomeTotal     Decimal  @default(0) @db.Decimal(10, 2)
+  incomeCount     Int      @default(0)
+  
+  // Income by payment method
+  incomeCash      Decimal  @default(0) @db.Decimal(10, 2)
+  incomeBank      Decimal  @default(0) @db.Decimal(10, 2)
+  incomeBankNile  Decimal  @default(0) @db.Decimal(10, 2)
+  
   // Salaries aggregates
   salariesTotal     Decimal  @default(0) @db.Decimal(10, 2)
   salariesCount     Int      @default(0)

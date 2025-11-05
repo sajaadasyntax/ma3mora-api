@@ -23,6 +23,11 @@ export interface DailyAggregateUpdate {
   expensesCash?: Prisma.Decimal;
   expensesBank?: Prisma.Decimal;
   expensesBankNile?: Prisma.Decimal;
+  incomeTotal?: Prisma.Decimal;
+  incomeCount?: number;
+  incomeCash?: Prisma.Decimal;
+  incomeBank?: Prisma.Decimal;
+  incomeBankNile?: Prisma.Decimal;
   salariesTotal?: Prisma.Decimal;
   salariesCount?: number;
   salariesCash?: Prisma.Decimal;
@@ -165,7 +170,32 @@ export class AggregationService {
         ? existing.expensesBankNile.add(updates.expensesBankNile)
         : updates.expensesBankNile;
     }
-
+    
+    // Income fields (opposite of expenses - money coming IN)
+    if (updates.incomeTotal !== undefined) {
+      updateData.incomeTotal = existing
+        ? existing.incomeTotal.add(updates.incomeTotal)
+        : updates.incomeTotal;
+    }
+    if (updates.incomeCount !== undefined) {
+      updateData.incomeCount = (existing?.incomeCount || 0) + updates.incomeCount;
+    }
+    if (updates.incomeCash !== undefined) {
+      updateData.incomeCash = existing
+        ? existing.incomeCash.add(updates.incomeCash)
+        : updates.incomeCash;
+    }
+    if (updates.incomeBank !== undefined) {
+      updateData.incomeBank = existing
+        ? existing.incomeBank.add(updates.incomeBank)
+        : updates.incomeBank;
+    }
+    if (updates.incomeBankNile !== undefined) {
+      updateData.incomeBankNile = existing
+        ? existing.incomeBankNile.add(updates.incomeBankNile)
+        : updates.incomeBankNile;
+    }
+    
     // Salaries fields
     if (updates.salariesTotal !== undefined) {
       updateData.salariesTotal = existing
@@ -248,6 +278,10 @@ export class AggregationService {
     const expensesBankAmount = updateData.expensesBank || existing?.expensesBank || new Prisma.Decimal(0);
     const expensesBankNileAmount = updateData.expensesBankNile || existing?.expensesBankNile || new Prisma.Decimal(0);
     
+    const incomeCashAmount = updateData.incomeCash || existing?.incomeCash || new Prisma.Decimal(0);
+    const incomeBankAmount = updateData.incomeBank || existing?.incomeBank || new Prisma.Decimal(0);
+    const incomeBankNileAmount = updateData.incomeBankNile || existing?.incomeBankNile || new Prisma.Decimal(0);
+    
     const salariesCashAmount = updateData.salariesCash || existing?.salariesCash || new Prisma.Decimal(0);
     const salariesBankAmount = updateData.salariesBank || existing?.salariesBank || new Prisma.Decimal(0);
     const salariesBankNileAmount = updateData.salariesBankNile || existing?.salariesBankNile || new Prisma.Decimal(0);
@@ -278,11 +312,12 @@ export class AggregationService {
       .filter(b => (b as any).paymentMethod === 'BANK_NILE')
       .reduce((sum, b) => sum.add(b.amount), new Prisma.Decimal(0));
 
-    // Calculate net balances (opening + income - expenses - salaries - advances - procurement + cash exchanges)
+    // Calculate net balances (opening + sales + income - expenses - salaries - advances - procurement + cash exchanges)
     // Note: This calculates net for the entire period, not just this day
     // For daily net, we'd need to track cumulative from start of period
     const netCash = openingCash
       .add(salesCashAmount)
+      .add(incomeCashAmount)
       .sub(procurementCashAmount)
       .sub(expensesCashAmount)
       .sub(salariesCashAmount)
@@ -291,6 +326,7 @@ export class AggregationService {
 
     const netBank = openingBank
       .add(salesBankAmount)
+      .add(incomeBankAmount)
       .sub(procurementBankAmount)
       .sub(expensesBankAmount)
       .sub(salariesBankAmount)
@@ -299,6 +335,7 @@ export class AggregationService {
 
     const netBankNile = openingBankNile
       .add(salesBankNileAmount)
+      .add(incomeBankNileAmount)
       .sub(procurementBankNileAmount)
       .sub(expensesBankNileAmount)
       .sub(salariesBankNileAmount)
