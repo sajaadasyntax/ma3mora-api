@@ -23,7 +23,7 @@ router.get('/', async (req: AuthRequest, res) => {
   }
 });
 
-router.get('/:id/stocks', requireRole('INVENTORY', 'MANAGER', 'ACCOUNTANT', 'AUDITOR', 'PROCUREMENT', 'SALES_GROCERY', 'SALES_BAKERY'), async (req: AuthRequest, res) => {
+router.get('/:id/stocks', requireRole('INVENTORY', 'MANAGER', 'ACCOUNTANT', 'AUDITOR', 'PROCUREMENT', 'SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GROCERY', 'AGENT_BAKERY'), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
     const { section } = req.query;
@@ -411,7 +411,7 @@ const transferSchema = z.object({
 });
 
 // Get all transfers
-router.get('/transfers', requireRole('INVENTORY', 'MANAGER', 'ACCOUNTANT', 'AUDITOR', 'SALES_GROCERY', 'SALES_BAKERY'), async (req: AuthRequest, res) => {
+router.get('/transfers', requireRole('INVENTORY', 'MANAGER', 'ACCOUNTANT', 'AUDITOR', 'SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GROCERY', 'AGENT_BAKERY'), async (req: AuthRequest, res) => {
   try {
     const { inventoryId, itemId, startDate, endDate } = req.query;
     
@@ -456,11 +456,11 @@ router.get('/transfers', requireRole('INVENTORY', 'MANAGER', 'ACCOUNTANT', 'AUDI
 });
 
 // Create transfer
-router.post('/transfers', requireRole('INVENTORY', 'MANAGER', 'SALES_GROCERY', 'SALES_BAKERY'), createAuditLog('InventoryTransfer'), async (req: AuthRequest, res) => {
+router.post('/transfers', requireRole('INVENTORY', 'MANAGER', 'SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GROCERY', 'AGENT_BAKERY'), createAuditLog('InventoryTransfer'), async (req: AuthRequest, res) => {
   try {
     const data = transferSchema.parse(req.body);
     // SALES users must have access to the source inventory for the item's section
-    if (req.user && (req.user.role === 'SALES_GROCERY' || req.user.role === 'SALES_BAKERY')) {
+    if (req.user && (req.user.role === 'SALES_GROCERY' || req.user.role === 'SALES_BAKERY' || req.user.role === 'AGENT_GROCERY' || req.user.role === 'AGENT_BAKERY')) {
       const item = await prisma.item.findUnique({ where: { id: data.itemId } });
       if (!item) {
         return res.status(400).json({ error: 'الصنف غير موجود' });
@@ -624,7 +624,7 @@ router.get('/transfers/:id', requireRole('INVENTORY', 'MANAGER', 'ACCOUNTANT', '
 
 // Stock Movement Report - Daily stock movements by item
 // Calculates: openingBalance, incoming, outgoing, pendingOutgoing, incomingGifts, outgoingGifts, closingBalance
-router.get('/stock-movements', requireRole('INVENTORY', 'SALES_GROCERY', 'SALES_BAKERY', 'MANAGER'), async (req: AuthRequest, res) => {
+router.get('/stock-movements', requireRole('INVENTORY', 'SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GROCERY', 'AGENT_BAKERY', 'MANAGER'), async (req: AuthRequest, res) => {
   try {
     const { inventoryId, itemId, date, startDate, endDate, section } = req.query;
     

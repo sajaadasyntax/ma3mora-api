@@ -1852,7 +1852,7 @@ router.get('/daily-report', requireRole('AUDITOR', 'MANAGER'), async (req: AuthR
 });
 
 // Get outstanding fees report for customers and suppliers
-router.get('/outstanding-fees', requireRole('ACCOUNTANT', 'MANAGER', 'SALES_GROCERY', 'SALES_BAKERY'), async (req: AuthRequest, res) => {
+router.get('/outstanding-fees', requireRole('ACCOUNTANT', 'MANAGER', 'SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GROCERY', 'AGENT_BAKERY'), async (req: AuthRequest, res) => {
   try {
     const { section, period, startDate, endDate: endDateParam } = req.query;
     
@@ -3270,7 +3270,7 @@ router.get('/commissions', requireRole('ACCOUNTANT', 'MANAGER'), async (req: Aut
 });
 
 // Customer Report endpoint
-router.get('/customer-report', requireRole('ACCOUNTANT', 'MANAGER', 'SALES_GROCERY', 'SALES_BAKERY'), async (req: AuthRequest, res) => {
+router.get('/customer-report', requireRole('ACCOUNTANT', 'MANAGER', 'SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GROCERY', 'AGENT_BAKERY'), async (req: AuthRequest, res) => {
   try {
     const { startDate, endDate, type, customerId, customerIds, paymentMethod, section } = req.query;
     
