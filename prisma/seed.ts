@@ -53,7 +53,7 @@ async function main() {
     create: { name: 'المخزن الرئيسي', isMain: true },
   });
 
-  const branches = ['الفرعي', 'القرشي', 'الهدى', 'عبود'];
+  const branches = ['الفرعي', 'القرشي', 'معتوق', 'عبود'];
   const branchInventories = await Promise.all(
     branches.map((name) =>
       prisma.inventory.upsert({
@@ -112,6 +112,38 @@ async function main() {
     },
   });
 
+  const agentGrocery = await prisma.user.upsert({
+    where: { username: 'agent_grocery' },
+    update: {},
+    create: {
+      username: 'agent_grocery',
+      passwordHash: hashedPassword,
+      role: Role.AGENT_GROCERY,
+      accesses: {
+        create: [
+          { inventoryId: mainInventory.id, section: Section.GROCERY },
+          ...branchInventories.map(inv => ({ inventoryId: inv.id, section: Section.GROCERY })),
+        ],
+      },
+    },
+  });
+
+  const agentBakery = await prisma.user.upsert({
+    where: { username: 'agent_bakery' },
+    update: {},
+    create: {
+      username: 'agent_bakery',
+      passwordHash: hashedPassword,
+      role: Role.AGENT_BAKERY,
+      accesses: {
+        create: [
+          { inventoryId: mainInventory.id, section: Section.BAKERY },
+          ...branchInventories.map(inv => ({ inventoryId: inv.id, section: Section.BAKERY })),
+        ],
+      },
+    },
+  });
+
   const inventoryUser = await prisma.user.upsert({
     where: { username: 'inventory' },
     update: {},
@@ -152,7 +184,7 @@ async function main() {
     },
   });
 
-  console.log('✅ Created 7 users');
+  console.log('✅ Created 9 users');
 
   // Create sample items
   console.log('Creating sample items...');
@@ -185,6 +217,7 @@ async function main() {
             create: [
               { tier: CustomerType.WHOLESALE, price: item.wholesalePrice },
               { tier: CustomerType.RETAIL, price: item.retailPrice },
+              { tier: CustomerType.AGENT, price: Math.round((item.wholesalePrice + item.retailPrice) / 2) }, // Agent price is average of wholesale and retail
             ],
           },
         },
@@ -205,6 +238,7 @@ async function main() {
             create: [
               { tier: CustomerType.WHOLESALE, price: item.wholesalePrice },
               { tier: CustomerType.RETAIL, price: item.retailPrice },
+              { tier: CustomerType.AGENT, price: Math.round((item.wholesalePrice + item.retailPrice) / 2) }, // Agent price is average of wholesale and retail
             ],
           },
         },
@@ -282,10 +316,15 @@ async function main() {
   // Create sample customers
   console.log('Creating sample customers...');
   const customers = [
-    { name: 'محل الأمانة', type: CustomerType.WHOLESALE, division: Section.GROCERY },
-    { name: 'سوبر ماركت النور', type: CustomerType.RETAIL, division: Section.GROCERY },
-    { name: 'مخبز الفرح', type: CustomerType.WHOLESALE, division: Section.BAKERY },
-    { name: 'مطعم البركة', type: CustomerType.RETAIL, division: Section.BAKERY },
+    // Regular customers (for sales users)
+    { name: 'محل الأمانة', type: CustomerType.WHOLESALE, division: Section.GROCERY, isAgentCustomer: false },
+    { name: 'سوبر ماركت النور', type: CustomerType.RETAIL, division: Section.GROCERY, isAgentCustomer: false },
+    { name: 'مخبز الفرح', type: CustomerType.WHOLESALE, division: Section.BAKERY, isAgentCustomer: false },
+    { name: 'مطعم البركة', type: CustomerType.RETAIL, division: Section.BAKERY, isAgentCustomer: false },
+    // Agent customers (for agent users)
+    { name: 'وكيل الخرطوم', type: CustomerType.AGENT, division: Section.GROCERY, isAgentCustomer: true },
+    { name: 'وكيل أم درمان', type: CustomerType.AGENT, division: Section.GROCERY, isAgentCustomer: true },
+    { name: 'وكيل الخبز السريع', type: CustomerType.AGENT, division: Section.BAKERY, isAgentCustomer: true },
   ];
 
   const createdCustomers = await Promise.all(
@@ -296,7 +335,7 @@ async function main() {
     )
   );
 
-  console.log('✅ Created 4 sample customers');
+  console.log('✅ Created 7 sample customers (4 regular + 3 agent)');
 
   // Create sample suppliers
   console.log('Creating sample suppliers...');
@@ -599,6 +638,8 @@ async function main() {
   console.log('  Accountant: accountant / password123');
   console.log('  Sales (Grocery): sales_grocery / password123');
   console.log('  Sales (Bakery): sales_bakery / password123');
+  console.log('  Agent (Grocery): agent_grocery / password123');
+  console.log('  Agent (Bakery): agent_bakery / password123');
   console.log('  Inventory: inventory / password123');
   console.log('  Procurement: procurement / password123');
   console.log('  Auditor: auditor / password123');
