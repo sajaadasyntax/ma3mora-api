@@ -1,4 +1,4 @@
-import { PrismaClient, CustomerType, Section, PaymentStatus, DeliveryStatus, PaymentMethod, Prisma } from '@prisma/client';
+import { PrismaClient, CustomerType, Section, PaymentStatus, DeliveryStatus, PaymentMethod, Prisma, Role } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
@@ -95,7 +95,7 @@ async function main() {
   console.log('\n👤 Finding sales user...');
   const salesUser = await prisma.user.findFirst({
     where: {
-      role: { in: ['SALES_GROCERY', 'AGENT_GROCERY'] },
+      role: { in: [Role.SALES_GROCERY, Role.AGENT_GROCERY] },
     },
   });
 
