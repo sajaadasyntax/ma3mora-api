@@ -834,6 +834,20 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), asyn
       .filter(i => i.method === 'BANK_NILE' && !i.isDebt)
       .reduce((sum, i) => sum.add(i.amount), new Prisma.Decimal(0));
 
+    // Calculate debt totals (debts are NOT included in liquid calculations)
+    const debtExpenses = expenses.filter(e => e.isDebt);
+    const debtIncome = income.filter(i => i.isDebt);
+
+    const totalInboundDebt = debtIncome.reduce(
+      (sum, i) => sum.add(i.amount),
+      new Prisma.Decimal(0)
+    );
+
+    const totalOutboundDebt = debtExpenses.reduce(
+      (sum, e) => sum.add(e.amount),
+      new Prisma.Decimal(0)
+    );
+
     // Get cash exchanges (transfers between payment methods)
     const cashExchanges = await (prisma as any).cashExchange.findMany({
       orderBy: {
@@ -1182,6 +1196,31 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), asyn
         bank: netBank.toFixed(2),
         bankNile: netBankNile.toFixed(2),
         total: netTotal.toFixed(2)
+      },
+      debts: {
+        inbound: {
+          total: totalInboundDebt.toFixed(2),
+          count: debtIncome.length,
+          items: debtIncome.map(i => ({
+            id: i.id,
+            description: i.description,
+            amount: i.amount.toFixed(2),
+            method: i.method,
+            createdAt: i.createdAt
+          }))
+        },
+        outbound: {
+          total: totalOutboundDebt.toFixed(2),
+          count: debtExpenses.length,
+          items: debtExpenses.map(e => ({
+            id: e.id,
+            description: e.description,
+            amount: e.amount.toFixed(2),
+            method: e.method,
+            createdAt: e.createdAt
+          }))
+        },
+        net: totalInboundDebt.sub(totalOutboundDebt).toFixed(2)
       }
     });
   } catch (error) {
