@@ -285,11 +285,13 @@ router.post('/expenses', requireRole('ACCOUNTANT', 'MANAGER'), checkBalanceOpen,
   try {
     const data = createExpenseSchema.parse(req.body);
 
-    // Enforce sufficient balance for chosen payment method
-    const available = await getAvailableByMethod();
-    const method = data.method as 'CASH'|'BANK'|'BANK_NILE';
-    if (available[method].lessThan(data.amount)) {
-      return res.status(400).json({ error: 'الرصيد غير كافٍ لطريقة الدفع المحددة' });
+    // Enforce sufficient balance for chosen payment method (skip check for debts)
+    if (!data.isDebt) {
+      const available = await getAvailableByMethod();
+      const method = data.method as 'CASH'|'BANK'|'BANK_NILE';
+      if (available[method].lessThan(data.amount)) {
+        return res.status(400).json({ error: 'الرصيد غير كافٍ لطريقة الدفع المحددة' });
+      }
     }
 
     const expense = await prisma.expense.create({
@@ -334,6 +336,51 @@ router.post('/expenses', requireRole('ACCOUNTANT', 'MANAGER'), checkBalanceOpen,
       return res.status(400).json({ error: 'بيانات غير صالحة', details: error.errors });
     }
     console.error('Create expense error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
+// Pay/settle an outbound debt (convert debt expense to regular expense)
+router.post('/expenses/:id/pay-debt', requireRole('ACCOUNTANT', 'MANAGER'), checkBalanceOpen, createAuditLog('PayOutboundDebt'), async (req: AuthRequest, res) => {
+  try {
+    const { id } = req.params;
+    const data = payDebtSchema.parse(req.body);
+
+    // Get the expense debt
+    const expense = await prisma.expense.findUnique({
+      where: { id },
+    });
+
+    if (!expense) {
+      return res.status(404).json({ error: 'المنصرف غير موجود' });
+    }
+
+    if (!expense.isDebt) {
+      return res.status(400).json({ error: 'هذا المنصرف ليس دينًا' });
+    }
+
+    // Check if there's sufficient balance to pay the debt
+    const available = await getAvailableByMethod();
+    const method = data.method as 'CASH'|'BANK'|'BANK_NILE';
+    if (available[method].lessThan(expense.amount)) {
+      return res.status(400).json({ error: 'الرصيد غير كافٍ لسداد هذا الدين' });
+    }
+
+    // Update the expense to mark it as paid (no longer a debt)
+    const updatedExpense = await prisma.expense.update({
+      where: { id },
+      data: {
+        isDebt: false,
+        method: data.method, // Update payment method to the one used
+      },
+    });
+
+    res.json({ message: 'تم سداد الدين بنجاح', expense: updatedExpense });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: 'بيانات غير صالحة', details: error.errors });
+    }
+    console.error('Pay outbound debt error:', error);
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
 });
@@ -411,6 +458,48 @@ router.post('/income', requireRole('ACCOUNTANT', 'MANAGER'), checkBalanceOpen, c
       return res.status(400).json({ error: 'بيانات غير صالحة', details: error.errors });
     }
     console.error('Create income error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
+// Pay/settle an inbound debt (convert debt income to regular income)
+const payDebtSchema = z.object({
+  method: z.enum(['CASH', 'BANK', 'BANK_NILE']),
+});
+
+router.post('/income/:id/pay-debt', requireRole('ACCOUNTANT', 'MANAGER'), checkBalanceOpen, createAuditLog('PayInboundDebt'), async (req: AuthRequest, res) => {
+  try {
+    const { id } = req.params;
+    const data = payDebtSchema.parse(req.body);
+
+    // Get the income debt
+    const income = await prisma.income.findUnique({
+      where: { id },
+    });
+
+    if (!income) {
+      return res.status(404).json({ error: 'الإيراد غير موجود' });
+    }
+
+    if (!income.isDebt) {
+      return res.status(400).json({ error: 'هذا الإيراد ليس دينًا' });
+    }
+
+    // Update the income to mark it as paid (no longer a debt)
+    const updatedIncome = await prisma.income.update({
+      where: { id },
+      data: {
+        isDebt: false,
+        method: data.method, // Update payment method to the one used
+      },
+    });
+
+    res.json({ message: 'تم تسديد الدين بنجاح', income: updatedIncome });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: 'بيانات غير صالحة', details: error.errors });
+    }
+    console.error('Pay inbound debt error:', error);
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
 });
