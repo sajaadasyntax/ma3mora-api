@@ -499,6 +499,7 @@ model Expense {
   amount      Decimal       @db.Decimal(10, 2)
   method      PaymentMethod
   description String
+  isDebt      Boolean       @default(false)
   createdBy   String
   createdAt   DateTime      @default(now())
 
@@ -515,6 +516,7 @@ model Income {
   amount      Decimal       @db.Decimal(10, 2)
   method      PaymentMethod
   description String
+  isDebt      Boolean       @default(false)
   createdBy   String
   createdAt   DateTime      @default(now())
 

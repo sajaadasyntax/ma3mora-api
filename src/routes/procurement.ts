@@ -994,12 +994,12 @@ router.post('/orders/:id/payments', requireRole('MANAGER'), checkBalanceOpen, cr
     // COMMISSION payments are excluded - they don't subtract from liquid assets
   };
 
-    // Expenses out
+    // Expenses out - exclude debts from balance calculation
     const expenses = await prisma.expense.findMany();
     const expOut: Record<'CASH'|'BANK'|'BANK_NILE', Prisma.Decimal> = {
-      CASH: expenses.filter(e => e.method === 'CASH').reduce((s, e) => s.add(e.amount), new Prisma.Decimal(0)),
-      BANK: expenses.filter(e => e.method === 'BANK').reduce((s, e) => s.add(e.amount), new Prisma.Decimal(0)),
-      BANK_NILE: expenses.filter(e => e.method === 'BANK_NILE').reduce((s, e) => s.add(e.amount), new Prisma.Decimal(0)),
+      CASH: expenses.filter(e => e.method === 'CASH' && !e.isDebt).reduce((s, e) => s.add(e.amount), new Prisma.Decimal(0)),
+      BANK: expenses.filter(e => e.method === 'BANK' && !e.isDebt).reduce((s, e) => s.add(e.amount), new Prisma.Decimal(0)),
+      BANK_NILE: expenses.filter(e => e.method === 'BANK_NILE' && !e.isDebt).reduce((s, e) => s.add(e.amount), new Prisma.Decimal(0)),
     };
 
     // Salaries & advances out
@@ -1016,6 +1016,14 @@ router.post('/orders/:id/payments', requireRole('MANAGER'), checkBalanceOpen, cr
       BANK_NILE: paidAdvances.filter((a: any) => a.paymentMethod === 'BANK_NILE').reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0)),
     };
 
+    // Income in - exclude debts from balance calculation
+    const income = await prisma.income.findMany();
+    const incomeIn: Record<'CASH'|'BANK'|'BANK_NILE', Prisma.Decimal> = {
+      CASH: income.filter(i => i.method === 'CASH' && !i.isDebt).reduce((s, i) => s.add(i.amount), new Prisma.Decimal(0)),
+      BANK: income.filter(i => i.method === 'BANK' && !i.isDebt).reduce((s, i) => s.add(i.amount), new Prisma.Decimal(0)),
+      BANK_NILE: income.filter(i => i.method === 'BANK_NILE' && !i.isDebt).reduce((s, i) => s.add(i.amount), new Prisma.Decimal(0)),
+    };
+
     // Cash exchanges impact
     const exchanges = await prisma.cashExchange.findMany();
     const exImpact: Record<'CASH'|'BANK'|'BANK_NILE', Prisma.Decimal> = { CASH: new Prisma.Decimal(0), BANK: new Prisma.Decimal(0), BANK_NILE: new Prisma.Decimal(0) };
@@ -1027,9 +1035,9 @@ router.post('/orders/:id/payments', requireRole('MANAGER'), checkBalanceOpen, cr
     });
 
     const available: Record<'CASH'|'BANK'|'BANK_NILE', Prisma.Decimal> = {
-      CASH: openingByMethod.CASH.add(salesIn.CASH).add(exImpact.CASH).sub(expOut.CASH).sub(salOut.CASH).sub(advOut.CASH).sub(procOut.CASH),
-      BANK: openingByMethod.BANK.add(salesIn.BANK).add(exImpact.BANK).sub(expOut.BANK).sub(salOut.BANK).sub(advOut.BANK).sub(procOut.BANK),
-      BANK_NILE: openingByMethod.BANK_NILE.add(salesIn.BANK_NILE).add(exImpact.BANK_NILE).sub(expOut.BANK_NILE).sub(salOut.BANK_NILE).sub(advOut.BANK_NILE).sub(procOut.BANK_NILE),
+      CASH: openingByMethod.CASH.add(salesIn.CASH).add(incomeIn.CASH).add(exImpact.CASH).sub(expOut.CASH).sub(salOut.CASH).sub(advOut.CASH).sub(procOut.CASH),
+      BANK: openingByMethod.BANK.add(salesIn.BANK).add(incomeIn.BANK).add(exImpact.BANK).sub(expOut.BANK).sub(salOut.BANK).sub(advOut.BANK).sub(procOut.BANK),
+      BANK_NILE: openingByMethod.BANK_NILE.add(salesIn.BANK_NILE).add(incomeIn.BANK_NILE).add(exImpact.BANK_NILE).sub(expOut.BANK_NILE).sub(salOut.BANK_NILE).sub(advOut.BANK_NILE).sub(procOut.BANK_NILE),
     };
 
     // Commission payments don't need balance check - already paid by supplier as gift

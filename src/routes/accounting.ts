@@ -18,6 +18,7 @@ const createExpenseSchema = z.object({
   amount: z.number().positive(),
   method: z.enum(['CASH', 'BANK', 'BANK_NILE']),
   description: z.string().min(1),
+  isDebt: z.boolean().optional().default(false),
 });
 
 const createIncomeSchema = z.object({
@@ -26,6 +27,7 @@ const createIncomeSchema = z.object({
   amount: z.number().positive(),
   method: z.enum(['CASH', 'BANK', 'BANK_NILE']),
   description: z.string().min(1),
+  isDebt: z.boolean().optional().default(false),
 });
 
 const createOpeningBalanceSchema = z.object({
@@ -515,7 +517,7 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
       new Prisma.Decimal(0)
     );
 
-    // Expenses summary
+    // Expenses summary - separate debts from regular expenses
     const expensesWhere: any = {};
     if (inventoryId) expensesWhere.inventoryId = inventoryId;
     if (section) expensesWhere.section = section;
@@ -524,7 +526,11 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
       where: expensesWhere,
     });
 
-    // Income summary (opposite of expenses - money coming IN)
+    // Separate debt expenses from regular expenses
+    const regularExpenses = expenses.filter(exp => !exp.isDebt);
+    const debtExpenses = expenses.filter(exp => exp.isDebt);
+
+    // Income summary - separate debts from regular income
     const incomeWhere: any = {};
     if (inventoryId) incomeWhere.inventoryId = inventoryId;
     if (section) incomeWhere.section = section;
@@ -533,8 +539,23 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
       where: incomeWhere,
     });
 
-    const totalIncome = income.reduce(
+    // Separate debt income from regular income
+    const regularIncome = income.filter(inc => !inc.isDebt);
+    const debtIncome = income.filter(inc => inc.isDebt);
+
+    const totalIncome = regularIncome.reduce(
       (sum, inc) => sum.add(inc.amount),
+      new Prisma.Decimal(0)
+    );
+
+    // Calculate debt totals
+    const totalInboundDebt = debtIncome.reduce(
+      (sum, inc) => sum.add(inc.amount),
+      new Prisma.Decimal(0)
+    );
+
+    const totalOutboundDebt = debtExpenses.reduce(
+      (sum, exp) => sum.add(exp.amount),
       new Prisma.Decimal(0)
     );
 
@@ -552,7 +573,7 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
       },
     });
 
-    const totalExpenses = expenses.reduce(
+    const totalExpenses = regularExpenses.reduce(
       (sum, exp) => sum.add(exp.amount),
       new Prisma.Decimal(0)
     );
@@ -650,14 +671,21 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
       },
       expenses: {
         total: totalAllExpenses.toFixed(2),
-        count: expenses.length + paidSalaries.length + paidAdvances.length,
+        count: regularExpenses.length + paidSalaries.length + paidAdvances.length,
         regular: totalExpenses.toFixed(2),
         salaries: totalSalaries.toFixed(2),
         advances: totalAdvances.toFixed(2),
       },
       income: {
         total: totalIncome.toFixed(2),
-        count: income.length,
+        count: regularIncome.length,
+      },
+      debts: {
+        inbound: totalInboundDebt.toFixed(2),
+        outbound: totalOutboundDebt.toFixed(2),
+        net: totalInboundDebt.sub(totalOutboundDebt).toFixed(2),
+        inboundCount: debtIncome.length,
+        outboundCount: debtExpenses.length,
       },
       balance: {
         opening: totalOpeningBalance.toFixed(2),
@@ -716,7 +744,7 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), asyn
 
     const totalLiquid = cashTotal.add(bankTotal).add(bankNileTotal);
 
-    // Get expenses by method
+    // Get expenses by method - exclude debt expenses from liquid calculation
     const expenses = await prisma.expense.findMany({
       where: {
         ...(inventoryId ? { inventoryId: inventoryId as string } : {}),
@@ -728,15 +756,15 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), asyn
     });
 
     const cashExpenses = expenses
-      .filter(e => e.method === 'CASH')
+      .filter(e => e.method === 'CASH' && !e.isDebt)
       .reduce((sum, e) => sum.add(e.amount), new Prisma.Decimal(0));
 
     const bankExpenses = expenses
-      .filter(e => e.method === 'BANK')
+      .filter(e => e.method === 'BANK' && !e.isDebt)
       .reduce((sum, e) => sum.add(e.amount), new Prisma.Decimal(0));
 
     const bankNileExpenses = expenses
-      .filter(e => e.method === 'BANK_NILE')
+      .filter(e => e.method === 'BANK_NILE' && !e.isDebt)
       .reduce((sum, e) => sum.add(e.amount), new Prisma.Decimal(0));
 
     // Get paid salaries (only where paidAt is not null)
@@ -782,6 +810,29 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), asyn
     const bankNileAdvances = paidAdvances
       .filter(a => a.paymentMethod === 'BANK_NILE')
       .reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0));
+
+    // Get income by method - exclude debt income from liquid calculation
+    const income = await prisma.income.findMany({
+      where: {
+        ...(inventoryId ? { inventoryId: inventoryId as string } : {}),
+        ...(section ? { section: section as any } : {}),
+      },
+      orderBy: {
+        createdAt: 'desc'
+      }
+    });
+
+    const cashIncome = income
+      .filter(i => i.method === 'CASH' && !i.isDebt)
+      .reduce((sum, i) => sum.add(i.amount), new Prisma.Decimal(0));
+
+    const bankIncome = income
+      .filter(i => i.method === 'BANK' && !i.isDebt)
+      .reduce((sum, i) => sum.add(i.amount), new Prisma.Decimal(0));
+
+    const bankNileIncome = income
+      .filter(i => i.method === 'BANK_NILE' && !i.isDebt)
+      .reduce((sum, i) => sum.add(i.amount), new Prisma.Decimal(0));
 
     // Get cash exchanges (transfers between payment methods)
     const cashExchanges = await (prisma as any).cashExchange.findMany({
@@ -941,9 +992,10 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), asyn
       .filter(b => (b as any).paymentMethod === 'BANK_NILE')
       .reduce((sum, b) => sum.add(b.amount), new Prisma.Decimal(0));
 
-    // Calculate net liquid cash (opening balance + payments - expenses - salaries - advances - proc payments + cash exchanges)
+    // Calculate net liquid cash (opening balance + payments + income - expenses - salaries - advances - proc payments + cash exchanges)
     const netCash = openingCash
       .add(cashTotal)
+      .add(cashIncome)
       .sub(cashExpenses)
       .sub(cashSalaries)
       .sub(cashAdvances)
@@ -952,6 +1004,7 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), asyn
     
     const netBank = openingBank
       .add(bankTotal)
+      .add(bankIncome)
       .sub(bankExpenses)
       .sub(bankSalaries)
       .sub(bankAdvances)
@@ -960,6 +1013,7 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), asyn
     
     const netBankNile = openingBankNile
       .add(bankNileTotal)
+      .add(bankNileIncome)
       .sub(bankNileExpenses)
       .sub(bankNileSalaries)
       .sub(bankNileAdvances)
