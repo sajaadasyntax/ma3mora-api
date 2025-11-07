@@ -167,6 +167,9 @@ async function main() {
       const customerShortId = customer.id.slice(-6);
       const invoiceNumber = `PRE-SYS-${timestamp}-${customerShortId}`;
 
+      // Create invoice WITHOUT creating InventoryDelivery records
+      // This ensures stock is NOT affected since stock is only reduced when
+      // InventoryDelivery records are created through the delivery endpoint
       const invoice = await prisma.salesInvoice.create({
         data: {
           invoiceNumber,
@@ -176,13 +179,13 @@ async function main() {
           customerId: customer.id,
           paymentMethod: PaymentMethod.CASH,
           paymentStatus: PaymentStatus.CREDIT, // Unpaid
-          deliveryStatus: DeliveryStatus.DELIVERED, // Delivered
+          deliveryStatus: DeliveryStatus.DELIVERED, // Marked as delivered but NO delivery record created
           paymentConfirmed: false,
           subtotal: amount,
           discount: new Prisma.Decimal(0),
           total: amount,
           paidAmount: new Prisma.Decimal(0), // Unpaid
-          notes: 'متاخرات ما قبل السيستيم',
+          notes: 'متاخرات ما قبل السيستيم - لا يؤثر على المخزون',
           items: {
             create: {
               itemId: lateItem.id,
@@ -191,10 +194,12 @@ async function main() {
               lineTotal: amount,
             },
           },
+          // IMPORTANT: Do NOT create InventoryDelivery records here
+          // Stock is only reduced when InventoryDelivery is created via the delivery endpoint
         },
       });
 
-      console.log(`  📄 Created invoice: ${invoiceNumber} - Amount: ${amount.toLocaleString()} SDG`);
+      console.log(`  📄 Created invoice: ${invoiceNumber} - Amount: ${amount.toLocaleString()} SDG (No stock impact)`);
       invoicesCreated++;
     } catch (error: any) {
       console.error(`  ❌ Error processing ${customerInfo.name}:`, error.message);
