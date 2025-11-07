@@ -65,7 +65,6 @@ async function main() {
           create: [
             { tier: CustomerType.WHOLESALE, price: 1 },
             { tier: CustomerType.RETAIL, price: 1 },
-            { tier: CustomerType.AGENT, price: 1 },
           ],
         },
       },
@@ -95,7 +94,7 @@ async function main() {
   console.log('\n👤 Finding sales user...');
   const salesUser = await prisma.user.findFirst({
     where: {
-      role: { in: [Role.SALES_GROCERY, Role.AGENT_GROCERY] },
+      role: 'SALES_GROCERY',
     },
   });
 
@@ -125,7 +124,6 @@ async function main() {
           data: {
             type: CustomerType.WHOLESALE,
             division: Section.GROCERY,
-            isAgentCustomer: false,
           },
         });
         console.log(`  ♻️  Updated customer: ${customerInfo.name}`);
@@ -137,7 +135,6 @@ async function main() {
             name: customerInfo.name,
             type: CustomerType.WHOLESALE,
             division: Section.GROCERY,
-            isAgentCustomer: false,
           },
         });
         console.log(`  ✨ Created customer: ${customerInfo.name}`);
