@@ -77,8 +77,6 @@ async function main() {
             type: CustomerType.WHOLESALE, // Grocery stores are wholesale customers
             division: Section.GROCERY,
             isAgentCustomer: false,
-            phone: customerInfo.phone || null,
-            address: customerInfo.address || null,
           },
         });
         console.log(`  ✨ Created: ${customerInfo.name}`);
