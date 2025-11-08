@@ -197,49 +197,96 @@ async function main() {
         continue;
       }
 
-      // Create invoice with the amount
-      const amount = new Prisma.Decimal(customerInfo.amount);
-      const quantity = amount; // Since price is 1, quantity = amount
-
-      // Generate unique invoice number
+      // Create invoice(s) with the amount
+      // Split large amounts (> 99,999,999.99) into multiple invoices to avoid Decimal overflow
+      const MAX_SAFE_AMOUNT = 99999999.99;
+      const totalAmount = customerInfo.amount;
       const timestamp = Date.now();
       const customerShortId = customer.id.slice(-6);
-      const invoiceNumber = `PRE-SYS-BAKERY-${timestamp}-${customerShortId}`;
-
-      // Create invoice WITHOUT creating InventoryDelivery records
-      // This ensures stock is NOT affected since stock is only reduced when
-      // InventoryDelivery records are created through the delivery endpoint
-      const invoice = await prisma.salesInvoice.create({
-        data: {
-          invoiceNumber,
-          inventoryId: mainWarehouse.id,
-          section: Section.BAKERY,
-          salesUserId: salesUser.id,
-          customerId: customer.id,
-          paymentMethod: PaymentMethod.CASH,
-          paymentStatus: PaymentStatus.CREDIT, // Unpaid
-          deliveryStatus: DeliveryStatus.DELIVERED, // Marked as delivered but NO delivery record created
-          paymentConfirmed: false,
-          subtotal: amount,
-          discount: new Prisma.Decimal(0),
-          total: amount,
-          paidAmount: new Prisma.Decimal(0), // Unpaid
-          notes: 'متاخرات ما قبل السيستيم - لا يؤثر على المخزون',
-          items: {
-            create: {
-              itemId: lateItem.id,
-              quantity: quantity,
-              unitPrice: new Prisma.Decimal(1),
-              lineTotal: amount,
+      
+      if (totalAmount > MAX_SAFE_AMOUNT) {
+        // Split into multiple invoices
+        let remaining = totalAmount;
+        let invoiceIndex = 1;
+        
+        while (remaining > 0) {
+          const invoiceAmount = Math.min(remaining, MAX_SAFE_AMOUNT);
+          const amount = new Prisma.Decimal(invoiceAmount);
+          const quantity = amount; // Since price is 1, quantity = amount
+          
+          const invoiceNumber = `PRE-SYS-BAKERY-${timestamp}-${customerShortId}-${invoiceIndex}`;
+          
+          await prisma.salesInvoice.create({
+            data: {
+              invoiceNumber,
+              inventoryId: mainWarehouse.id,
+              section: Section.BAKERY,
+              salesUserId: salesUser.id,
+              customerId: customer.id,
+              paymentMethod: PaymentMethod.CASH,
+              paymentStatus: PaymentStatus.CREDIT, // Unpaid
+              deliveryStatus: DeliveryStatus.DELIVERED, // Marked as delivered but NO delivery record created
+              paymentConfirmed: false,
+              subtotal: amount,
+              discount: new Prisma.Decimal(0),
+              total: amount,
+              paidAmount: new Prisma.Decimal(0), // Unpaid
+              notes: `متاخرات ما قبل السيستيم - لا يؤثر على المخزون (جزء ${invoiceIndex})`,
+              items: {
+                create: {
+                  itemId: lateItem.id,
+                  quantity: quantity,
+                  unitPrice: new Prisma.Decimal(1),
+                  lineTotal: amount,
+                },
+              },
             },
+          });
+          
+          console.log(`  📄 Created invoice ${invoiceIndex}: ${invoiceNumber} - Amount: ${amount.toLocaleString()} SDG (No stock impact)`);
+          invoicesCreated++;
+          remaining -= invoiceAmount;
+          invoiceIndex++;
+        }
+      } else {
+        // Single invoice for amounts within limit
+        const amount = new Prisma.Decimal(totalAmount);
+        const quantity = amount; // Since price is 1, quantity = amount
+        
+        const invoiceNumber = `PRE-SYS-BAKERY-${timestamp}-${customerShortId}`;
+        
+        await prisma.salesInvoice.create({
+          data: {
+            invoiceNumber,
+            inventoryId: mainWarehouse.id,
+            section: Section.BAKERY,
+            salesUserId: salesUser.id,
+            customerId: customer.id,
+            paymentMethod: PaymentMethod.CASH,
+            paymentStatus: PaymentStatus.CREDIT, // Unpaid
+            deliveryStatus: DeliveryStatus.DELIVERED, // Marked as delivered but NO delivery record created
+            paymentConfirmed: false,
+            subtotal: amount,
+            discount: new Prisma.Decimal(0),
+            total: amount,
+            paidAmount: new Prisma.Decimal(0), // Unpaid
+            notes: 'متاخرات ما قبل السيستيم - لا يؤثر على المخزون',
+            items: {
+              create: {
+                itemId: lateItem.id,
+                quantity: quantity,
+                unitPrice: new Prisma.Decimal(1),
+                lineTotal: amount,
+              },
+            },
+            // IMPORTANT: Do NOT create InventoryDelivery records here
+            // Stock is only reduced when InventoryDelivery is created via the delivery endpoint
           },
-          // IMPORTANT: Do NOT create InventoryDelivery records here
-          // Stock is only reduced when InventoryDelivery is created via the delivery endpoint
-        },
-      });
-
-      console.log(`  📄 Created invoice: ${invoiceNumber} - Amount: ${amount.toLocaleString()} SDG (No stock impact)`);
-      invoicesCreated++;
+        });
+        
+        console.log(`  📄 Created invoice: ${invoiceNumber} - Amount: ${amount.toLocaleString()} SDG (No stock impact)`);
+        invoicesCreated++;
+      }
     } catch (error: any) {
       console.error(`  ❌ Error processing ${customerInfo.name}:`, error.message);
       skipped++;

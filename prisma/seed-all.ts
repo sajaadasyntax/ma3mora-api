@@ -1033,38 +1033,86 @@ async function main() {
     });
 
     if (!existingInvoice) {
-      const amount = new Prisma.Decimal(customerInfo.amount);
+      // Split large amounts (> 99,999,999.99) into multiple invoices to avoid Decimal overflow
+      const MAX_SAFE_AMOUNT = 99999999.99;
+      const totalAmount = customerInfo.amount;
       const timestamp = Date.now();
       const customerShortId = customer.id.slice(-6);
-      const invoiceNumber = `PRE-SYS-BAKERY-${timestamp}-${customerShortId}`;
+      
+      if (totalAmount > MAX_SAFE_AMOUNT) {
+        // Split into multiple invoices
+        let remaining = totalAmount;
+        let invoiceIndex = 1;
+        
+        while (remaining > 0) {
+          const invoiceAmount = Math.min(remaining, MAX_SAFE_AMOUNT);
+          const amount = new Prisma.Decimal(invoiceAmount);
+          
+          const invoiceNumber = `PRE-SYS-BAKERY-${timestamp}-${customerShortId}-${invoiceIndex}`;
+          
+          await prisma.salesInvoice.create({
+            data: {
+              invoiceNumber,
+              inventoryId: mainWarehouse.id,
+              section: Section.BAKERY,
+              salesUserId: users[Role.SALES_BAKERY].id,
+              customerId: customer.id,
+              paymentMethod: PaymentMethod.CASH,
+              paymentStatus: PaymentStatus.CREDIT,
+              deliveryStatus: DeliveryStatus.DELIVERED,
+              paymentConfirmed: false,
+              subtotal: amount,
+              discount: new Prisma.Decimal(0),
+              total: amount,
+              paidAmount: new Prisma.Decimal(0),
+              notes: `متاخرات ما قبل السيستيم - لا يؤثر على المخزون (جزء ${invoiceIndex})`,
+              items: {
+                create: {
+                  itemId: bakeryLateItem.id,
+                  quantity: amount,
+                  unitPrice: new Prisma.Decimal(1),
+                  lineTotal: amount,
+                },
+              },
+            },
+          });
+          bakeryInvoicesCreated++;
+          remaining -= invoiceAmount;
+          invoiceIndex++;
+        }
+      } else {
+        // Single invoice for amounts within limit
+        const amount = new Prisma.Decimal(totalAmount);
+        const invoiceNumber = `PRE-SYS-BAKERY-${timestamp}-${customerShortId}`;
 
-      await prisma.salesInvoice.create({
-        data: {
-          invoiceNumber,
-          inventoryId: mainWarehouse.id,
-          section: Section.BAKERY,
-          salesUserId: users[Role.SALES_BAKERY].id,
-          customerId: customer.id,
-          paymentMethod: PaymentMethod.CASH,
-          paymentStatus: PaymentStatus.CREDIT,
-          deliveryStatus: DeliveryStatus.DELIVERED,
-          paymentConfirmed: false,
-          subtotal: amount,
-          discount: new Prisma.Decimal(0),
-          total: amount,
-          paidAmount: new Prisma.Decimal(0),
-          notes: 'متاخرات ما قبل السيستيم - لا يؤثر على المخزون',
-          items: {
-            create: {
-              itemId: bakeryLateItem.id,
-              quantity: amount,
-              unitPrice: new Prisma.Decimal(1),
-              lineTotal: amount,
+        await prisma.salesInvoice.create({
+          data: {
+            invoiceNumber,
+            inventoryId: mainWarehouse.id,
+            section: Section.BAKERY,
+            salesUserId: users[Role.SALES_BAKERY].id,
+            customerId: customer.id,
+            paymentMethod: PaymentMethod.CASH,
+            paymentStatus: PaymentStatus.CREDIT,
+            deliveryStatus: DeliveryStatus.DELIVERED,
+            paymentConfirmed: false,
+            subtotal: amount,
+            discount: new Prisma.Decimal(0),
+            total: amount,
+            paidAmount: new Prisma.Decimal(0),
+            notes: 'متاخرات ما قبل السيستيم - لا يؤثر على المخزون',
+            items: {
+              create: {
+                itemId: bakeryLateItem.id,
+                quantity: amount,
+                unitPrice: new Prisma.Decimal(1),
+                lineTotal: amount,
+              },
             },
           },
-        },
-      });
-      bakeryInvoicesCreated++;
+        });
+        bakeryInvoicesCreated++;
+      }
     }
   }
   console.log(`    ✅ Created ${bakeryInvoicesCreated} bakery invoices`);
