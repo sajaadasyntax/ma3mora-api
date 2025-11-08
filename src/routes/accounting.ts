@@ -367,29 +367,13 @@ router.post('/expenses/:id/pay-debt', requireRole('ACCOUNTANT', 'MANAGER'), chec
     }
 
     // Update the expense to mark it as paid (no longer a debt)
-    // Handle case where isDebt column might not exist in database
-    let updatedExpense;
-    try {
-      updatedExpense = await prisma.expense.update({
-        where: { id },
-        data: {
-          isDebt: false,
-          method: data.method, // Update payment method to the one used
-        },
-      });
-    } catch (error: any) {
-      // If isDebt column doesn't exist, update without it
-      if (error.code === 'P2022' || error.message?.includes('isDebt')) {
-        updatedExpense = await prisma.expense.update({
-          where: { id },
-          data: {
-            method: data.method, // Update payment method to the one used
-          },
-        });
-      } else {
-        throw error;
-      }
-    }
+    const updatedExpense = await prisma.expense.update({
+      where: { id },
+      data: {
+        isDebt: false,
+        method: data.method, // Update payment method to the one used
+      },
+    });
 
     res.json({ message: 'تم سداد الدين بنجاح', expense: updatedExpense });
   } catch (error) {
@@ -502,29 +486,13 @@ router.post('/income/:id/pay-debt', requireRole('ACCOUNTANT', 'MANAGER'), checkB
     }
 
     // Update the income to mark it as paid (no longer a debt)
-    // Handle case where isDebt column might not exist in database
-    let updatedIncome;
-    try {
-      updatedIncome = await prisma.income.update({
-        where: { id },
-        data: {
-          isDebt: false,
-          method: data.method, // Update payment method to the one used
-        },
-      });
-    } catch (error: any) {
-      // If isDebt column doesn't exist, update without it
-      if (error.code === 'P2022' || error.message?.includes('isDebt')) {
-        updatedIncome = await prisma.income.update({
-          where: { id },
-          data: {
-            method: data.method, // Update payment method to the one used
-          },
-        });
-      } else {
-        throw error;
-      }
-    }
+    const updatedIncome = await prisma.income.update({
+      where: { id },
+      data: {
+        isDebt: false,
+        method: data.method, // Update payment method to the one used
+      },
+    });
 
     res.json({ message: 'تم تسديد الدين بنجاح', income: updatedIncome });
   } catch (error) {
