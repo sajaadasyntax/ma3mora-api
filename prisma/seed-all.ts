@@ -637,16 +637,21 @@ async function main() {
     if (!item) {
       const retailPrice = Math.round(itemData.wholesalePrice * 1.15);
       const agentPrice = Math.round(itemData.wholesalePrice * 1.10);
+      const priceTiers: Array<{ tier: CustomerType; price: number }> = [
+        { tier: CustomerType.WHOLESALE, price: itemData.wholesalePrice },
+        { tier: CustomerType.RETAIL, price: retailPrice },
+      ];
+      // Add AGENT tier if it exists in the enum
+      if ('AGENT' in CustomerType) {
+        priceTiers.push({ tier: 'AGENT' as CustomerType, price: agentPrice });
+      }
+      
       item = await prisma.item.create({
         data: {
           name: itemData.name,
           section: Section.GROCERY,
           prices: {
-            create: [
-              { tier: CustomerType.WHOLESALE, price: itemData.wholesalePrice },
-              { tier: CustomerType.RETAIL, price: retailPrice },
-              { tier: CustomerType.AGENT, price: agentPrice },
-            ],
+            create: priceTiers,
           },
         },
         include: { prices: true },
@@ -709,16 +714,21 @@ async function main() {
     if (!item) {
       const retailPrice = Math.round(itemData.wholesalePrice * 1.15);
       const agentPrice = Math.round(itemData.wholesalePrice * 1.10);
+      const priceTiers: Array<{ tier: CustomerType; price: number }> = [
+        { tier: CustomerType.WHOLESALE, price: itemData.wholesalePrice },
+        { tier: CustomerType.RETAIL, price: retailPrice },
+      ];
+      // Add AGENT tier if it exists in the enum
+      if ('AGENT' in CustomerType) {
+        priceTiers.push({ tier: 'AGENT' as CustomerType, price: agentPrice });
+      }
+      
       item = await prisma.item.create({
         data: {
           name: itemData.name,
           section: Section.GROCERY,
           prices: {
-            create: [
-              { tier: CustomerType.WHOLESALE, price: itemData.wholesalePrice },
-              { tier: CustomerType.RETAIL, price: retailPrice },
-              { tier: CustomerType.AGENT, price: agentPrice },
-            ],
+            create: priceTiers,
           },
         },
         include: { prices: true },
@@ -774,16 +784,21 @@ async function main() {
       if (!item) {
         const retailPrice = Math.round(itemData.wholesalePrice * 1.15);
         const agentPrice = Math.round(itemData.wholesalePrice * 1.10);
+        const priceTiers: Array<{ tier: CustomerType; price: number }> = [
+          { tier: CustomerType.WHOLESALE, price: itemData.wholesalePrice },
+          { tier: CustomerType.RETAIL, price: retailPrice },
+        ];
+        // Add AGENT tier if it exists in the enum
+        if ('AGENT' in CustomerType) {
+          priceTiers.push({ tier: 'AGENT' as CustomerType, price: agentPrice });
+        }
+        
         item = await prisma.item.create({
           data: {
             name: itemData.name,
             section: Section.BAKERY,
             prices: {
-              create: [
-                { tier: CustomerType.WHOLESALE, price: itemData.wholesalePrice },
-                { tier: CustomerType.RETAIL, price: retailPrice },
-                { tier: CustomerType.AGENT, price: agentPrice },
-              ],
+              create: priceTiers,
             },
           },
           include: { prices: true },
@@ -1211,26 +1226,64 @@ async function main() {
     const supplier = suppliers[orderInfo.supplier];
     if (!supplier) continue;
 
+    // Find or create item - ensure no duplicates
     let item = await prisma.item.findFirst({
       where: {
         name: orderInfo.item,
         section: Section.GROCERY,
       },
+      include: { prices: true },
     });
 
     if (!item) {
+      // Item doesn't exist, create it with all price tiers
+      const priceTiers: Array<{ tier: CustomerType; price: number }> = [
+        { tier: CustomerType.WHOLESALE, price: 1 },
+        { tier: CustomerType.RETAIL, price: 1 },
+      ];
+      // Add AGENT tier if it exists in the enum
+      try {
+        if ('AGENT' in CustomerType) {
+          priceTiers.push({ tier: 'AGENT' as CustomerType, price: 1 });
+        }
+      } catch (e) {
+        // AGENT tier not available, skip it
+      }
+      
       item = await prisma.item.create({
         data: {
           name: orderInfo.item,
           section: Section.GROCERY,
           prices: {
-            create: [
-              { tier: CustomerType.WHOLESALE, price: 1 },
-              { tier: CustomerType.RETAIL, price: 1 },
-            ],
+            create: priceTiers,
           },
         },
+        include: { prices: true },
       });
+    } else {
+      // Item exists, ensure it has all required price tiers
+      const existingTiers = item.prices.map(p => p.tier);
+      const requiredTiers = [CustomerType.WHOLESALE, CustomerType.RETAIL];
+      // Add AGENT tier if it exists in the enum
+      try {
+        if ('AGENT' in CustomerType) {
+          requiredTiers.push('AGENT' as CustomerType);
+        }
+      } catch (e) {
+        // AGENT tier not available, skip it
+      }
+      
+      const missingTiers = requiredTiers.filter(tier => !existingTiers.includes(tier));
+      
+      if (missingTiers.length > 0 && item) {
+        await prisma.itemPrice.createMany({
+          data: missingTiers.map(tier => ({
+            itemId: item!.id,
+            tier,
+            price: 1,
+          })),
+        });
+      }
     }
 
     const existingOrder = await prisma.procOrder.findFirst({
@@ -1288,26 +1341,64 @@ async function main() {
     const supplier = suppliers[orderInfo.supplier];
     if (!supplier) continue;
 
+    // Find or create item - ensure no duplicates
     let item = await prisma.item.findFirst({
       where: {
         name: orderInfo.item,
         section: Section.BAKERY,
       },
+      include: { prices: true },
     });
 
     if (!item) {
+      // Item doesn't exist, create it with all price tiers
+      const priceTiers: Array<{ tier: CustomerType; price: number }> = [
+        { tier: CustomerType.WHOLESALE, price: 1 },
+        { tier: CustomerType.RETAIL, price: 1 },
+      ];
+      // Add AGENT tier if it exists in the enum
+      try {
+        if ('AGENT' in CustomerType) {
+          priceTiers.push({ tier: 'AGENT' as CustomerType, price: 1 });
+        }
+      } catch (e) {
+        // AGENT tier not available, skip it
+      }
+      
       item = await prisma.item.create({
         data: {
           name: orderInfo.item,
           section: Section.BAKERY,
           prices: {
-            create: [
-              { tier: CustomerType.WHOLESALE, price: 1 },
-              { tier: CustomerType.RETAIL, price: 1 },
-            ],
+            create: priceTiers,
           },
         },
+        include: { prices: true },
       });
+    } else {
+      // Item exists, ensure it has all required price tiers
+      const existingTiers = item.prices.map(p => p.tier);
+      const requiredTiers = [CustomerType.WHOLESALE, CustomerType.RETAIL];
+      // Add AGENT tier if it exists in the enum
+      try {
+        if ('AGENT' in CustomerType) {
+          requiredTiers.push('AGENT' as CustomerType);
+        }
+      } catch (e) {
+        // AGENT tier not available, skip it
+      }
+      
+      const missingTiers = requiredTiers.filter(tier => !existingTiers.includes(tier));
+      
+      if (missingTiers.length > 0 && item) {
+        await prisma.itemPrice.createMany({
+          data: missingTiers.map(tier => ({
+            itemId: item!.id,
+            tier,
+            price: 1,
+          })),
+        });
+      }
     }
 
     const existingOrder = await prisma.procOrder.findFirst({
