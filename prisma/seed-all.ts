@@ -638,13 +638,13 @@ async function main() {
     if (!item) {
       const retailPrice = Math.round(itemData.wholesalePrice * 1.15);
       const agentPrice = Math.round(itemData.wholesalePrice * 1.10);
-      const priceTiers: Array<{ tier: CustomerType; price: number }> = [
-        { tier: CustomerType.WHOLESALE, price: itemData.wholesalePrice },
-        { tier: CustomerType.RETAIL, price: retailPrice },
+      const priceTiers: Array<{ tier: CustomerType; price: number; inventoryId?: string }> = [
+        { tier: CustomerType.WHOLESALE, price: itemData.wholesalePrice, inventoryId: mainWarehouse.id },
+        { tier: CustomerType.RETAIL, price: retailPrice, inventoryId: mainWarehouse.id },
       ];
       // Add AGENT tier if it exists in the enum
       if ('AGENT' in CustomerType) {
-        priceTiers.push({ tier: 'AGENT' as CustomerType, price: agentPrice });
+        priceTiers.push({ tier: 'AGENT' as CustomerType, price: agentPrice, inventoryId: mainWarehouse.id });
       }
       
       item = await prisma.item.create({
@@ -657,8 +657,29 @@ async function main() {
         },
         include: { prices: true },
       });
+    } else {
+      // Item exists - check if we need to create inventory-specific prices for main warehouse
+      if (itemData.wholesalePrice > 0) {
+        // Check if inventory-specific WHOLESALE price exists for main warehouse
+        const existingInventoryPrice = item.prices.find(
+          p => p.tier === 'WHOLESALE' && p.inventoryId === mainWarehouse.id
+        );
+        
+        if (!existingInventoryPrice) {
+          // Create inventory-specific prices for main warehouse
+          const retailPrice = Math.round(itemData.wholesalePrice * 1.15);
+          const agentPrice = Math.round(itemData.wholesalePrice * 1.10);
+          
+          await prisma.itemPrice.createMany({
+            data: [
+              { itemId: item.id, tier: CustomerType.WHOLESALE, price: itemData.wholesalePrice, inventoryId: mainWarehouse.id },
+              { itemId: item.id, tier: CustomerType.RETAIL, price: retailPrice, inventoryId: mainWarehouse.id },
+              ...('AGENT' in CustomerType ? [{ itemId: item.id, tier: 'AGENT' as CustomerType, price: agentPrice, inventoryId: mainWarehouse.id }] : []),
+            ],
+          });
+        }
+      }
     }
-    // Note: We do NOT update prices for existing items - prices should only be set when items are first created
 
     const existingStock = await prisma.inventoryStock.findUnique({
       where: {
@@ -708,13 +729,13 @@ async function main() {
     if (!item) {
       const retailPrice = Math.round(itemData.wholesalePrice * 1.15);
       const agentPrice = Math.round(itemData.wholesalePrice * 1.10);
-      const priceTiers: Array<{ tier: CustomerType; price: number }> = [
-        { tier: CustomerType.WHOLESALE, price: itemData.wholesalePrice },
-        { tier: CustomerType.RETAIL, price: retailPrice },
+      const priceTiers: Array<{ tier: CustomerType; price: number; inventoryId?: string }> = [
+        { tier: CustomerType.WHOLESALE, price: itemData.wholesalePrice, inventoryId: subWarehouse.id },
+        { tier: CustomerType.RETAIL, price: retailPrice, inventoryId: subWarehouse.id },
       ];
       // Add AGENT tier if it exists in the enum
       if ('AGENT' in CustomerType) {
-        priceTiers.push({ tier: 'AGENT' as CustomerType, price: agentPrice });
+        priceTiers.push({ tier: 'AGENT' as CustomerType, price: agentPrice, inventoryId: subWarehouse.id });
       }
       
       item = await prisma.item.create({
@@ -727,6 +748,28 @@ async function main() {
         },
         include: { prices: true },
       });
+    } else {
+      // Item exists - check if we need to create inventory-specific prices for sub-warehouse
+      if (itemData.wholesalePrice > 0) {
+        // Check if inventory-specific WHOLESALE price exists for this warehouse
+        const existingInventoryPrice = item.prices.find(
+          p => p.tier === 'WHOLESALE' && p.inventoryId === subWarehouse.id
+        );
+        
+        if (!existingInventoryPrice) {
+          // Create inventory-specific prices for sub-warehouse
+          const retailPrice = Math.round(itemData.wholesalePrice * 1.15);
+          const agentPrice = Math.round(itemData.wholesalePrice * 1.10);
+          
+          await prisma.itemPrice.createMany({
+            data: [
+              { itemId: item.id, tier: CustomerType.WHOLESALE, price: itemData.wholesalePrice, inventoryId: subWarehouse.id },
+              { itemId: item.id, tier: CustomerType.RETAIL, price: retailPrice, inventoryId: subWarehouse.id },
+              ...('AGENT' in CustomerType ? [{ itemId: item.id, tier: 'AGENT' as CustomerType, price: agentPrice, inventoryId: subWarehouse.id }] : []),
+            ],
+          });
+        }
+      }
     }
 
     const existingStock = await prisma.inventoryStock.findUnique({
@@ -778,13 +821,13 @@ async function main() {
       if (!item) {
         const retailPrice = Math.round(itemData.wholesalePrice * 1.15);
         const agentPrice = Math.round(itemData.wholesalePrice * 1.10);
-        const priceTiers: Array<{ tier: CustomerType; price: number }> = [
-          { tier: CustomerType.WHOLESALE, price: itemData.wholesalePrice },
-          { tier: CustomerType.RETAIL, price: retailPrice },
+        const priceTiers: Array<{ tier: CustomerType; price: number; inventoryId?: string }> = [
+          { tier: CustomerType.WHOLESALE, price: itemData.wholesalePrice, inventoryId: warehouse.id },
+          { tier: CustomerType.RETAIL, price: retailPrice, inventoryId: warehouse.id },
         ];
         // Add AGENT tier if it exists in the enum
         if ('AGENT' in CustomerType) {
-          priceTiers.push({ tier: 'AGENT' as CustomerType, price: agentPrice });
+          priceTiers.push({ tier: 'AGENT' as CustomerType, price: agentPrice, inventoryId: warehouse.id });
         }
         
         item = await prisma.item.create({
@@ -797,8 +840,29 @@ async function main() {
           },
           include: { prices: true },
         });
+      } else {
+        // Item exists - check if we need to create inventory-specific prices for this warehouse
+        if (itemData.wholesalePrice > 0) {
+          // Check if inventory-specific WHOLESALE price exists for this warehouse
+          const existingInventoryPrice = item.prices.find(
+            p => p.tier === 'WHOLESALE' && p.inventoryId === warehouse.id
+          );
+          
+          if (!existingInventoryPrice) {
+            // Create inventory-specific prices for this warehouse
+            const retailPrice = Math.round(itemData.wholesalePrice * 1.15);
+            const agentPrice = Math.round(itemData.wholesalePrice * 1.10);
+            
+            await prisma.itemPrice.createMany({
+              data: [
+                { itemId: item.id, tier: CustomerType.WHOLESALE, price: itemData.wholesalePrice, inventoryId: warehouse.id },
+                { itemId: item.id, tier: CustomerType.RETAIL, price: retailPrice, inventoryId: warehouse.id },
+                ...('AGENT' in CustomerType ? [{ itemId: item.id, tier: 'AGENT' as CustomerType, price: agentPrice, inventoryId: warehouse.id }] : []),
+              ],
+            });
+          }
+        }
       }
-      // Note: We do NOT update prices for existing items - prices should only be set when items are first created
 
       const existingStock = await prisma.inventoryStock.findUnique({
         where: {
