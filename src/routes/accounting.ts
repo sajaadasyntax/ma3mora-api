@@ -355,7 +355,8 @@ router.post('/expenses/:id/pay-debt', requireRole('ACCOUNTANT', 'MANAGER'), chec
       return res.status(404).json({ error: 'المنصرف غير موجود' });
     }
 
-    if (!expense.isDebt) {
+    // Check if this is a debt (handle case where isDebt column might not exist)
+    if (!(expense as any).isDebt) {
       return res.status(400).json({ error: 'هذا المنصرف ليس دينًا' });
     }
 
@@ -367,13 +368,29 @@ router.post('/expenses/:id/pay-debt', requireRole('ACCOUNTANT', 'MANAGER'), chec
     }
 
     // Update the expense to mark it as paid (no longer a debt)
-    const updatedExpense = await prisma.expense.update({
-      where: { id },
-      data: {
-        isDebt: false,
-        method: data.method, // Update payment method to the one used
-      },
-    });
+    // Handle case where isDebt column might not exist in database
+    let updatedExpense;
+    try {
+      updatedExpense = await prisma.expense.update({
+        where: { id },
+        data: {
+          isDebt: false,
+          method: data.method, // Update payment method to the one used
+        },
+      });
+    } catch (error: any) {
+      // If isDebt column doesn't exist, update without it
+      if (error.code === 'P2022' || error.message?.includes('isDebt')) {
+        updatedExpense = await prisma.expense.update({
+          where: { id },
+          data: {
+            method: data.method, // Update payment method to the one used
+          },
+        });
+      } else {
+        throw error;
+      }
+    }
 
     res.json({ message: 'تم سداد الدين بنجاح', expense: updatedExpense });
   } catch (error) {
@@ -481,18 +498,35 @@ router.post('/income/:id/pay-debt', requireRole('ACCOUNTANT', 'MANAGER'), checkB
       return res.status(404).json({ error: 'الإيراد غير موجود' });
     }
 
-    if (!income.isDebt) {
+    // Check if this is a debt (handle case where isDebt column might not exist)
+    if (!(income as any).isDebt) {
       return res.status(400).json({ error: 'هذا الإيراد ليس دينًا' });
     }
 
     // Update the income to mark it as paid (no longer a debt)
-    const updatedIncome = await prisma.income.update({
-      where: { id },
-      data: {
-        isDebt: false,
-        method: data.method, // Update payment method to the one used
-      },
-    });
+    // Handle case where isDebt column might not exist in database
+    let updatedIncome;
+    try {
+      updatedIncome = await prisma.income.update({
+        where: { id },
+        data: {
+          isDebt: false,
+          method: data.method, // Update payment method to the one used
+        },
+      });
+    } catch (error: any) {
+      // If isDebt column doesn't exist, update without it
+      if (error.code === 'P2022' || error.message?.includes('isDebt')) {
+        updatedIncome = await prisma.income.update({
+          where: { id },
+          data: {
+            method: data.method, // Update payment method to the one used
+          },
+        });
+      } else {
+        throw error;
+      }
+    }
 
     res.json({ message: 'تم تسديد الدين بنجاح', income: updatedIncome });
   } catch (error) {
@@ -616,8 +650,9 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
     });
 
     // Separate debt expenses from regular expenses
-    const regularExpenses = expenses.filter(exp => !exp.isDebt);
-    const debtExpenses = expenses.filter(exp => exp.isDebt);
+    // Handle case where isDebt column might not exist in database
+    const regularExpenses = expenses.filter(exp => !(exp as any).isDebt);
+    const debtExpenses = expenses.filter(exp => (exp as any).isDebt === true);
 
     // Income summary - separate debts from regular income
     const incomeWhere: any = {};
@@ -629,8 +664,9 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
     });
 
     // Separate debt income from regular income
-    const regularIncome = income.filter(inc => !inc.isDebt);
-    const debtIncome = income.filter(inc => inc.isDebt);
+    // Handle case where isDebt column might not exist in database
+    const regularIncome = income.filter(inc => !(inc as any).isDebt);
+    const debtIncome = income.filter(inc => (inc as any).isDebt === true);
 
     const totalIncome = regularIncome.reduce(
       (sum, inc) => sum.add(inc.amount),
@@ -845,15 +881,15 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), asyn
     });
 
     const cashExpenses = expenses
-      .filter(e => e.method === 'CASH' && !e.isDebt)
+      .filter(e => e.method === 'CASH' && !(e as any).isDebt)
       .reduce((sum, e) => sum.add(e.amount), new Prisma.Decimal(0));
 
     const bankExpenses = expenses
-      .filter(e => e.method === 'BANK' && !e.isDebt)
+      .filter(e => e.method === 'BANK' && !(e as any).isDebt)
       .reduce((sum, e) => sum.add(e.amount), new Prisma.Decimal(0));
 
     const bankNileExpenses = expenses
-      .filter(e => e.method === 'BANK_NILE' && !e.isDebt)
+      .filter(e => e.method === 'BANK_NILE' && !(e as any).isDebt)
       .reduce((sum, e) => sum.add(e.amount), new Prisma.Decimal(0));
 
     // Get paid salaries (only where paidAt is not null)
@@ -912,20 +948,20 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), asyn
     });
 
     const cashIncome = income
-      .filter(i => i.method === 'CASH' && !i.isDebt)
+      .filter(i => i.method === 'CASH' && !(i as any).isDebt)
       .reduce((sum, i) => sum.add(i.amount), new Prisma.Decimal(0));
 
     const bankIncome = income
-      .filter(i => i.method === 'BANK' && !i.isDebt)
+      .filter(i => i.method === 'BANK' && !(i as any).isDebt)
       .reduce((sum, i) => sum.add(i.amount), new Prisma.Decimal(0));
 
     const bankNileIncome = income
-      .filter(i => i.method === 'BANK_NILE' && !i.isDebt)
+      .filter(i => i.method === 'BANK_NILE' && !(i as any).isDebt)
       .reduce((sum, i) => sum.add(i.amount), new Prisma.Decimal(0));
 
     // Calculate debt totals (debts are NOT included in liquid calculations)
-    const debtExpenses = expenses.filter(e => e.isDebt);
-    const debtIncome = income.filter(i => i.isDebt);
+    const debtExpenses = expenses.filter(e => (e as any).isDebt === true);
+    const debtIncome = income.filter(i => (i as any).isDebt === true);
 
     const totalInboundDebt = debtIncome.reduce(
       (sum, i) => sum.add(i.amount),
@@ -1401,9 +1437,9 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
     // Expenses (excluding debts)
     const expenses = await prisma.expense.findMany();
     const expOut = {
-      CASH: expenses.filter(e => e.method === 'CASH' && !e.isDebt).reduce((s, e) => s.add(e.amount), new Prisma.Decimal(0)),
-      BANK: expenses.filter(e => e.method === 'BANK' && !e.isDebt).reduce((s, e) => s.add(e.amount), new Prisma.Decimal(0)),
-      BANK_NILE: expenses.filter(e => e.method === 'BANK_NILE' && !e.isDebt).reduce((s, e) => s.add(e.amount), new Prisma.Decimal(0)),
+      CASH: expenses.filter(e => e.method === 'CASH' && !(e as any).isDebt).reduce((s, e) => s.add(e.amount), new Prisma.Decimal(0)),
+      BANK: expenses.filter(e => e.method === 'BANK' && !(e as any).isDebt).reduce((s, e) => s.add(e.amount), new Prisma.Decimal(0)),
+      BANK_NILE: expenses.filter(e => e.method === 'BANK_NILE' && !(e as any).isDebt).reduce((s, e) => s.add(e.amount), new Prisma.Decimal(0)),
     };
 
     // Salaries (paid)
@@ -1440,9 +1476,9 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
     // Income (excluding debts)
     const income = await prisma.income.findMany();
     const incomeIn = {
-      CASH: income.filter(i => i.method === 'CASH' && !i.isDebt).reduce((s, i) => s.add(i.amount), new Prisma.Decimal(0)),
-      BANK: income.filter(i => i.method === 'BANK' && !i.isDebt).reduce((s, i) => s.add(i.amount), new Prisma.Decimal(0)),
-      BANK_NILE: income.filter(i => i.method === 'BANK_NILE' && !i.isDebt).reduce((s, i) => s.add(i.amount), new Prisma.Decimal(0)),
+      CASH: income.filter(i => i.method === 'CASH' && !(i as any).isDebt).reduce((s, i) => s.add(i.amount), new Prisma.Decimal(0)),
+      BANK: income.filter(i => i.method === 'BANK' && !(i as any).isDebt).reduce((s, i) => s.add(i.amount), new Prisma.Decimal(0)),
+      BANK_NILE: income.filter(i => i.method === 'BANK_NILE' && !(i as any).isDebt).reduce((s, i) => s.add(i.amount), new Prisma.Decimal(0)),
     };
 
     // Cash exchanges
@@ -1464,10 +1500,11 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
     const liquidCashTotal = liquidCash.CASH.add(liquidCash.BANK).add(liquidCash.BANK_NILE);
 
     // 3. Inbound debts (Income with isDebt = true)
-    const inboundDebts = await prisma.income.findMany({
-      where: { isDebt: true },
+    // Note: Handle case where isDebt column might not exist in database
+    const allIncome = await prisma.income.findMany({
       orderBy: { createdAt: 'desc' },
     });
+    const inboundDebts = allIncome.filter(i => (i as any).isDebt === true);
 
     const totalInboundDebt = inboundDebts.reduce(
       (sum, i) => sum.add(i.amount),
@@ -1515,10 +1552,11 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
     // ========== عليه (Liabilities) ==========
     
     // 1. Outbound debts (Expense with isDebt = true)
-    const outboundDebts = await prisma.expense.findMany({
-      where: { isDebt: true },
+    // Note: Handle case where isDebt column might not exist in database
+    const allExpenses = await prisma.expense.findMany({
       orderBy: { createdAt: 'desc' },
     });
+    const outboundDebts = allExpenses.filter(e => (e as any).isDebt === true);
 
     const totalOutboundDebt = outboundDebts.reduce(
       (sum, e) => sum.add(e.amount),
