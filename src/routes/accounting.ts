@@ -1318,6 +1318,222 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), asyn
   }
 });
 
+// Assets (له) and Liabilities (عليه) report
+router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (req: AuthRequest, res) => {
+  try {
+    // ========== له (Assets) ==========
+    
+    // 1. Stock values by warehouse using wholesale price
+    const inventories = await prisma.inventory.findMany({
+      include: {
+        stocks: {
+          include: {
+            item: {
+              include: {
+                prices: {
+                  where: {
+                    tier: 'WHOLESALE',
+                    OR: [
+                      { inventoryId: null }, // Global prices
+                      { inventoryId: { not: null } }, // Inventory-specific prices
+                    ],
+                  },
+                  orderBy: [
+                    { inventoryId: 'desc' }, // Prefer inventory-specific
+                    { validFrom: 'desc' },
+                  ],
+                  take: 1, // Get the most recent price
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const stockValues: any[] = [];
+    let totalStockValue = new Prisma.Decimal(0);
+
+    for (const inventory of inventories) {
+      for (const stock of inventory.stocks) {
+        if (stock.quantity.greaterThan(0)) {
+          // Get wholesale price (prefer inventory-specific, fallback to global)
+          const wholesalePrice = stock.item.prices[0]?.price || new Prisma.Decimal(0);
+          const stockValue = stock.quantity.mul(wholesalePrice);
+          totalStockValue = totalStockValue.add(stockValue);
+
+          stockValues.push({
+            inventoryId: inventory.id,
+            inventoryName: inventory.name,
+            itemId: stock.item.id,
+            itemName: stock.item.name,
+            quantity: stock.quantity.toFixed(2),
+            wholesalePrice: wholesalePrice.toFixed(2),
+            value: stockValue.toFixed(2),
+          });
+        }
+      }
+    }
+
+    // 2. Liquid values of the 3 payment methods (from liquid-cash logic)
+    const available = await getAvailableByMethod();
+    const liquidCash = {
+      CASH: available.CASH.toFixed(2),
+      BANK: available.BANK.toFixed(2),
+      BANK_NILE: available.BANK_NILE.toFixed(2),
+      total: available.CASH.add(available.BANK).add(available.BANK_NILE).toFixed(2),
+    };
+
+    // 3. Inbound debts (Income with isDebt = true)
+    const inboundDebts = await prisma.income.findMany({
+      where: { isDebt: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const totalInboundDebt = inboundDebts.reduce(
+      (sum, i) => sum.add(i.amount),
+      new Prisma.Decimal(0)
+    );
+
+    // 4. Delivered unpaid sales orders
+    const deliveredUnpaidInvoices = await prisma.salesInvoice.findMany({
+      where: {
+        deliveryStatus: 'DELIVERED',
+        paymentStatus: { not: 'PAID' },
+      },
+      include: {
+        customer: true,
+        inventory: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const totalDeliveredUnpaid = deliveredUnpaidInvoices.reduce(
+      (sum, inv) => {
+        const outstanding = new Prisma.Decimal(inv.total).sub(inv.paidAmount);
+        return sum.add(outstanding);
+      },
+      new Prisma.Decimal(0)
+    );
+
+    // Calculate total له (Assets)
+    const totalAssets = totalStockValue
+      .add(available.CASH)
+      .add(available.BANK)
+      .add(available.BANK_NILE)
+      .add(totalInboundDebt)
+      .add(totalDeliveredUnpaid);
+
+    // ========== عليه (Liabilities) ==========
+    
+    // 1. Outbound debts (Expense with isDebt = true)
+    const outboundDebts = await prisma.expense.findMany({
+      where: { isDebt: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const totalOutboundDebt = outboundDebts.reduce(
+      (sum, e) => sum.add(e.amount),
+      new Prisma.Decimal(0)
+    );
+
+    // 2. Unpaid procurement orders
+    const unpaidProcOrders = await prisma.procOrder.findMany({
+      where: {
+        status: { not: 'CANCELLED' },
+      },
+      include: {
+        supplier: true,
+        inventory: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const unpaidProcOrdersWithOutstanding = unpaidProcOrders
+      .map(order => {
+        const outstanding = new Prisma.Decimal(order.total).sub(order.paidAmount);
+        return {
+          id: order.id,
+          orderNumber: order.orderNumber,
+          supplierName: order.supplier.name,
+          inventoryName: order.inventory.name,
+          total: order.total.toFixed(2),
+          paidAmount: order.paidAmount.toFixed(2),
+          outstanding: outstanding.toFixed(2),
+          createdAt: order.createdAt,
+        };
+      })
+      .filter(order => new Prisma.Decimal(order.outstanding).greaterThan(0));
+
+    const totalUnpaidProcOrders = unpaidProcOrdersWithOutstanding.reduce(
+      (sum, order) => sum.add(new Prisma.Decimal(order.outstanding)),
+      new Prisma.Decimal(0)
+    );
+
+    // Calculate total عليه (Liabilities)
+    const totalLiabilities = totalOutboundDebt.add(totalUnpaidProcOrders);
+
+    res.json({
+      assets: {
+        stockValues: {
+          items: stockValues,
+          total: totalStockValue.toFixed(2),
+        },
+        liquidCash,
+        inboundDebts: {
+          items: inboundDebts.map(d => ({
+            id: d.id,
+            description: d.description,
+            amount: d.amount.toFixed(2),
+            method: d.method,
+            createdAt: d.createdAt,
+          })),
+          total: totalInboundDebt.toFixed(2),
+          count: inboundDebts.length,
+        },
+        deliveredUnpaidSales: {
+          items: deliveredUnpaidInvoices.map(inv => ({
+            id: inv.id,
+            invoiceNumber: inv.invoiceNumber,
+            customerName: inv.customer?.name || 'بدون عميل',
+            inventoryName: inv.inventory.name,
+            total: inv.total.toFixed(2),
+            paidAmount: inv.paidAmount.toFixed(2),
+            outstanding: new Prisma.Decimal(inv.total).sub(inv.paidAmount).toFixed(2),
+            createdAt: inv.createdAt,
+          })),
+          total: totalDeliveredUnpaid.toFixed(2),
+          count: deliveredUnpaidInvoices.length,
+        },
+        total: totalAssets.toFixed(2),
+      },
+      liabilities: {
+        outboundDebts: {
+          items: outboundDebts.map(d => ({
+            id: d.id,
+            description: d.description,
+            amount: d.amount.toFixed(2),
+            method: d.method,
+            createdAt: d.createdAt,
+          })),
+          total: totalOutboundDebt.toFixed(2),
+          count: outboundDebts.length,
+        },
+        unpaidProcOrders: {
+          items: unpaidProcOrdersWithOutstanding,
+          total: totalUnpaidProcOrders.toFixed(2),
+          count: unpaidProcOrdersWithOutstanding.length,
+        },
+        total: totalLiabilities.toFixed(2),
+      },
+      net: totalAssets.sub(totalLiabilities).toFixed(2),
+    });
+  } catch (error) {
+    console.error('Get assets-liabilities error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
 // Receivables (له) and Payables (عليه) report
 router.get('/receivables-payables', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (req: AuthRequest, res) => {
   try {
