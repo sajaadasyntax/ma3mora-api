@@ -244,7 +244,6 @@ const groceryCustomers = [
   { name: 'منصور علي', amount: 121000 },
   { name: 'مركز الهدي', amount: 82700 },
   { name: 'جنابو بكري', amount: 30000 },
-  { name: 'يوسف احمد يوسف - بنك النيل', amount: 816000 },
 ];
 
 // Bakery Customers
@@ -306,13 +305,14 @@ const bakeryCustomers = [
   { name: 'محمد دفع الله اب سم', amount: 150000 },
   { name: 'عمر مضوي', amount: 30000 },
   { name: 'حساب المخبز محمد + عمر', amount: 18682000 },
-  { name: 'مركز معتوق - ممدوح', amount: 167349800 },
+  { name: 'مركز معتوق - ممدوح', amount: 167315600 },
   { name: 'مركز القرشي - عدي', amount: 105662000 },
-  { name: 'مركز الهدى', amount: 2144450 },
+  { name: 'مركز الهدى', amount: 2042300 },
+  { name: 'مركز عبود', amount: 1847600 },
   { name: 'مجدي الطيب', amount: 25078600 },
   { name: 'محمد عادل - نادي المريخ', amount: 3000000 },
   { name: 'خالد يوسف', amount: 1000000 },
-  { name: 'مركز القرشي - محمد علي', amount: 71045660 },
+  { name: 'مركز القرشي - محمد علي', amount: 70828160 },
 ];
 
 // Agent Retail Customers
@@ -375,7 +375,7 @@ const agentRetailCustomers = [
   { name: 'عبدالله عمر', amount: 40000 },
   { name: 'ازرق عبدالله', amount: 2835500 },
   { name: 'نادر البشير', amount: 700000 },
-  { name: 'احمد آدم', amount: 1650000 },
+  { name: 'احمد ادم - يس', amount: 1650000 },
   { name: 'يس ود البحر', amount: 2175000 },
   { name: 'موسي سعيد', amount: 20000 },
   { name: 'ود البحر محمد احمد', amount: 9200 },
@@ -1572,6 +1572,14 @@ async function main() {
     },
   });
 
+  const existingBankNileBalance = await prisma.openingBalance.findFirst({
+    where: {
+      scope: BalanceScope.CASHBOX,
+      paymentMethod: PaymentMethod.BANK_NILE,
+      isClosed: false,
+    },
+  });
+
   if (!existingCashBalance) {
     await prisma.openingBalance.create({
       data: {
@@ -1614,6 +1622,28 @@ async function main() {
       },
     });
     console.log('  ✅ Updated BANK opening balance: 1,942,736 SDG');
+  }
+
+  if (!existingBankNileBalance) {
+    await prisma.openingBalance.create({
+      data: {
+        scope: BalanceScope.CASHBOX,
+        amount: new Prisma.Decimal(317446),
+        paymentMethod: PaymentMethod.BANK_NILE,
+        isClosed: false,
+        notes: 'رصيد افتتاحي بنك النيل',
+      },
+    });
+    console.log('  ✨ Created BANK_NILE opening balance: 317,446 SDG');
+  } else {
+    // Update existing balance
+    await prisma.openingBalance.update({
+      where: { id: existingBankNileBalance.id },
+      data: {
+        amount: new Prisma.Decimal(317446),
+      },
+    });
+    console.log('  ✅ Updated BANK_NILE opening balance: 317,446 SDG');
   }
   console.log('  ✅ Opening balances ready\n');
 
