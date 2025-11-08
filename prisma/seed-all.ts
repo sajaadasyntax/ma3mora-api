@@ -1444,6 +1444,7 @@ async function main() {
             where: {
               description: description,
               amount: new Prisma.Decimal(recordAmount),
+              isDebt: true,
             },
           });
 
@@ -1454,32 +1455,15 @@ async function main() {
             continue;
           }
 
-          // Try to create with isDebt field, but handle case where column doesn't exist
-          try {
-            await prisma.income.create({
-              data: {
-                amount: new Prisma.Decimal(recordAmount),
-                method: PaymentMethod.CASH,
-                description: description,
-                isDebt: true,
-                createdBy: users[Role.ACCOUNTANT].id,
-              },
-            });
-          } catch (error: any) {
-            // If isDebt column doesn't exist, create without it
-            if (error.code === 'P2022' || error.message?.includes('isDebt')) {
-              await prisma.income.create({
-                data: {
-                  amount: new Prisma.Decimal(recordAmount),
-                  method: PaymentMethod.CASH,
-                  description: description,
-                  createdBy: users[Role.ACCOUNTANT].id,
-                },
-              });
-            } else {
-              throw error;
-            }
-          }
+          await prisma.income.create({
+            data: {
+              amount: new Prisma.Decimal(recordAmount),
+              method: PaymentMethod.CASH,
+              description: description,
+              isDebt: true,
+              createdBy: users[Role.ACCOUNTANT].id,
+            },
+          });
           debtsCreated++;
           console.log(`  ✨ Created debt part ${recordIndex}: ${description} - ${recordAmount.toLocaleString()} SDG`);
           remainingAmount -= recordAmount;
@@ -1487,11 +1471,12 @@ async function main() {
         }
       } else {
         // Single income record for amounts within limit
-        // Check if debt already exists (by description and amount)
+        // Check if debt already exists (by description, amount, and isDebt)
         const existingDebt = await prisma.income.findFirst({
           where: {
             description: debtInfo.description,
             amount: new Prisma.Decimal(totalAmount),
+            isDebt: true,
           },
         });
 
@@ -1501,32 +1486,15 @@ async function main() {
           continue;
         }
 
-        // Try to create with isDebt field, but handle case where column doesn't exist
-        try {
-          await prisma.income.create({
-            data: {
-              amount: new Prisma.Decimal(totalAmount),
-              method: PaymentMethod.CASH,
-              description: debtInfo.description,
-              isDebt: true,
-              createdBy: users[Role.ACCOUNTANT].id,
-            },
-          });
-        } catch (error: any) {
-          // If isDebt column doesn't exist, create without it
-          if (error.code === 'P2022' || error.message?.includes('isDebt')) {
-            await prisma.income.create({
-              data: {
-                amount: new Prisma.Decimal(totalAmount),
-                method: PaymentMethod.CASH,
-                description: debtInfo.description,
-                createdBy: users[Role.ACCOUNTANT].id,
-              },
-            });
-          } else {
-            throw error;
-          }
-        }
+        await prisma.income.create({
+          data: {
+            amount: new Prisma.Decimal(totalAmount),
+            method: PaymentMethod.CASH,
+            description: debtInfo.description,
+            isDebt: true,
+            createdBy: users[Role.ACCOUNTANT].id,
+          },
+        });
         debtsCreated++;
         console.log(`  ✨ Created debt: ${debtInfo.description}`);
       }
