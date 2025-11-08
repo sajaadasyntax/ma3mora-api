@@ -459,7 +459,17 @@ function parsePastedData(data: string) {
     .filter(line => line.length > 0);
 
   return lines.map((line, index) => {
-    const parts = line.split(/\t|\s{2,}/).filter(p => p.trim());
+    // Check if line contains tabs (tab-separated format)
+    const hasTabs = line.includes('\t');
+    
+    let parts: string[];
+    if (hasTabs) {
+      // Tab-separated: split by tabs only
+      parts = line.split('\t').map(p => p.trim()).filter(p => p.length > 0);
+    } else {
+      // Space-separated: split by 2+ spaces (to avoid splitting names with single spaces)
+      parts = line.split(/\s{2,}/).map(p => p.trim()).filter(p => p.length > 0);
+    }
     
     if (parts.length < 3) {
       return null;
