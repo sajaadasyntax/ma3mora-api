@@ -1375,14 +1375,91 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
       }
     }
 
-    // 2. Liquid values of the 3 payment methods (from liquid-cash logic)
-    const available = await getAvailableByMethod();
-    const liquidCash = {
-      CASH: available.CASH.toFixed(2),
-      BANK: available.BANK.toFixed(2),
-      BANK_NILE: available.BANK_NILE.toFixed(2),
-      total: available.CASH.add(available.BANK).add(available.BANK_NILE).toFixed(2),
+    // 2. Liquid values of the 3 payment methods (actual available cash, excluding debts)
+    // Get opening balances
+    const openingBalances = await prisma.openingBalance.findMany({
+      where: { scope: 'CASHBOX', isClosed: false },
+    });
+    const opening = {
+      CASH: openingBalances.filter((b: any) => b.paymentMethod === 'CASH').reduce((s, b) => s.add(b.amount), new Prisma.Decimal(0)),
+      BANK: openingBalances.filter((b: any) => b.paymentMethod === 'BANK').reduce((s, b) => s.add(b.amount), new Prisma.Decimal(0)),
+      BANK_NILE: openingBalances.filter((b: any) => b.paymentMethod === 'BANK_NILE').reduce((s, b) => s.add(b.amount), new Prisma.Decimal(0)),
     };
+
+    // Sales payments (only confirmed invoices)
+    const salesPays = await prisma.salesPayment.findMany({
+      where: { invoice: { paymentConfirmed: true } },
+    });
+    const salesIn = {
+      CASH: salesPays.filter(p => p.method === 'CASH').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
+      BANK: salesPays.filter(p => p.method === 'BANK').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
+      BANK_NILE: salesPays.filter(p => p.method === 'BANK_NILE').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
+    };
+
+    // Expenses (excluding debts)
+    const expenses = await prisma.expense.findMany();
+    const expOut = {
+      CASH: expenses.filter(e => e.method === 'CASH' && !e.isDebt).reduce((s, e) => s.add(e.amount), new Prisma.Decimal(0)),
+      BANK: expenses.filter(e => e.method === 'BANK' && !e.isDebt).reduce((s, e) => s.add(e.amount), new Prisma.Decimal(0)),
+      BANK_NILE: expenses.filter(e => e.method === 'BANK_NILE' && !e.isDebt).reduce((s, e) => s.add(e.amount), new Prisma.Decimal(0)),
+    };
+
+    // Salaries (paid)
+    const paidSalaries = await prisma.salary.findMany({ where: { paidAt: { not: null } } });
+    const salOut = {
+      CASH: paidSalaries.filter((s: any) => s.paymentMethod === 'CASH').reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0)),
+      BANK: paidSalaries.filter((s: any) => s.paymentMethod === 'BANK').reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0)),
+      BANK_NILE: paidSalaries.filter((s: any) => s.paymentMethod === 'BANK_NILE').reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0)),
+    };
+
+    // Advances (paid)
+    const paidAdvances = await prisma.advance.findMany({ where: { paidAt: { not: null } } });
+    const advOut = {
+      CASH: paidAdvances.filter((a: any) => a.paymentMethod === 'CASH').reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0)),
+      BANK: paidAdvances.filter((a: any) => a.paymentMethod === 'BANK').reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0)),
+      BANK_NILE: paidAdvances.filter((a: any) => a.paymentMethod === 'BANK_NILE').reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0)),
+    };
+
+    // Procurement payments (only confirmed orders, exclude cancelled)
+    const procPays = await prisma.procOrderPayment.findMany({ 
+      where: { 
+        order: { 
+          paymentConfirmed: true,
+          status: { not: 'CANCELLED' }
+        } 
+      } 
+    });
+    const procOut = {
+      CASH: procPays.filter(p => p.method === 'CASH').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
+      BANK: procPays.filter(p => p.method === 'BANK').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
+      BANK_NILE: procPays.filter(p => p.method === 'BANK_NILE').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
+    };
+
+    // Income (excluding debts)
+    const income = await prisma.income.findMany();
+    const incomeIn = {
+      CASH: income.filter(i => i.method === 'CASH' && !i.isDebt).reduce((s, i) => s.add(i.amount), new Prisma.Decimal(0)),
+      BANK: income.filter(i => i.method === 'BANK' && !i.isDebt).reduce((s, i) => s.add(i.amount), new Prisma.Decimal(0)),
+      BANK_NILE: income.filter(i => i.method === 'BANK_NILE' && !i.isDebt).reduce((s, i) => s.add(i.amount), new Prisma.Decimal(0)),
+    };
+
+    // Cash exchanges
+    const exchanges = await (prisma as any).cashExchange.findMany();
+    const exImpact = { CASH: new Prisma.Decimal(0), BANK: new Prisma.Decimal(0), BANK_NILE: new Prisma.Decimal(0) } as Record<'CASH'|'BANK'|'BANK_NILE', Prisma.Decimal>;
+    exchanges.forEach((e: any) => {
+      const fromM = e.fromMethod as 'CASH'|'BANK'|'BANK_NILE';
+      const toM = e.toMethod as 'CASH'|'BANK'|'BANK_NILE';
+      exImpact[fromM] = exImpact[fromM].sub(e.amount);
+      exImpact[toM] = exImpact[toM].add(e.amount);
+    });
+
+    const liquidCash = {
+      CASH: opening.CASH.add(salesIn.CASH).add(incomeIn.CASH).add(exImpact.CASH).sub(expOut.CASH).sub(salOut.CASH).sub(advOut.CASH).sub(procOut.CASH),
+      BANK: opening.BANK.add(salesIn.BANK).add(incomeIn.BANK).add(exImpact.BANK).sub(expOut.BANK).sub(salOut.BANK).sub(advOut.BANK).sub(procOut.BANK),
+      BANK_NILE: opening.BANK_NILE.add(salesIn.BANK_NILE).add(incomeIn.BANK_NILE).add(exImpact.BANK_NILE).sub(expOut.BANK_NILE).sub(salOut.BANK_NILE).sub(advOut.BANK_NILE).sub(procOut.BANK_NILE),
+    };
+
+    const liquidCashTotal = liquidCash.CASH.add(liquidCash.BANK).add(liquidCash.BANK_NILE);
 
     // 3. Inbound debts (Income with isDebt = true)
     const inboundDebts = await prisma.income.findMany({
@@ -1418,9 +1495,9 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
 
     // Calculate total له (Assets)
     const totalAssets = totalStockValue
-      .add(available.CASH)
-      .add(available.BANK)
-      .add(available.BANK_NILE)
+      .add(liquidCash.CASH)
+      .add(liquidCash.BANK)
+      .add(liquidCash.BANK_NILE)
       .add(totalInboundDebt)
       .add(totalDeliveredUnpaid);
 
@@ -1479,7 +1556,12 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
           items: stockValues,
           total: totalStockValue.toFixed(2),
         },
-        liquidCash,
+        liquidCash: {
+          CASH: liquidCash.CASH.toFixed(2),
+          BANK: liquidCash.BANK.toFixed(2),
+          BANK_NILE: liquidCash.BANK_NILE.toFixed(2),
+          total: liquidCashTotal.toFixed(2),
+        },
         inboundDebts: {
           items: inboundDebts.map(d => ({
             id: d.id,
