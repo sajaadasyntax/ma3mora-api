@@ -355,8 +355,7 @@ router.post('/expenses/:id/pay-debt', requireRole('ACCOUNTANT', 'MANAGER'), chec
       return res.status(404).json({ error: 'المنصرف غير موجود' });
     }
 
-    // Check if this is a debt (handle case where isDebt column might not exist)
-    if (!(expense as any).isDebt) {
+    if (!expense.isDebt) {
       return res.status(400).json({ error: 'هذا المنصرف ليس دينًا' });
     }
 
@@ -498,8 +497,7 @@ router.post('/income/:id/pay-debt', requireRole('ACCOUNTANT', 'MANAGER'), checkB
       return res.status(404).json({ error: 'الإيراد غير موجود' });
     }
 
-    // Check if this is a debt (handle case where isDebt column might not exist)
-    if (!(income as any).isDebt) {
+    if (!income.isDebt) {
       return res.status(400).json({ error: 'هذا الإيراد ليس دينًا' });
     }
 
@@ -1549,11 +1547,10 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
     // ========== عليه (Liabilities) ==========
     
     // 1. Outbound debts (Expense with isDebt = true)
-    // Note: Handle case where isDebt column might not exist in database
-    const allExpenses = await prisma.expense.findMany({
+    const outboundDebts = await prisma.expense.findMany({
+      where: { isDebt: true },
       orderBy: { createdAt: 'desc' },
     });
-    const outboundDebts = allExpenses.filter(e => (e as any).isDebt === true);
 
     const totalOutboundDebt = outboundDebts.reduce(
       (sum, e) => sum.add(e.amount),
