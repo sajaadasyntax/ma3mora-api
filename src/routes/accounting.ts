@@ -1346,6 +1346,7 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
     });
 
     // Calculate stock values per warehouse (totals only)
+    // Negative stock reduces the total assets (له)
     const stockValuesByWarehouse: Record<string, { inventoryId: string; inventoryName: string; totalValue: Prisma.Decimal }> = {};
     let totalStockValue = new Prisma.Decimal(0);
 
@@ -1353,37 +1354,45 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
       let warehouseTotal = new Prisma.Decimal(0);
       
       for (const stock of inventory.stocks) {
-        // Include all stock values, including negative stock (deficits)
-        if (!stock.quantity.equals(0)) {
-          // Get wholesale price (prefer inventory-specific, fallback to global)
-          // Prices are already ordered by validFrom desc, so first match is most recent
-          const inventorySpecificPrices = stock.item.prices.filter(
-            p => p.tier === 'WHOLESALE' && p.inventoryId === inventory.id
-          );
-          const globalPrices = stock.item.prices.filter(
-            p => p.tier === 'WHOLESALE' && p.inventoryId === null
-          );
-          
-          // Get most recent price (first in array since ordered by validFrom desc)
-          const inventorySpecificPrice = inventorySpecificPrices.length > 0 ? inventorySpecificPrices[0] : null;
-          const globalPrice = globalPrices.length > 0 ? globalPrices[0] : null;
-          
-          // Use inventory-specific price if available, otherwise use global price
-          const wholesalePrice = inventorySpecificPrice?.price || globalPrice?.price || new Prisma.Decimal(0);
-          const stockValue = stock.quantity.mul(wholesalePrice);
-          warehouseTotal = warehouseTotal.add(stockValue);
-        }
+        // Process ALL stock quantities, including negative values (deficits)
+        // Negative stock should subtract from the warehouse total
+        const quantity = stock.quantity;
+        
+        // Get wholesale price (prefer inventory-specific, fallback to global)
+        // Prices are already ordered by validFrom desc, so first match is most recent
+        const inventorySpecificPrices = stock.item.prices.filter(
+          p => p.tier === 'WHOLESALE' && p.inventoryId === inventory.id
+        );
+        const globalPrices = stock.item.prices.filter(
+          p => p.tier === 'WHOLESALE' && p.inventoryId === null
+        );
+        
+        // Get most recent price (first in array since ordered by validFrom desc)
+        const inventorySpecificPrice = inventorySpecificPrices.length > 0 ? inventorySpecificPrices[0] : null;
+        const globalPrice = globalPrices.length > 0 ? globalPrices[0] : null;
+        
+        // Use inventory-specific price if available, otherwise use global price
+        const wholesalePrice = inventorySpecificPrice?.price || globalPrice?.price || new Prisma.Decimal(0);
+        
+        // Calculate stock value: quantity * price
+        // If quantity is negative, stockValue will be negative, which subtracts from warehouseTotal
+        const stockValue = quantity.mul(wholesalePrice);
+        
+        // Add stockValue to warehouseTotal (if negative, this subtracts)
+        warehouseTotal = warehouseTotal.add(stockValue);
       }
       
-      // Include warehouse total even if negative (deficit) or zero
-      if (!warehouseTotal.equals(0)) {
-        stockValuesByWarehouse[inventory.id] = {
-          inventoryId: inventory.id,
-          inventoryName: inventory.name,
-          totalValue: warehouseTotal,
-        };
-        totalStockValue = totalStockValue.add(warehouseTotal);
-      }
+      // Store warehouse total (can be positive, negative, or zero)
+      // Negative totals represent deficits and should reduce total assets
+      stockValuesByWarehouse[inventory.id] = {
+        inventoryId: inventory.id,
+        inventoryName: inventory.name,
+        totalValue: warehouseTotal,
+      };
+      
+      // Add warehouse total to overall stock value
+      // If warehouseTotal is negative, this subtracts from totalStockValue
+      totalStockValue = totalStockValue.add(warehouseTotal);
     }
 
     // 2. Liquid values of the 3 payment methods (actual available cash, excluding debts)
