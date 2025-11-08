@@ -18,7 +18,7 @@
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:reset": "prisma migrate reset",
-    "db:reset:force": "prisma migrate reset --force && tsx prisma/seed.ts",
+    "db:reset:force": "prisma migrate reset --force && tsx prisma/seed-all.ts",
     "test": "jest",
     "test:watch": "jest --watch",
     "postinstall": "prisma generate"
