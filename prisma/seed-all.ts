@@ -194,6 +194,7 @@ const bakeryWarehouses = [
     name: 'معتوق',
     searchTerms: ['معتوق'],
     data: [
+      { name: 'البلدي', stock: 20, wholesalePrice: 57100 },
       { name: 'الالي', stock: 177, wholesalePrice: 58600 },
       { name: 'الوافر', stock: 0, wholesalePrice: 0 },
       { name: 'خميرة بيضاء', stock: 0, wholesalePrice: 126000 },
