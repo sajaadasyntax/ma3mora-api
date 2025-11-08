@@ -24,8 +24,8 @@ const usersData = [
   { username: 'procurement', role: Role.PROCUREMENT },
   { username: 'sales_grocery', role: Role.SALES_GROCERY },
   { username: 'sales_bakery', role: Role.SALES_BAKERY },
-  { username: 'agent_grocery', role: Role.AGENT_GROCERY },
-  { username: 'agent_bakery', role: Role.AGENT_BAKERY },
+  { username: 'agent_grocery', role: 'AGENT_GROCERY' as Role },
+  { username: 'agent_bakery', role: 'AGENT_BAKERY' as Role },
   { username: 'inventory', role: Role.INVENTORY },
   { username: 'accountant', role: Role.ACCOUNTANT },
   { username: 'auditor', role: Role.AUDITOR },
@@ -501,28 +501,40 @@ async function main() {
   // ============================================
   console.log('👤 Step 1: Creating users...\n');
   for (const userData of usersData) {
-    let user = await prisma.user.findFirst({
-      where: { username: userData.username },
-    });
+    try {
+      let user = await prisma.user.findFirst({
+        where: { username: userData.username },
+      });
 
-    if (!user) {
-      user = await prisma.user.create({
-        data: {
-          username: userData.username,
-          passwordHash,
-          role: userData.role,
-        },
-      });
-      console.log(`  ✨ Created user: ${userData.username} (${userData.role})`);
-    } else {
-      // Update password to password123
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { passwordHash },
-      });
-      console.log(`  ♻️  Updated user: ${userData.username} (password reset)`);
+      if (!user) {
+        user = await prisma.user.create({
+          data: {
+            username: userData.username,
+            passwordHash,
+            role: userData.role,
+          },
+        });
+        console.log(`  ✨ Created user: ${userData.username} (${userData.role})`);
+      } else {
+        // Update password to password123
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { passwordHash },
+        });
+        console.log(`  ♻️  Updated user: ${userData.username} (password reset)`);
+      }
+      users[userData.role] = user;
+    } catch (error: any) {
+      if (error.message && error.message.includes('invalid input value for enum "Role"')) {
+        console.log(`  ⚠️  Skipping user: ${userData.username} - Role ${userData.role} not available in database`);
+        console.log(`     💡 Run this SQL on your database to add the missing roles:`);
+        console.log(`        ALTER TYPE "Role" ADD VALUE IF NOT EXISTS 'AGENT_GROCERY';`);
+        console.log(`        ALTER TYPE "Role" ADD VALUE IF NOT EXISTS 'AGENT_BAKERY';`);
+        console.log(`     Or run: npx prisma migrate dev`);
+        continue;
+      }
+      throw error;
     }
-    users[userData.role] = user;
   }
   console.log('  ✅ Users created/updated\n');
 
@@ -1095,6 +1107,13 @@ async function main() {
     });
 
     if (!existingInvoice) {
+      // Use agent user if available, otherwise fallback to sales_grocery
+      const agentUser = users['AGENT_GROCERY'] || users[Role.SALES_GROCERY];
+      if (!agentUser) {
+        console.log(`    ⚠️  Skipping invoice for ${customerInfo.name} - No sales user available`);
+        continue;
+      }
+
       const amount = new Prisma.Decimal(customerInfo.amount);
       const timestamp = Date.now();
       const customerShortId = customer.id.slice(-6);
@@ -1105,7 +1124,7 @@ async function main() {
           invoiceNumber,
           inventoryId: mainWarehouse.id,
           section: Section.GROCERY,
-          salesUserId: users[Role.AGENT_GROCERY].id,
+          salesUserId: agentUser.id,
           customerId: customer.id,
           paymentMethod: PaymentMethod.CASH,
           paymentStatus: PaymentStatus.CREDIT,
