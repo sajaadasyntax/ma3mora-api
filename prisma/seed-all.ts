@@ -1,4 +1,4 @@
-import { PrismaClient, Section, CustomerType, PaymentStatus, DeliveryStatus, PaymentMethod, Prisma, Role, ProcOrderStatus } from '@prisma/client';
+import { PrismaClient, Section, CustomerType, PaymentStatus, DeliveryStatus, PaymentMethod, Prisma, Role, ProcOrderStatus, BalanceScope } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
@@ -1482,7 +1482,7 @@ async function main() {
   // Check if opening balances already exist
   const existingCashBalance = await prisma.openingBalance.findFirst({
     where: {
-      scope: 'CASHBOX',
+      scope: BalanceScope.CASHBOX,
       paymentMethod: PaymentMethod.CASH,
       isClosed: false,
     },
@@ -1490,7 +1490,7 @@ async function main() {
 
   const existingBankBalance = await prisma.openingBalance.findFirst({
     where: {
-      scope: 'CASHBOX',
+      scope: BalanceScope.CASHBOX,
       paymentMethod: PaymentMethod.BANK,
       isClosed: false,
     },
@@ -1499,7 +1499,7 @@ async function main() {
   if (!existingCashBalance) {
     await prisma.openingBalance.create({
       data: {
-        scope: 'CASHBOX',
+        scope: BalanceScope.CASHBOX,
         amount: new Prisma.Decimal(11853400),
         paymentMethod: PaymentMethod.CASH,
         isClosed: false,
@@ -1521,7 +1521,7 @@ async function main() {
   if (!existingBankBalance) {
     await prisma.openingBalance.create({
       data: {
-        scope: 'CASHBOX',
+        scope: BalanceScope.CASHBOX,
         amount: new Prisma.Decimal(1942736),
         paymentMethod: PaymentMethod.BANK,
         isClosed: false,
