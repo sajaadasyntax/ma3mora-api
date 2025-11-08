@@ -1351,27 +1351,29 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
       },
     });
 
-    const stockValues: any[] = [];
+    // Calculate stock values per warehouse (totals only)
+    const stockValuesByWarehouse: Record<string, { inventoryId: string; inventoryName: string; totalValue: Prisma.Decimal }> = {};
     let totalStockValue = new Prisma.Decimal(0);
 
     for (const inventory of inventories) {
+      let warehouseTotal = new Prisma.Decimal(0);
+      
       for (const stock of inventory.stocks) {
         if (stock.quantity.greaterThan(0)) {
           // Get wholesale price (prefer inventory-specific, fallback to global)
           const wholesalePrice = stock.item.prices[0]?.price || new Prisma.Decimal(0);
           const stockValue = stock.quantity.mul(wholesalePrice);
-          totalStockValue = totalStockValue.add(stockValue);
-
-          stockValues.push({
-            inventoryId: inventory.id,
-            inventoryName: inventory.name,
-            itemId: stock.item.id,
-            itemName: stock.item.name,
-            quantity: stock.quantity.toFixed(2),
-            wholesalePrice: wholesalePrice.toFixed(2),
-            value: stockValue.toFixed(2),
-          });
+          warehouseTotal = warehouseTotal.add(stockValue);
         }
+      }
+      
+      if (warehouseTotal.greaterThan(0)) {
+        stockValuesByWarehouse[inventory.id] = {
+          inventoryId: inventory.id,
+          inventoryName: inventory.name,
+          totalValue: warehouseTotal,
+        };
+        totalStockValue = totalStockValue.add(warehouseTotal);
       }
     }
 
@@ -1472,26 +1474,35 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
       new Prisma.Decimal(0)
     );
 
-    // 4. Delivered unpaid sales orders
+    // 4. Delivered unpaid sales orders - totals by warehouse
     const deliveredUnpaidInvoices = await prisma.salesInvoice.findMany({
       where: {
         deliveryStatus: 'DELIVERED',
         paymentStatus: { not: 'PAID' },
       },
       include: {
-        customer: true,
         inventory: true,
       },
-      orderBy: { createdAt: 'desc' },
     });
 
-    const totalDeliveredUnpaid = deliveredUnpaidInvoices.reduce(
-      (sum, inv) => {
-        const outstanding = new Prisma.Decimal(inv.total).sub(inv.paidAmount);
-        return sum.add(outstanding);
-      },
-      new Prisma.Decimal(0)
-    );
+    const unpaidSalesByWarehouse: Record<string, { inventoryId: string; inventoryName: string; totalOutstanding: Prisma.Decimal }> = {};
+    let totalDeliveredUnpaid = new Prisma.Decimal(0);
+
+    for (const inv of deliveredUnpaidInvoices) {
+      const outstanding = new Prisma.Decimal(inv.total).sub(inv.paidAmount);
+      if (outstanding.greaterThan(0)) {
+        if (!unpaidSalesByWarehouse[inv.inventoryId]) {
+          unpaidSalesByWarehouse[inv.inventoryId] = {
+            inventoryId: inv.inventoryId,
+            inventoryName: inv.inventory.name,
+            totalOutstanding: new Prisma.Decimal(0),
+          };
+        }
+        unpaidSalesByWarehouse[inv.inventoryId].totalOutstanding = 
+          unpaidSalesByWarehouse[inv.inventoryId].totalOutstanding.add(outstanding);
+        totalDeliveredUnpaid = totalDeliveredUnpaid.add(outstanding);
+      }
+    }
 
     // Calculate total له (Assets)
     const totalAssets = totalStockValue
@@ -1514,38 +1525,34 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
       new Prisma.Decimal(0)
     );
 
-    // 2. Unpaid procurement orders
+    // 2. Unpaid procurement orders - totals by supplier
     const unpaidProcOrders = await prisma.procOrder.findMany({
       where: {
         status: { not: 'CANCELLED' },
       },
       include: {
         supplier: true,
-        inventory: true,
       },
-      orderBy: { createdAt: 'desc' },
     });
 
-    const unpaidProcOrdersWithOutstanding = unpaidProcOrders
-      .map(order => {
-        const outstanding = new Prisma.Decimal(order.total).sub(order.paidAmount);
-        return {
-          id: order.id,
-          orderNumber: order.orderNumber,
-          supplierName: order.supplier.name,
-          inventoryName: order.inventory.name,
-          total: order.total.toFixed(2),
-          paidAmount: order.paidAmount.toFixed(2),
-          outstanding: outstanding.toFixed(2),
-          createdAt: order.createdAt,
-        };
-      })
-      .filter(order => new Prisma.Decimal(order.outstanding).greaterThan(0));
+    const unpaidProcOrdersBySupplier: Record<string, { supplierId: string; supplierName: string; totalOutstanding: Prisma.Decimal }> = {};
+    let totalUnpaidProcOrders = new Prisma.Decimal(0);
 
-    const totalUnpaidProcOrders = unpaidProcOrdersWithOutstanding.reduce(
-      (sum, order) => sum.add(new Prisma.Decimal(order.outstanding)),
-      new Prisma.Decimal(0)
-    );
+    for (const order of unpaidProcOrders) {
+      const outstanding = new Prisma.Decimal(order.total).sub(order.paidAmount);
+      if (outstanding.greaterThan(0)) {
+        if (!unpaidProcOrdersBySupplier[order.supplierId]) {
+          unpaidProcOrdersBySupplier[order.supplierId] = {
+            supplierId: order.supplierId,
+            supplierName: order.supplier.name,
+            totalOutstanding: new Prisma.Decimal(0),
+          };
+        }
+        unpaidProcOrdersBySupplier[order.supplierId].totalOutstanding = 
+          unpaidProcOrdersBySupplier[order.supplierId].totalOutstanding.add(outstanding);
+        totalUnpaidProcOrders = totalUnpaidProcOrders.add(outstanding);
+      }
+    }
 
     // Calculate total عليه (Liabilities)
     const totalLiabilities = totalOutboundDebt.add(totalUnpaidProcOrders);
@@ -1553,7 +1560,11 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
     res.json({
       assets: {
         stockValues: {
-          items: stockValues,
+          byWarehouse: Object.values(stockValuesByWarehouse).map(w => ({
+            inventoryId: w.inventoryId,
+            inventoryName: w.inventoryName,
+            totalValue: w.totalValue.toFixed(2),
+          })),
           total: totalStockValue.toFixed(2),
         },
         liquidCash: {
@@ -1563,48 +1574,31 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
           total: liquidCashTotal.toFixed(2),
         },
         inboundDebts: {
-          items: inboundDebts.map(d => ({
-            id: d.id,
-            description: d.description,
-            amount: d.amount.toFixed(2),
-            method: d.method,
-            createdAt: d.createdAt,
-          })),
           total: totalInboundDebt.toFixed(2),
           count: inboundDebts.length,
         },
         deliveredUnpaidSales: {
-          items: deliveredUnpaidInvoices.map(inv => ({
-            id: inv.id,
-            invoiceNumber: inv.invoiceNumber,
-            customerName: inv.customer?.name || 'بدون عميل',
-            inventoryName: inv.inventory.name,
-            total: inv.total.toFixed(2),
-            paidAmount: inv.paidAmount.toFixed(2),
-            outstanding: new Prisma.Decimal(inv.total).sub(inv.paidAmount).toFixed(2),
-            createdAt: inv.createdAt,
+          byWarehouse: Object.values(unpaidSalesByWarehouse).map(w => ({
+            inventoryId: w.inventoryId,
+            inventoryName: w.inventoryName,
+            totalOutstanding: w.totalOutstanding.toFixed(2),
           })),
           total: totalDeliveredUnpaid.toFixed(2),
-          count: deliveredUnpaidInvoices.length,
         },
         total: totalAssets.toFixed(2),
       },
       liabilities: {
         outboundDebts: {
-          items: outboundDebts.map(d => ({
-            id: d.id,
-            description: d.description,
-            amount: d.amount.toFixed(2),
-            method: d.method,
-            createdAt: d.createdAt,
-          })),
           total: totalOutboundDebt.toFixed(2),
           count: outboundDebts.length,
         },
         unpaidProcOrders: {
-          items: unpaidProcOrdersWithOutstanding,
+          bySupplier: Object.values(unpaidProcOrdersBySupplier).map(s => ({
+            supplierId: s.supplierId,
+            supplierName: s.supplierName,
+            totalOutstanding: s.totalOutstanding.toFixed(2),
+          })),
           total: totalUnpaidProcOrders.toFixed(2),
-          count: unpaidProcOrdersWithOutstanding.length,
         },
         total: totalLiabilities.toFixed(2),
       },
