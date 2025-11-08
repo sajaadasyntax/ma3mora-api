@@ -1327,33 +1327,89 @@ async function main() {
       const unitCost = orderInfo.quantity > 0 && orderInfo.quantity !== orderInfo.amount
         ? orderInfo.amount / orderInfo.quantity
         : 1;
+      
+      // Split large amounts (> 99,999,999.99) into multiple orders to avoid Decimal overflow
+      const MAX_SAFE_AMOUNT = 99999999.99;
+      const totalAmount = orderInfo.amount;
+      const totalQuantity = orderInfo.quantity;
       const randomSuffix = Math.random().toString(36).substring(2, 8);
-      const orderNumber = `PRE-SYS-BAKERY-PO-${orderInfo.date.replace(/-/g, '')}-${randomSuffix}`;
-
-      await prisma.procOrder.create({
-        data: {
-          orderNumber,
-          inventoryId: mainWarehouse.id,
-          section: Section.BAKERY,
-          createdBy: users[Role.PROCUREMENT].id,
-          supplierId: supplier.id,
-          status: ProcOrderStatus.RECEIVED,
-          total: new Prisma.Decimal(orderInfo.amount),
-          paidAmount: new Prisma.Decimal(0),
-          paymentConfirmed: false,
-          notes: `طلب شراء من ${orderInfo.supplier} بتاريخ ${orderInfo.date} - لا يؤثر على المخزون`,
-          createdAt: orderDate,
-          items: {
-            create: {
-              itemId: item.id,
-              quantity: new Prisma.Decimal(orderInfo.quantity),
-              unitCost: new Prisma.Decimal(unitCost),
-              lineTotal: new Prisma.Decimal(orderInfo.amount),
+      const baseOrderNumber = `PRE-SYS-BAKERY-PO-${orderInfo.date.replace(/-/g, '')}-${randomSuffix}`;
+      
+      if (totalAmount > MAX_SAFE_AMOUNT) {
+        // Split into multiple orders
+        let remainingAmount = totalAmount;
+        let remainingQuantity = totalQuantity;
+        let orderIndex = 1;
+        
+        while (remainingAmount > 0) {
+          const orderAmount = Math.min(remainingAmount, MAX_SAFE_AMOUNT);
+          // Calculate proportional quantity
+          const orderQuantity = totalQuantity > 0
+            ? (orderAmount / totalAmount) * totalQuantity
+            : orderAmount; // If quantity equals amount, use amount directly
+          
+          const orderNumber = `${baseOrderNumber}-${orderIndex}`;
+          
+          // Recalculate unit cost for this split order
+          const splitUnitCost = orderQuantity > 0
+            ? orderAmount / orderQuantity
+            : unitCost;
+          
+          await prisma.procOrder.create({
+            data: {
+              orderNumber,
+              inventoryId: mainWarehouse.id,
+              section: Section.BAKERY,
+              createdBy: users[Role.PROCUREMENT].id,
+              supplierId: supplier.id,
+              status: ProcOrderStatus.RECEIVED,
+              total: new Prisma.Decimal(orderAmount),
+              paidAmount: new Prisma.Decimal(0),
+              paymentConfirmed: false,
+              notes: `طلب شراء من ${orderInfo.supplier} بتاريخ ${orderInfo.date} - لا يؤثر على المخزون (جزء ${orderIndex})`,
+              createdAt: orderDate,
+              items: {
+                create: {
+                  itemId: item.id,
+                  quantity: new Prisma.Decimal(orderQuantity),
+                  unitCost: new Prisma.Decimal(splitUnitCost),
+                  lineTotal: new Prisma.Decimal(orderAmount),
+                },
+              },
+            },
+          });
+          bakeryOrdersCreated++;
+          remainingAmount -= orderAmount;
+          remainingQuantity -= orderQuantity;
+          orderIndex++;
+        }
+      } else {
+        // Single order for amounts within limit
+        await prisma.procOrder.create({
+          data: {
+            orderNumber: baseOrderNumber,
+            inventoryId: mainWarehouse.id,
+            section: Section.BAKERY,
+            createdBy: users[Role.PROCUREMENT].id,
+            supplierId: supplier.id,
+            status: ProcOrderStatus.RECEIVED,
+            total: new Prisma.Decimal(totalAmount),
+            paidAmount: new Prisma.Decimal(0),
+            paymentConfirmed: false,
+            notes: `طلب شراء من ${orderInfo.supplier} بتاريخ ${orderInfo.date} - لا يؤثر على المخزون`,
+            createdAt: orderDate,
+            items: {
+              create: {
+                itemId: item.id,
+                quantity: new Prisma.Decimal(totalQuantity),
+                unitCost: new Prisma.Decimal(unitCost),
+                lineTotal: new Prisma.Decimal(totalAmount),
+              },
             },
           },
-        },
-      });
-      bakeryOrdersCreated++;
+        });
+        bakeryOrdersCreated++;
+      }
     }
   }
   console.log(`    ✅ Created ${bakeryOrdersCreated} bakery orders`);

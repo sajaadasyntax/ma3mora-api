@@ -173,10 +173,6 @@ async function main() {
       const orderDate = new Date(orderInfo.date);
       orderDate.setHours(12, 0, 0, 0); // Set to noon to avoid timezone issues
 
-      // Generate unique order number
-      const randomSuffix = Math.random().toString(36).substring(2, 8);
-      const orderNumber = `PRE-SYS-BAKERY-PO-${orderInfo.date.replace(/-/g, '')}-${randomSuffix}`;
-
       // Check if order already exists for this supplier/date/amount
       const existingOrder = await prisma.procOrder.findFirst({
         where: {
@@ -195,38 +191,102 @@ async function main() {
         continue;
       }
 
-      // Create procurement order (unpaid)
-      const order = await prisma.procOrder.create({
-        data: {
-          orderNumber,
-          inventoryId: mainWarehouse.id,
-          section: Section.BAKERY, // Bakery section
-          createdBy: procurementUser.id,
-          supplierId: supplier.id,
-          status: ProcOrderStatus.RECEIVED, // Mark as received (delivered)
-          total: new Prisma.Decimal(orderInfo.amount),
-          paidAmount: new Prisma.Decimal(0), // Unpaid
-          paymentConfirmed: false, // Payment not confirmed
-          notes: `طلب شراء من ${orderInfo.supplier} بتاريخ ${orderInfo.date} - لا يؤثر على المخزون`,
-          createdAt: orderDate, // Set creation date to match order date
-          items: {
-            create: {
-              itemId: item.id,
-              quantity: new Prisma.Decimal(orderInfo.quantity),
-              unitCost: new Prisma.Decimal(unitCost),
-              lineTotal: new Prisma.Decimal(orderInfo.amount),
+      // Split large amounts (> 99,999,999.99) into multiple orders to avoid Decimal overflow
+      const MAX_SAFE_AMOUNT = 99999999.99;
+      const totalAmount = orderInfo.amount;
+      const totalQuantity = orderInfo.quantity;
+      const randomSuffix = Math.random().toString(36).substring(2, 8);
+      const baseOrderNumber = `PRE-SYS-BAKERY-PO-${orderInfo.date.replace(/-/g, '')}-${randomSuffix}`;
+      
+      if (totalAmount > MAX_SAFE_AMOUNT) {
+        // Split into multiple orders
+        let remainingAmount = totalAmount;
+        let remainingQuantity = totalQuantity;
+        let orderIndex = 1;
+        
+        while (remainingAmount > 0) {
+          const orderAmount = Math.min(remainingAmount, MAX_SAFE_AMOUNT);
+          // Calculate proportional quantity
+          const orderQuantity = totalQuantity > 0
+            ? (orderAmount / totalAmount) * totalQuantity
+            : orderAmount; // If quantity equals amount, use amount directly
+          
+          const orderNumber = `${baseOrderNumber}-${orderIndex}`;
+          
+          // Recalculate unit cost for this split order
+          const splitUnitCost = orderQuantity > 0
+            ? orderAmount / orderQuantity
+            : unitCost;
+          
+          await prisma.procOrder.create({
+            data: {
+              orderNumber,
+              inventoryId: mainWarehouse.id,
+              section: Section.BAKERY,
+              createdBy: procurementUser.id,
+              supplierId: supplier.id,
+              status: ProcOrderStatus.RECEIVED,
+              total: new Prisma.Decimal(orderAmount),
+              paidAmount: new Prisma.Decimal(0),
+              paymentConfirmed: false,
+              notes: `طلب شراء من ${orderInfo.supplier} بتاريخ ${orderInfo.date} - لا يؤثر على المخزون (جزء ${orderIndex})`,
+              createdAt: orderDate,
+              items: {
+                create: {
+                  itemId: item.id,
+                  quantity: new Prisma.Decimal(orderQuantity),
+                  unitCost: new Prisma.Decimal(splitUnitCost),
+                  lineTotal: new Prisma.Decimal(orderAmount),
+                },
+              },
+            },
+          });
+          
+          console.log(`  📄 Created order ${orderIndex}: ${orderNumber}`);
+          console.log(`     Supplier: ${orderInfo.supplier}`);
+          console.log(`     Item: ${orderInfo.item} (Qty: ${orderQuantity.toFixed(2)}, Amount: ${orderAmount.toLocaleString()} SDG)`);
+          console.log(`     Date: ${orderInfo.date}`);
+          console.log(`     Status: RECEIVED, Payment: UNPAID`);
+          
+          ordersCreated++;
+          remainingAmount -= orderAmount;
+          remainingQuantity -= orderQuantity;
+          orderIndex++;
+        }
+      } else {
+        // Single order for amounts within limit
+        const order = await prisma.procOrder.create({
+          data: {
+            orderNumber: baseOrderNumber,
+            inventoryId: mainWarehouse.id,
+            section: Section.BAKERY,
+            createdBy: procurementUser.id,
+            supplierId: supplier.id,
+            status: ProcOrderStatus.RECEIVED,
+            total: new Prisma.Decimal(totalAmount),
+            paidAmount: new Prisma.Decimal(0),
+            paymentConfirmed: false,
+            notes: `طلب شراء من ${orderInfo.supplier} بتاريخ ${orderInfo.date} - لا يؤثر على المخزون`,
+            createdAt: orderDate,
+            items: {
+              create: {
+                itemId: item.id,
+                quantity: new Prisma.Decimal(totalQuantity),
+                unitCost: new Prisma.Decimal(unitCost),
+                lineTotal: new Prisma.Decimal(totalAmount),
+              },
             },
           },
-        },
-      });
+        });
 
-      console.log(`  📄 Created order: ${orderNumber}`);
-      console.log(`     Supplier: ${orderInfo.supplier}`);
-      console.log(`     Item: ${orderInfo.item} (Qty: ${orderInfo.quantity}, Amount: ${orderInfo.amount.toLocaleString()} SDG)`);
-      console.log(`     Date: ${orderInfo.date}`);
-      console.log(`     Status: RECEIVED, Payment: UNPAID`);
-      
-      ordersCreated++;
+        console.log(`  📄 Created order: ${baseOrderNumber}`);
+        console.log(`     Supplier: ${orderInfo.supplier}`);
+        console.log(`     Item: ${orderInfo.item} (Qty: ${totalQuantity}, Amount: ${totalAmount.toLocaleString()} SDG)`);
+        console.log(`     Date: ${orderInfo.date}`);
+        console.log(`     Status: RECEIVED, Payment: UNPAID`);
+        
+        ordersCreated++;
+      }
     } catch (error: any) {
       console.error(`  ❌ Error processing order from ${orderInfo.supplier}:`, error.message);
       skipped++;
