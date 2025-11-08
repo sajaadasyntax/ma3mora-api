@@ -1425,7 +1425,8 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
       BANK_NILE: paidAdvances.filter((a: any) => a.paymentMethod === 'BANK_NILE').reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0)),
     };
 
-    // Procurement payments (only confirmed orders, exclude cancelled)
+    // Procurement payments (only confirmed orders, exclude cancelled and commission)
+    // Commission payments don't affect liquid assets (already paid by supplier as gift)
     const procPays = await prisma.procOrderPayment.findMany({ 
       where: { 
         order: { 
@@ -1434,10 +1435,12 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
         } 
       } 
     });
+    // Filter out COMMISSION payments - they don't affect liquid assets
+    const procPaysExcludingCommission = procPays.filter(p => (p.method as string) !== 'COMMISSION');
     const procOut = {
-      CASH: procPays.filter(p => p.method === 'CASH').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
-      BANK: procPays.filter(p => p.method === 'BANK').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
-      BANK_NILE: procPays.filter(p => p.method === 'BANK_NILE').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
+      CASH: procPaysExcludingCommission.filter(p => p.method === 'CASH').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
+      BANK: procPaysExcludingCommission.filter(p => p.method === 'BANK').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
+      BANK_NILE: procPaysExcludingCommission.filter(p => p.method === 'BANK_NILE').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
     };
 
     // Income (excluding debts)

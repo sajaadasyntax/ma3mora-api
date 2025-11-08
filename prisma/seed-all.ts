@@ -40,7 +40,7 @@ const usersData = [
 const mainWarehouseGroceryData = `
 حلواني باسطة	0	 60,000 	
 سيقا الاصلي 	1405	 50,000 	
-الاول	0	 20,500 	
+الاول	-501	 20,500 	
 مخصوص	2	 23,000 	
 سمولينا	316	 32,000 	
 الاصلي 10 ك	247	 20,500 	
@@ -469,7 +469,8 @@ function parsePastedData(data: string) {
     const stock = parseFloat(parts[1].replace(/,/g, '')) || 0;
     const price = parseFloat(parts[2].replace(/,/g, '').replace(/\s/g, '')) || 0;
 
-    const finalStock = stock < 0 ? 0 : stock;
+    // Allow negative stock values (for adjustments/deficits)
+    const finalStock = stock;
 
     return { name, stock: finalStock, wholesalePrice: price };
   }).filter(item => item !== null) as Array<{ name: string; stock: number; wholesalePrice: number }>;
