@@ -1475,6 +1475,73 @@ async function main() {
   }
 
   // ============================================
+  // 9. CREATE OPENING BALANCES
+  // ============================================
+  console.log('💰 Step 9: Creating opening balances...\n');
+  
+  // Check if opening balances already exist
+  const existingCashBalance = await prisma.openingBalance.findFirst({
+    where: {
+      scope: 'CASHBOX',
+      paymentMethod: PaymentMethod.CASH,
+      isClosed: false,
+    },
+  });
+
+  const existingBankBalance = await prisma.openingBalance.findFirst({
+    where: {
+      scope: 'CASHBOX',
+      paymentMethod: PaymentMethod.BANK,
+      isClosed: false,
+    },
+  });
+
+  if (!existingCashBalance) {
+    await prisma.openingBalance.create({
+      data: {
+        scope: 'CASHBOX',
+        amount: new Prisma.Decimal(11853400),
+        paymentMethod: PaymentMethod.CASH,
+        isClosed: false,
+        notes: 'رصيد افتتاحي نقدي',
+      },
+    });
+    console.log('  ✨ Created CASH opening balance: 11,853,400 SDG');
+  } else {
+    // Update existing balance
+    await prisma.openingBalance.update({
+      where: { id: existingCashBalance.id },
+      data: {
+        amount: new Prisma.Decimal(11853400),
+      },
+    });
+    console.log('  ✅ Updated CASH opening balance: 11,853,400 SDG');
+  }
+
+  if (!existingBankBalance) {
+    await prisma.openingBalance.create({
+      data: {
+        scope: 'CASHBOX',
+        amount: new Prisma.Decimal(1942736),
+        paymentMethod: PaymentMethod.BANK,
+        isClosed: false,
+        notes: 'رصيد افتتاحي بنك',
+      },
+    });
+    console.log('  ✨ Created BANK opening balance: 1,942,736 SDG');
+  } else {
+    // Update existing balance
+    await prisma.openingBalance.update({
+      where: { id: existingBankBalance.id },
+      data: {
+        amount: new Prisma.Decimal(1942736),
+      },
+    });
+    console.log('  ✅ Updated BANK opening balance: 1,942,736 SDG');
+  }
+  console.log('  ✅ Opening balances ready\n');
+
+  // ============================================
   // SUMMARY
   // ============================================
   console.log('='.repeat(60));

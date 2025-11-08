@@ -1353,7 +1353,8 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
       let warehouseTotal = new Prisma.Decimal(0);
       
       for (const stock of inventory.stocks) {
-        if (stock.quantity.greaterThan(0)) {
+        // Include all stock values, including negative stock (deficits)
+        if (!stock.quantity.equals(0)) {
           // Get wholesale price (prefer inventory-specific, fallback to global)
           // Filter prices: first try inventory-specific, then global (inventoryId: null)
           const inventorySpecificPrice = stock.item.prices.find(
@@ -1370,7 +1371,8 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
         }
       }
       
-      if (warehouseTotal.greaterThan(0)) {
+      // Include warehouse total even if negative (deficit) or zero
+      if (!warehouseTotal.equals(0)) {
         stockValuesByWarehouse[inventory.id] = {
           inventoryId: inventory.id,
           inventoryName: inventory.name,
