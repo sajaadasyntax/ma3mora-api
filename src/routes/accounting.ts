@@ -1333,16 +1333,10 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
                 prices: {
                   where: {
                     tier: 'WHOLESALE',
-                    OR: [
-                      { inventoryId: null }, // Global prices
-                      { inventoryId: { not: null } }, // Inventory-specific prices
-                    ],
                   },
                   orderBy: [
-                    { inventoryId: 'desc' }, // Prefer inventory-specific
                     { validFrom: 'desc' },
                   ],
-                  take: 1, // Get the most recent price
                 },
               },
             },
@@ -1361,7 +1355,16 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
       for (const stock of inventory.stocks) {
         if (stock.quantity.greaterThan(0)) {
           // Get wholesale price (prefer inventory-specific, fallback to global)
-          const wholesalePrice = stock.item.prices[0]?.price || new Prisma.Decimal(0);
+          // Filter prices: first try inventory-specific, then global (inventoryId: null)
+          const inventorySpecificPrice = stock.item.prices.find(
+            p => p.tier === 'WHOLESALE' && p.inventoryId === inventory.id
+          );
+          const globalPrice = stock.item.prices.find(
+            p => p.tier === 'WHOLESALE' && p.inventoryId === null
+          );
+          
+          // Use inventory-specific price if available, otherwise use global price
+          const wholesalePrice = inventorySpecificPrice?.price || globalPrice?.price || new Prisma.Decimal(0);
           const stockValue = stock.quantity.mul(wholesalePrice);
           warehouseTotal = warehouseTotal.add(stockValue);
         }
