@@ -177,6 +177,7 @@ const bakeryWarehouses = [
     name: 'عبود',
     searchTerms: ['عبود'],
     data: [
+      { name: 'البلدي', stock: 50, wholesalePrice: 56500 },
       { name: 'الالي', stock: 50, wholesalePrice: 58000 },
       { name: 'الوافر', stock: 0, wholesalePrice: 0 },
       { name: 'خميرة بيضاء', stock: 4, wholesalePrice: 125000 },
