@@ -572,7 +572,19 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
       new Prisma.Decimal(0)
     );
 
-    const totalSalesDebt = totalSales.sub(totalReceived);
+    // Calculate unpaid sales debt - only count DELIVERED invoices that are not fully paid
+    // المديونيات should only include delivered but unpaid invoices
+    const deliveredUnpaidInvoices = salesInvoices.filter(
+      inv => inv.deliveryStatus === 'DELIVERED' && inv.paymentStatus !== 'PAID'
+    );
+    
+    const totalSalesDebt = deliveredUnpaidInvoices.reduce(
+      (sum, inv) => {
+        const outstanding = new Prisma.Decimal(inv.total).sub(inv.paidAmount || 0);
+        return sum.add(outstanding.greaterThan(0) ? outstanding : new Prisma.Decimal(0));
+      },
+      new Prisma.Decimal(0)
+    );
 
     // Procurement summary - exclude cancelled orders
     const procWhere: any = {
