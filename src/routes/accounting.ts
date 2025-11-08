@@ -1356,13 +1356,17 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
         // Include all stock values, including negative stock (deficits)
         if (!stock.quantity.equals(0)) {
           // Get wholesale price (prefer inventory-specific, fallback to global)
-          // Filter prices: first try inventory-specific, then global (inventoryId: null)
-          const inventorySpecificPrice = stock.item.prices.find(
+          // Prices are already ordered by validFrom desc, so first match is most recent
+          const inventorySpecificPrices = stock.item.prices.filter(
             p => p.tier === 'WHOLESALE' && p.inventoryId === inventory.id
           );
-          const globalPrice = stock.item.prices.find(
+          const globalPrices = stock.item.prices.filter(
             p => p.tier === 'WHOLESALE' && p.inventoryId === null
           );
+          
+          // Get most recent price (first in array since ordered by validFrom desc)
+          const inventorySpecificPrice = inventorySpecificPrices.length > 0 ? inventorySpecificPrices[0] : null;
+          const globalPrice = globalPrices.length > 0 ? globalPrices[0] : null;
           
           // Use inventory-specific price if available, otherwise use global price
           const wholesalePrice = inventorySpecificPrice?.price || globalPrice?.price || new Prisma.Decimal(0);
