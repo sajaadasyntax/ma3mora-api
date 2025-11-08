@@ -1420,32 +1420,127 @@ async function main() {
   // ============================================
   console.log('💰 Step 8: Creating inbound debts...\n');
   let debtsCreated = 0;
+  let debtsSkipped = 0;
+  const MAX_SAFE_AMOUNT = 99999999.99;
+  
   for (const debtInfo of inboundDebtsData) {
-    const existingDebt = await prisma.income.findFirst({
-      where: {
-        description: debtInfo.description,
-        amount: debtInfo.amount,
-        isDebt: true,
-      },
-    });
+    try {
+      // Split large amounts (> 99,999,999.99) into multiple income records to avoid Decimal overflow
+      const totalAmount = debtInfo.amount;
+      
+      if (totalAmount > MAX_SAFE_AMOUNT) {
+        // Split into multiple income records
+        let remainingAmount = totalAmount;
+        let recordIndex = 1;
+        
+        while (remainingAmount > 0) {
+          const recordAmount = Math.min(remainingAmount, MAX_SAFE_AMOUNT);
+          const description = recordIndex > 1 
+            ? `${debtInfo.description} (جزء ${recordIndex})`
+            : debtInfo.description;
+          
+          // Check if this split record already exists
+          const existingDebt = await prisma.income.findFirst({
+            where: {
+              description: description,
+              amount: new Prisma.Decimal(recordAmount),
+            },
+          });
 
-    if (!existingDebt) {
-      await prisma.income.create({
-        data: {
-          amount: new Prisma.Decimal(debtInfo.amount),
-          method: PaymentMethod.CASH,
-          description: debtInfo.description,
-          isDebt: true,
-          createdBy: users[Role.ACCOUNTANT].id,
-        },
-      });
-      debtsCreated++;
-      console.log(`  ✨ Created debt: ${debtInfo.description}`);
-    } else {
-      console.log(`  ⏭️  Debt already exists: ${debtInfo.description}`);
+          if (existingDebt) {
+            console.log(`  ⏭️  Debt part ${recordIndex} already exists: ${description}`);
+            remainingAmount -= recordAmount;
+            recordIndex++;
+            continue;
+          }
+
+          // Try to create with isDebt field, but handle case where column doesn't exist
+          try {
+            await prisma.income.create({
+              data: {
+                amount: new Prisma.Decimal(recordAmount),
+                method: PaymentMethod.CASH,
+                description: description,
+                isDebt: true,
+                createdBy: users[Role.ACCOUNTANT].id,
+              },
+            });
+          } catch (error: any) {
+            // If isDebt column doesn't exist, create without it
+            if (error.code === 'P2022' || error.message?.includes('isDebt')) {
+              await prisma.income.create({
+                data: {
+                  amount: new Prisma.Decimal(recordAmount),
+                  method: PaymentMethod.CASH,
+                  description: description,
+                  createdBy: users[Role.ACCOUNTANT].id,
+                },
+              });
+            } else {
+              throw error;
+            }
+          }
+          debtsCreated++;
+          console.log(`  ✨ Created debt part ${recordIndex}: ${description} - ${recordAmount.toLocaleString()} SDG`);
+          remainingAmount -= recordAmount;
+          recordIndex++;
+        }
+      } else {
+        // Single income record for amounts within limit
+        // Check if debt already exists (by description and amount)
+        const existingDebt = await prisma.income.findFirst({
+          where: {
+            description: debtInfo.description,
+            amount: new Prisma.Decimal(totalAmount),
+          },
+        });
+
+        if (existingDebt) {
+          console.log(`  ⏭️  Debt already exists: ${debtInfo.description}`);
+          debtsSkipped++;
+          continue;
+        }
+
+        // Try to create with isDebt field, but handle case where column doesn't exist
+        try {
+          await prisma.income.create({
+            data: {
+              amount: new Prisma.Decimal(totalAmount),
+              method: PaymentMethod.CASH,
+              description: debtInfo.description,
+              isDebt: true,
+              createdBy: users[Role.ACCOUNTANT].id,
+            },
+          });
+        } catch (error: any) {
+          // If isDebt column doesn't exist, create without it
+          if (error.code === 'P2022' || error.message?.includes('isDebt')) {
+            await prisma.income.create({
+              data: {
+                amount: new Prisma.Decimal(totalAmount),
+                method: PaymentMethod.CASH,
+                description: debtInfo.description,
+                createdBy: users[Role.ACCOUNTANT].id,
+              },
+            });
+          } else {
+            throw error;
+          }
+        }
+        debtsCreated++;
+        console.log(`  ✨ Created debt: ${debtInfo.description}`);
+      }
+    } catch (error: any) {
+      console.error(`  ❌ Error creating debt "${debtInfo.description}":`, error.message);
+      debtsSkipped++;
     }
   }
-  console.log(`  ✅ Created ${debtsCreated} inbound debts\n`);
+  console.log(`  ✅ Created ${debtsCreated} inbound debts`);
+  if (debtsSkipped > 0) {
+    console.log(`  ⏭️  Skipped ${debtsSkipped} debts (already exist or errors)\n`);
+  } else {
+    console.log();
+  }
 
   // ============================================
   // SUMMARY
