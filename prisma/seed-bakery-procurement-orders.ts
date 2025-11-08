@@ -153,7 +153,6 @@ async function main() {
   }
 
   let ordersCreated = 0;
-  let paymentsCreated = 0;
   let skipped = 0;
 
   console.log('\n🛒 Processing orders...\n');
@@ -196,7 +195,7 @@ async function main() {
         continue;
       }
 
-      // Create procurement order
+      // Create procurement order (unpaid)
       const order = await prisma.procOrder.create({
         data: {
           orderNumber,
@@ -206,10 +205,8 @@ async function main() {
           supplierId: supplier.id,
           status: ProcOrderStatus.RECEIVED, // Mark as received (delivered)
           total: new Prisma.Decimal(orderInfo.amount),
-          paidAmount: new Prisma.Decimal(orderInfo.amount), // Fully paid
-          paymentConfirmed: true, // Payment confirmed
-          paymentConfirmedBy: accountantUser.id,
-          paymentConfirmedAt: orderDate,
+          paidAmount: new Prisma.Decimal(0), // Unpaid
+          paymentConfirmed: false, // Payment not confirmed
           notes: `طلب شراء من ${orderInfo.supplier} بتاريخ ${orderInfo.date} - لا يؤثر على المخزون`,
           createdAt: orderDate, // Set creation date to match order date
           items: {
@@ -223,26 +220,13 @@ async function main() {
         },
       });
 
-      // Create payment record
-      const payment = await prisma.procOrderPayment.create({
-        data: {
-          orderId: order.id,
-          amount: new Prisma.Decimal(orderInfo.amount),
-          method: PaymentMethod.CASH, // Default to cash
-          recordedBy: accountantUser.id,
-          notes: `دفعة مقدمة - ${orderInfo.date}`,
-          paidAt: orderDate,
-        },
-      });
-
       console.log(`  📄 Created order: ${orderNumber}`);
       console.log(`     Supplier: ${orderInfo.supplier}`);
       console.log(`     Item: ${orderInfo.item} (Qty: ${orderInfo.quantity}, Amount: ${orderInfo.amount.toLocaleString()} SDG)`);
       console.log(`     Date: ${orderInfo.date}`);
-      console.log(`     Status: RECEIVED, Payment: CONFIRMED`);
+      console.log(`     Status: RECEIVED, Payment: UNPAID`);
       
       ordersCreated++;
-      paymentsCreated++;
     } catch (error: any) {
       console.error(`  ❌ Error processing order from ${orderInfo.supplier}:`, error.message);
       skipped++;
@@ -256,11 +240,10 @@ async function main() {
   console.log(`   Section: الافران (BAKERY)`);
   console.log(`   Total orders: ${orderData.length}`);
   console.log(`   Orders created: ${ordersCreated}`);
-  console.log(`   Payments created: ${paymentsCreated}`);
   console.log(`   Total order amount: ${totalAmount.toLocaleString()} SDG`);
   console.log(`   Skipped/Errors: ${skipped} orders`);
-  console.log(`\n⚠️  Note: Orders are marked as RECEIVED but NO InventoryReceipt records were created`);
-  console.log(`   This ensures stock is NOT affected (historical pre-system records)`);
+  console.log(`\n⚠️  Note: Orders are marked as RECEIVED but UNPAID`);
+  console.log(`   NO InventoryReceipt records were created (ensures stock is NOT affected)`);
 }
 
 main()
