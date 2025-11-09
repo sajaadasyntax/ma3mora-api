@@ -339,4 +339,136 @@ router.post('/advances/:id/pay', requireRole('ACCOUNTANT', 'MANAGER'), createAud
   }
 });
 
+// Get employee report with time period filter
+router.get('/report', requireRole('ACCOUNTANT', 'MANAGER'), async (req: AuthRequest, res) => {
+  try {
+    const { startDate, endDate, employeeId } = req.query;
+    
+    // Build date filter
+    let dateFilter: any = {};
+    if (startDate && endDate) {
+      const start = new Date(startDate as string);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(endDate as string);
+      end.setHours(23, 59, 59, 999);
+      
+      dateFilter = {
+        gte: start,
+        lte: end,
+      };
+    } else if (startDate) {
+      const start = new Date(startDate as string);
+      start.setHours(0, 0, 0, 0);
+      dateFilter = { gte: start };
+    } else if (endDate) {
+      const end = new Date(endDate as string);
+      end.setHours(23, 59, 59, 999);
+      dateFilter = { lte: end };
+    }
+    
+    // Build employee filter
+    const employeeWhere: any = {};
+    if (employeeId) {
+      employeeWhere.id = employeeId as string;
+    }
+    
+    // Get all employees (or specific employee)
+    const employees = await prisma.employee.findMany({
+      where: employeeWhere,
+      orderBy: { name: 'asc' },
+      include: {
+        salaries: {
+          where: {
+            ...(Object.keys(dateFilter).length > 0 ? { createdAt: dateFilter } : {}),
+          },
+          include: {
+            creator: {
+              select: { username: true, role: true },
+            },
+          },
+          orderBy: [{ year: 'desc' }, { month: 'desc' }],
+        },
+        advances: {
+          where: {
+            ...(Object.keys(dateFilter).length > 0 ? { createdAt: dateFilter } : {}),
+          },
+          include: {
+            creator: {
+              select: { username: true, role: true },
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+    });
+    
+    // Calculate totals for each employee
+    const reportData = employees.map((employee) => {
+      const totalSalaries = employee.salaries.reduce(
+        (sum, salary) => sum + parseFloat(salary.amount.toString()),
+        0
+      );
+      const paidSalaries = employee.salaries
+        .filter((s) => s.paidAt)
+        .reduce((sum, salary) => sum + parseFloat(salary.amount.toString()), 0);
+      const unpaidSalaries = totalSalaries - paidSalaries;
+      
+      const totalAdvances = employee.advances.reduce(
+        (sum, advance) => sum + parseFloat(advance.amount.toString()),
+        0
+      );
+      const paidAdvances = employee.advances
+        .filter((a) => a.paidAt)
+        .reduce((sum, advance) => sum + parseFloat(advance.amount.toString()), 0);
+      const unpaidAdvances = totalAdvances - paidAdvances;
+      
+      return {
+        ...employee,
+        totalSalaries,
+        paidSalaries,
+        unpaidSalaries,
+        salaryCount: employee.salaries.length,
+        paidSalaryCount: employee.salaries.filter((s) => s.paidAt).length,
+        totalAdvances,
+        paidAdvances,
+        unpaidAdvances,
+        advanceCount: employee.advances.length,
+        paidAdvanceCount: employee.advances.filter((a) => a.paidAt).length,
+        totalPaid: paidSalaries + paidAdvances,
+        totalUnpaid: unpaidSalaries + unpaidAdvances,
+        totalAmount: totalSalaries + totalAdvances,
+      };
+    });
+    
+    // Calculate grand totals
+    const grandTotals = {
+      totalSalaries: reportData.reduce((sum, emp) => sum + emp.totalSalaries, 0),
+      paidSalaries: reportData.reduce((sum, emp) => sum + emp.paidSalaries, 0),
+      unpaidSalaries: reportData.reduce((sum, emp) => sum + emp.unpaidSalaries, 0),
+      totalAdvances: reportData.reduce((sum, emp) => sum + emp.totalAdvances, 0),
+      paidAdvances: reportData.reduce((sum, emp) => sum + emp.paidAdvances, 0),
+      unpaidAdvances: reportData.reduce((sum, emp) => sum + emp.unpaidAdvances, 0),
+      totalPaid: reportData.reduce((sum, emp) => sum + emp.totalPaid, 0),
+      totalUnpaid: reportData.reduce((sum, emp) => sum + emp.totalUnpaid, 0),
+      totalAmount: reportData.reduce((sum, emp) => sum + emp.totalAmount, 0),
+      salaryCount: reportData.reduce((sum, emp) => sum + emp.salaryCount, 0),
+      paidSalaryCount: reportData.reduce((sum, emp) => sum + emp.paidSalaryCount, 0),
+      advanceCount: reportData.reduce((sum, emp) => sum + emp.advanceCount, 0),
+      paidAdvanceCount: reportData.reduce((sum, emp) => sum + emp.paidAdvanceCount, 0),
+    };
+    
+    res.json({
+      employees: reportData,
+      totals: grandTotals,
+      period: {
+        startDate: startDate || null,
+        endDate: endDate || null,
+      },
+    });
+  } catch (error) {
+    console.error('Get employee report error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
 export default router;

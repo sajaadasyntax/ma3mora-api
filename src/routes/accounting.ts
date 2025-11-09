@@ -1906,12 +1906,15 @@ router.get('/balance/sessions', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'),
     // Calculate summary for each session
     const sessionsWithSummary = await Promise.all(
       sessions.map(async (session) => {
-        // Get sales data for this session
+        const sessionStart = session.openedAt;
+        const sessionEnd = session.closedAt || new Date();
+
+        // Get sales invoices created in this session period (for count and total sales)
         const salesInvoices = await prisma.salesInvoice.findMany({
           where: {
             createdAt: {
-              gte: session.openedAt,
-              lte: session.closedAt || new Date(),
+              gte: sessionStart,
+              lte: sessionEnd,
             }
           },
           include: {
@@ -1922,18 +1925,31 @@ router.get('/balance/sessions', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'),
         const totalSales = salesInvoices.reduce((sum, inv) => 
           sum.add(inv.total), new Prisma.Decimal(0)
         );
-        const totalReceived = salesInvoices.reduce((sum, inv) => 
-          sum.add(inv.payments.reduce((pSum, p) => pSum.add(p.amount), new Prisma.Decimal(0))), 
-          new Prisma.Decimal(0)
+
+        // Get actual payments received during this session period (using paidAt)
+        const salesPayments = await prisma.salesPayment.findMany({
+          where: {
+            paidAt: {
+              gte: sessionStart,
+              lte: sessionEnd,
+            },
+            invoice: {
+              paymentConfirmed: true,
+            }
+          }
+        });
+
+        const totalReceived = salesPayments.reduce((sum, payment) => 
+          sum.add(payment.amount), new Prisma.Decimal(0)
         );
         const totalDebt = totalSales.sub(totalReceived);
 
-        // Get procurement data for this session - exclude cancelled orders
+        // Get procurement orders created in this session period (for count)
         const procurementOrders = await prisma.procOrder.findMany({
           where: {
             createdAt: {
-              gte: session.openedAt,
-              lte: session.closedAt || new Date(),
+              gte: sessionStart,
+              lte: sessionEnd,
             },
             status: { not: 'CANCELLED' }
           }
@@ -1943,27 +1959,41 @@ router.get('/balance/sessions', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'),
         const cancelledProcOrders = await prisma.procOrder.findMany({
           where: {
             createdAt: {
-              gte: session.openedAt,
-              lte: session.closedAt || new Date(),
+              gte: sessionStart,
+              lte: sessionEnd,
             },
             status: 'CANCELLED'
           }
         });
 
-        const totalProcurement = procurementOrders.reduce((sum: Prisma.Decimal, order: any) => 
-          sum.add(order.total), new Prisma.Decimal(0)
+        // Get actual procurement payments made during this session period (using paidAt)
+        const procPayments = await prisma.procOrderPayment.findMany({
+          where: {
+            paidAt: {
+              gte: sessionStart,
+              lte: sessionEnd,
+            },
+            order: {
+              status: { not: 'CANCELLED' },
+              paymentConfirmed: true,
+            }
+          }
+        });
+
+        const totalProcurement = procPayments.reduce((sum: Prisma.Decimal, payment: any) => 
+          sum.add(payment.amount), new Prisma.Decimal(0)
         );
 
         const totalCancelledProcurement = cancelledProcOrders.reduce((sum: Prisma.Decimal, order: any) => 
           sum.add(order.total), new Prisma.Decimal(0)
         );
 
-        // Get expenses data for this session
+        // Get expenses data for this session (using createdAt)
         const expenses = await prisma.expense.findMany({
           where: {
             createdAt: {
-              gte: session.openedAt,
-              lte: session.closedAt || new Date(),
+              gte: sessionStart,
+              lte: sessionEnd,
             }
           }
         });
@@ -1972,12 +2002,12 @@ router.get('/balance/sessions', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'),
           sum.add(exp.amount), new Prisma.Decimal(0)
         );
 
-        // Get income data for this session
+        // Get income data for this session (using createdAt)
         const income = await prisma.income.findMany({
           where: {
             createdAt: {
-              gte: session.openedAt,
-              lte: session.closedAt || new Date(),
+              gte: sessionStart,
+              lte: sessionEnd,
             }
           }
         });
@@ -1986,7 +2016,40 @@ router.get('/balance/sessions', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'),
           sum.add(inc.amount), new Prisma.Decimal(0)
         );
 
-        const profit = totalReceived.add(totalIncome).sub(totalProcurement).sub(totalExpenses);
+        // Get salaries paid during this session period (using paidAt)
+        const salaries = await prisma.salary.findMany({
+          where: {
+            paidAt: {
+              gte: sessionStart,
+              lte: sessionEnd,
+            },
+            paidAt: { not: null },
+          }
+        });
+
+        const totalSalaries = salaries.reduce((sum, salary) => 
+          sum.add(salary.amount), new Prisma.Decimal(0)
+        );
+
+        // Get advances paid during this session period (using paidAt)
+        const advances = await prisma.advance.findMany({
+          where: {
+            paidAt: {
+              gte: sessionStart,
+              lte: sessionEnd,
+            },
+            paidAt: { not: null },
+          }
+        });
+
+        const totalAdvances = advances.reduce((sum, advance) => 
+          sum.add(advance.amount), new Prisma.Decimal(0)
+        );
+
+        // Total expenses includes regular expenses, salaries, and advances
+        const totalAllExpenses = totalExpenses.add(totalSalaries).add(totalAdvances);
+
+        const profit = totalReceived.add(totalIncome).sub(totalProcurement).sub(totalAllExpenses);
 
         return {
           ...session,
@@ -2006,8 +2069,11 @@ router.get('/balance/sessions', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'),
               },
             },
             expenses: {
-              total: totalExpenses.toFixed(2),
-              count: expenses.length,
+              total: totalAllExpenses.toFixed(2),
+              regular: totalExpenses.toFixed(2),
+              salaries: totalSalaries.toFixed(2),
+              advances: totalAdvances.toFixed(2),
+              count: expenses.length + salaries.length + advances.length,
             },
             income: {
               total: totalIncome.toFixed(2),
@@ -2372,7 +2438,7 @@ router.get('/daily-report', requireRole('AUDITOR', 'MANAGER'), async (req: AuthR
 // Get outstanding fees report for customers and suppliers
 router.get('/outstanding-fees', requireRole('ACCOUNTANT', 'MANAGER', 'SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GROCERY', 'AGENT_BAKERY'), async (req: AuthRequest, res) => {
   try {
-    const { section, period, startDate, endDate: endDateParam } = req.query;
+    const { section, period, startDate, endDate: endDateParam, type } = req.query; // type: 'CUSTOMERS', 'SUPPLIERS', or 'ALL'
     
     // Calculate date range based on period or use provided dates
     let startDateFilter: Date | null = null;
@@ -2536,18 +2602,30 @@ router.get('/outstanding-fees', requireRole('ACCOUNTANT', 'MANAGER', 'SALES_GROC
     const weOweSuppliers = supplierOrdersOutstanding.reduce((sum, order) => 
       sum.add(new Prisma.Decimal(order.total).sub(order.paidAmount)), new Prisma.Decimal(0));
     
+    // Filter by type if specified
+    let filteredCustomers = customerReportData;
+    let filteredSuppliers = supplierReportData;
+    
+    if (type === 'CUSTOMERS') {
+      filteredSuppliers = [];
+    } else if (type === 'SUPPLIERS') {
+      filteredCustomers = [];
+    }
+    // If type is 'ALL' or not specified, show both
+    
     res.json({
       section: section || 'ALL',
       period: period || 'ALL',
       startDate: startDateFilter?.toISOString().split('T')[0] || null,
       endDate: endDateFilter.toISOString().split('T')[0],
-      customers: customerReportData,
-      suppliers: supplierReportData,
+      type: type || 'ALL',
+      customers: filteredCustomers,
+      suppliers: filteredSuppliers,
       summary: {
         customersOwesUs: customersOwesUs.toString(),
         weOweSuppliers: weOweSuppliers.toString(),
-        totalCustomersOutstanding: customerReportData.length,
-        totalSuppliersOutstanding: supplierReportData.length,
+        totalCustomersOutstanding: filteredCustomers.length,
+        totalSuppliersOutstanding: filteredSuppliers.length,
       },
     });
   } catch (error) {
