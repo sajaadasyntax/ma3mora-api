@@ -2023,7 +2023,6 @@ router.get('/balance/sessions', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'),
               gte: sessionStart,
               lte: sessionEnd,
             },
-            paidAt: { not: null },
           }
         });
 
@@ -2038,7 +2037,6 @@ router.get('/balance/sessions', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'),
               gte: sessionStart,
               lte: sessionEnd,
             },
-            paidAt: { not: null },
           }
         });
 
