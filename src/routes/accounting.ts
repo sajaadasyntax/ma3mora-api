@@ -12,6 +12,17 @@ const prisma = new PrismaClient();
 router.use(requireAuth);
 router.use(blockAuditorWrites);
 
+// Utility function to calculate payment status based on paidAmount and total
+function calculatePaymentStatus(paidAmount: Prisma.Decimal, total: Prisma.Decimal): 'PAID' | 'PARTIAL' | 'CREDIT' {
+  if (paidAmount.equals(0)) {
+    return 'CREDIT';
+  } else if (paidAmount.greaterThanOrEqualTo(total)) {
+    return 'PAID';
+  } else {
+    return 'PARTIAL';
+  }
+}
+
 const createExpenseSchema = z.object({
   inventoryId: z.string().optional(),
   section: z.enum(['GROCERY', 'BAKERY']).optional(),
@@ -2428,31 +2439,36 @@ router.get('/outstanding-fees', requireRole('ACCOUNTANT', 'MANAGER', 'SALES_GROC
     });
     
     // Transform customer invoices to report format
-    const customerReportData = customerInvoicesOutstanding.map(invoice => ({
-      invoiceNumber: invoice.invoiceNumber,
-      date: invoice.createdAt,
-      customer: invoice.customer?.name || 'بدون عميل',
-      customerType: invoice.customer?.type || 'غير محدد',
-      inventory: invoice.inventory.name,
-      notes: invoice.notes || null,
-      total: invoice.total.toString(),
-      paidAmount: invoice.paidAmount.toString(),
-      outstanding: new Prisma.Decimal(invoice.total).sub(invoice.paidAmount).toString(),
-      paymentStatus: invoice.paymentStatus,
-      deliveryStatus: invoice.deliveryStatus,
-      items: invoice.items.map(item => ({
-        itemName: item.item.name,
-        quantity: item.quantity.toString(),
-        unitPrice: item.unitPrice.toString(),
-        lineTotal: item.lineTotal.toString(),
-      })),
-      payments: invoice.payments.map(payment => ({
-        amount: payment.amount.toString(),
-        method: payment.method,
-        paidAt: payment.paidAt,
-        recordedBy: payment.recordedByUser?.username || 'غير محدد',
-      })),
-    }));
+    const customerReportData = customerInvoicesOutstanding.map(invoice => {
+      // Recalculate payment status to ensure correctness
+      const correctPaymentStatus = calculatePaymentStatus(invoice.paidAmount, invoice.total);
+      
+      return {
+        invoiceNumber: invoice.invoiceNumber,
+        date: invoice.createdAt,
+        customer: invoice.customer?.name || 'بدون عميل',
+        customerType: invoice.customer?.type || 'غير محدد',
+        inventory: invoice.inventory.name,
+        notes: invoice.notes || null,
+        total: invoice.total.toString(),
+        paidAmount: invoice.paidAmount.toString(),
+        outstanding: new Prisma.Decimal(invoice.total).sub(invoice.paidAmount).toString(),
+        paymentStatus: correctPaymentStatus,
+        deliveryStatus: invoice.deliveryStatus,
+        items: invoice.items.map(item => ({
+          itemName: item.item.name,
+          quantity: item.quantity.toString(),
+          unitPrice: item.unitPrice.toString(),
+          lineTotal: item.lineTotal.toString(),
+        })),
+        payments: invoice.payments.map(payment => ({
+          amount: payment.amount.toString(),
+          method: payment.method,
+          paidAt: payment.paidAt,
+          recordedBy: payment.recordedByUser?.username || 'غير محدد',
+        })),
+      };
+    });
     
     // Get suppliers orders with outstanding balances
     const supplierOrderWhere: any = {};
@@ -3851,31 +3867,36 @@ router.get('/customer-report', requireRole('ACCOUNTANT', 'MANAGER', 'SALES_GROCE
     }
     
     // Transform to report format
-    const reportData = filteredInvoices.map(invoice => ({
-      invoiceNumber: invoice.invoiceNumber,
-      date: invoice.createdAt,
-      customer: invoice.customer?.name || 'غير محدد',
-      customerType: invoice.customer?.type || 'غير محدد',
-      paymentMethod: invoice.paymentMethod,
-      subtotal: invoice.subtotal.toString(),
-      discount: invoice.discount.toString(),
-      total: invoice.total.toString(),
-      paidAmount: invoice.paidAmount.toString(),
-      outstanding: invoice.total.sub(invoice.paidAmount).toString(),
-      paymentStatus: invoice.paymentStatus,
-      items: invoice.items.map(item => ({
-        itemName: item.item.name,
-        quantity: item.quantity.toString(),
-        unitPrice: item.unitPrice.toString(),
-        lineTotal: item.lineTotal.toString(),
-      })),
-      payments: invoice.payments.map(payment => ({
-        amount: payment.amount.toString(),
-        method: payment.method,
-        paidAt: payment.paidAt,
-        recordedBy: payment.recordedByUser?.username || 'غير محدد',
-      })),
-    }));
+    const reportData = filteredInvoices.map(invoice => {
+      // Recalculate payment status to ensure correctness
+      const correctPaymentStatus = calculatePaymentStatus(invoice.paidAmount, invoice.total);
+      
+      return {
+        invoiceNumber: invoice.invoiceNumber,
+        date: invoice.createdAt,
+        customer: invoice.customer?.name || 'غير محدد',
+        customerType: invoice.customer?.type || 'غير محدد',
+        paymentMethod: invoice.paymentMethod,
+        subtotal: invoice.subtotal.toString(),
+        discount: invoice.discount.toString(),
+        total: invoice.total.toString(),
+        paidAmount: invoice.paidAmount.toString(),
+        outstanding: invoice.total.sub(invoice.paidAmount).toString(),
+        paymentStatus: correctPaymentStatus,
+        items: invoice.items.map(item => ({
+          itemName: item.item.name,
+          quantity: item.quantity.toString(),
+          unitPrice: item.unitPrice.toString(),
+          lineTotal: item.lineTotal.toString(),
+        })),
+        payments: invoice.payments.map(payment => ({
+          amount: payment.amount.toString(),
+          method: payment.method,
+          paidAt: payment.paidAt,
+          recordedBy: payment.recordedByUser?.username || 'غير محدد',
+        })),
+      };
+    });
     
     // Calculate summary
     const totalInvoices = filteredInvoices.length;

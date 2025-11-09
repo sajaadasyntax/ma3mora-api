@@ -12,6 +12,17 @@ const prisma = new PrismaClient();
 router.use(requireAuth);
 router.use(blockAuditorWrites);
 
+// Utility function to calculate payment status based on paidAmount and total
+function calculatePaymentStatus(paidAmount: Prisma.Decimal, total: Prisma.Decimal): 'PAID' | 'PARTIAL' | 'CREDIT' {
+  if (paidAmount.equals(0)) {
+    return 'CREDIT';
+  } else if (paidAmount.greaterThanOrEqualTo(total)) {
+    return 'PAID';
+  } else {
+    return 'PARTIAL';
+  }
+}
+
 // Middleware to check if balance is closed
 async function checkBalanceOpen(req: AuthRequest, res: any, next: any) {
   try {
@@ -476,13 +487,8 @@ router.post('/invoices/:id/payments', requireRole('ACCOUNTANT', 'SALES_GROCERY',
       },
     });
 
-    // Update invoice payment status
-    let paymentStatus: 'PAID' | 'PARTIAL' | 'CREDIT' = 'PARTIAL';
-    if (newPaidAmount.equals(invoice.total)) {
-      paymentStatus = 'PAID';
-    } else if (newPaidAmount.equals(0)) {
-      paymentStatus = 'CREDIT';
-    }
+    // Update invoice payment status using utility function
+    const paymentStatus = calculatePaymentStatus(newPaidAmount, invoice.total);
 
     const updateData: any = {
       paidAmount: newPaidAmount,
@@ -1184,31 +1190,36 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
 
     // If viewType is 'invoices', return invoice-level data similar to supplier report
     if (viewType === 'invoices') {
-      const invoiceReportData = invoices.map(invoice => ({
-        invoiceNumber: invoice.invoiceNumber,
-        date: invoice.createdAt,
-        customer: invoice.customer?.name || 'بدون عميل',
-        inventory: invoice.inventory.name,
-        notes: invoice.notes || null,
-        total: invoice.total.toString(),
-        paidAmount: invoice.paidAmount.toString(),
-        outstanding: new Prisma.Decimal(invoice.total).sub(invoice.paidAmount).toString(),
-        paymentStatus: invoice.paymentStatus,
-        deliveryStatus: invoice.deliveryStatus,
-        paymentConfirmed: invoice.paymentConfirmed,
-        items: invoice.items.map(item => ({
-          itemName: item.item.name,
-          quantity: item.quantity.toString(),
-          unitPrice: item.unitPrice.toString(),
-          lineTotal: item.lineTotal.toString(),
-        })),
-        payments: invoice.payments.map(payment => ({
-          amount: payment.amount.toString(),
-          method: payment.method,
-          paidAt: payment.paidAt,
-          recordedBy: payment.recordedByUser?.username || 'غير محدد',
-        })),
-      }));
+      const invoiceReportData = invoices.map(invoice => {
+        // Recalculate payment status to ensure correctness
+        const correctPaymentStatus = calculatePaymentStatus(invoice.paidAmount, invoice.total);
+        
+        return {
+          invoiceNumber: invoice.invoiceNumber,
+          date: invoice.createdAt,
+          customer: invoice.customer?.name || 'بدون عميل',
+          inventory: invoice.inventory.name,
+          notes: invoice.notes || null,
+          total: invoice.total.toString(),
+          paidAmount: invoice.paidAmount.toString(),
+          outstanding: new Prisma.Decimal(invoice.total).sub(invoice.paidAmount).toString(),
+          paymentStatus: correctPaymentStatus,
+          deliveryStatus: invoice.deliveryStatus,
+          paymentConfirmed: invoice.paymentConfirmed,
+          items: invoice.items.map(item => ({
+            itemName: item.item.name,
+            quantity: item.quantity.toString(),
+            unitPrice: item.unitPrice.toString(),
+            lineTotal: item.lineTotal.toString(),
+          })),
+          payments: invoice.payments.map(payment => ({
+            amount: payment.amount.toString(),
+            method: payment.method,
+            paidAt: payment.paidAt,
+            recordedBy: payment.recordedByUser?.username || 'غير محدد',
+          })),
+        };
+      });
 
       // Add initial and final stock for inventory reports
       let stockInfo: any = null;
@@ -2132,6 +2143,47 @@ router.get('/reports/daily-by-item', requireRole('SALES_GROCERY', 'SALES_BAKERY'
     });
   } catch (error) {
     console.error('Daily sales by item report error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
+// Fix payment status for all invoices (admin utility endpoint)
+router.post('/invoices/fix-payment-status', requireRole('MANAGER'), async (req: AuthRequest, res) => {
+  try {
+    const invoices = await prisma.salesInvoice.findMany({
+      select: {
+        id: true,
+        paidAmount: true,
+        total: true,
+        paymentStatus: true,
+      },
+    });
+
+    let fixed = 0;
+    let unchanged = 0;
+
+    for (const invoice of invoices) {
+      const correctStatus = calculatePaymentStatus(invoice.paidAmount, invoice.total);
+      
+      if (invoice.paymentStatus !== correctStatus) {
+        await prisma.salesInvoice.update({
+          where: { id: invoice.id },
+          data: { paymentStatus: correctStatus },
+        });
+        fixed++;
+      } else {
+        unchanged++;
+      }
+    }
+
+    res.json({
+      message: 'تم تصحيح حالة الدفع للفواتير',
+      fixed,
+      unchanged,
+      total: invoices.length,
+    });
+  } catch (error) {
+    console.error('Fix payment status error:', error);
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
 });
