@@ -1118,6 +1118,147 @@ router.post('/invoices/:id/partial-deliver', requireRole('INVENTORY', 'MANAGER')
   }
 });
 
+// Get available batches for invoice items (grouped by expiry date)
+router.get('/invoices/:id/delivery-batches', requireRole('INVENTORY', 'MANAGER'), async (req: AuthRequest, res) => {
+  try {
+    const { id } = req.params;
+
+    const invoice = await prisma.salesInvoice.findUnique({
+      where: { id },
+      include: {
+        items: {
+          include: {
+            item: true,
+          },
+        },
+        deliveries: {
+          include: {
+            items: {
+              include: {
+                batches: {
+                  include: {
+                    batch: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!invoice) {
+      return res.status(404).json({ error: 'الفاتورة غير موجودة' });
+    }
+
+    // Calculate already delivered quantities per item
+    const deliveredByItem: Record<string, Prisma.Decimal> = {};
+    for (const delivery of invoice.deliveries) {
+      for (const deliveryItem of delivery.items) {
+        const current = deliveredByItem[deliveryItem.itemId] || new Prisma.Decimal(0);
+        deliveredByItem[deliveryItem.itemId] = current.add(deliveryItem.quantity).add(deliveryItem.giftQty);
+      }
+    }
+
+    // Get available batches for each item, grouped by expiry date
+    const itemsWithBatches = await Promise.all(
+      invoice.items.map(async (invoiceItem) => {
+        const orderedQty = new Prisma.Decimal(invoiceItem.quantity);
+        const orderedGift = new Prisma.Decimal(invoiceItem.giftQty);
+        const totalOrdered = orderedQty.add(orderedGift);
+        const delivered = deliveredByItem[invoiceItem.itemId] || new Prisma.Decimal(0);
+        const remaining = totalOrdered.sub(delivered);
+
+        // Get available batches for this item
+        const batches = await prisma.stockBatch.findMany({
+          where: {
+            inventoryId: invoice.inventoryId,
+            itemId: invoiceItem.itemId,
+            quantity: {
+              gt: 0,
+            },
+          },
+          orderBy: [
+            { receivedAt: 'asc' },
+          ],
+        });
+
+        // Sort batches: expiry date (earliest first, nulls last), then received date
+        batches.sort((a, b) => {
+          if (a.expiryDate && b.expiryDate) {
+            const dateDiff = a.expiryDate.getTime() - b.expiryDate.getTime();
+            if (dateDiff !== 0) return dateDiff;
+          }
+          if (a.expiryDate && !b.expiryDate) return -1;
+          if (!a.expiryDate && b.expiryDate) return 1;
+          return a.receivedAt.getTime() - b.receivedAt.getTime();
+        });
+
+        // Group batches by expiry date
+        const batchesByExpiry: Record<string, any[]> = {};
+        for (const batch of batches) {
+          const expiryKey = batch.expiryDate
+            ? new Date(batch.expiryDate).toISOString().split('T')[0]
+            : 'no-expiry';
+          
+          if (!batchesByExpiry[expiryKey]) {
+            batchesByExpiry[expiryKey] = [];
+          }
+          
+          batchesByExpiry[expiryKey].push({
+            id: batch.id,
+            quantity: batch.quantity.toString(),
+            expiryDate: batch.expiryDate ? new Date(batch.expiryDate).toISOString() : null,
+            receivedAt: new Date(batch.receivedAt).toISOString(),
+            notes: batch.notes,
+          });
+        }
+
+        // Convert to array format with expiry date info
+        const expiryGroups = Object.entries(batchesByExpiry).map(([expiryKey, batchList]) => {
+          const totalQty = batchList.reduce(
+            (sum, b) => sum.add(new Prisma.Decimal(b.quantity)),
+            new Prisma.Decimal(0)
+          );
+          
+          return {
+            expiryDate: expiryKey === 'no-expiry' ? null : expiryKey,
+            batches: batchList,
+            totalQuantity: totalQty.toString(),
+          };
+        });
+
+        // Sort expiry groups: earliest expiry first, no-expiry last
+        expiryGroups.sort((a, b) => {
+          if (!a.expiryDate && !b.expiryDate) return 0;
+          if (!a.expiryDate) return 1;
+          if (!b.expiryDate) return -1;
+          return a.expiryDate.localeCompare(b.expiryDate);
+        });
+
+        return {
+          itemId: invoiceItem.itemId,
+          itemName: invoiceItem.item.name,
+          orderedQuantity: orderedQty.toString(),
+          orderedGift: orderedGift.toString(),
+          totalOrdered: totalOrdered.toString(),
+          delivered: delivered.toString(),
+          remaining: remaining.toString(),
+          expiryGroups,
+        };
+      })
+    );
+
+    res.json({
+      invoiceId: id,
+      items: itemsWithBatches,
+    });
+  } catch (error) {
+    console.error('Get delivery batches error:', error);
+    res.status(500).json({ error: error instanceof Error ? error.message : 'خطأ في الخادم' });
+  }
+});
+
 // Sales Reports endpoint
 router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (req: AuthRequest, res) => {
   try {
