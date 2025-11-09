@@ -158,7 +158,14 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GRO
       if (!customer) {
         return res.status(404).json({ error: 'العميل غير موجود' });
       }
-      pricingTier = customer.type; // Customer type overrides any provided pricingTier
+      
+      // For agent users, allow them to use WHOLESALE, RETAIL, or AGENT pricing
+      // If pricingTier is explicitly provided, use it; otherwise use customer type
+      const isAgentUser = req.user?.role === 'AGENT_GROCERY' || req.user?.role === 'AGENT_BAKERY';
+      if (!isAgentUser || !data.pricingTier) {
+        pricingTier = customer.type; // Customer type overrides any provided pricingTier for non-agents
+      }
+      // For agents, if pricingTier is provided, it's already set above
     }
 
     // Get items with prices (including gift items)
@@ -1123,7 +1130,8 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
       section,
       paymentMethod,
       groupBy = 'date',
-      viewType = 'grouped' // 'grouped' for period grouping, 'invoices' for invoice-level
+      viewType = 'grouped', // 'grouped' for period grouping, 'invoices' for invoice-level
+      salesUserRole, // Filter by sales user role (e.g., 'AGENT_GROCERY', 'AGENT_BAKERY')
     } = req.query;
 
     const where: any = {};
@@ -1160,6 +1168,27 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
     if (inventoryId) where.inventoryId = inventoryId;
     if (section) where.section = section;
     if (paymentMethod) where.paymentMethod = paymentMethod;
+    
+    // Filter by sales user role (for agent sales filtering)
+    if (salesUserRole) {
+      const roleFilter = salesUserRole === 'AGENT' 
+        ? { in: ['AGENT_GROCERY', 'AGENT_BAKERY'] }
+        : salesUserRole;
+      
+      // Get all users with the specified role(s)
+      const usersWithRole = await prisma.user.findMany({
+        where: { role: roleFilter as any },
+        select: { id: true },
+      });
+      
+      const userIds = usersWithRole.map(u => u.id);
+      if (userIds.length > 0) {
+        where.salesUserId = { in: userIds };
+      } else {
+        // No users with this role, return empty result
+        where.salesUserId = { in: [] };
+      }
+    }
 
     // Get invoices with detailed information
     const invoices = await prisma.salesInvoice.findMany({
