@@ -217,7 +217,7 @@ const bakeryWarehouses = [
 
 // Grocery Customers
 const groceryCustomers = [
-  { name: 'عبد الوهاب دفع الله اب سم', amount: 19433850 },
+  { name: 'عبدالوهاب دفع الله اب سم', amount: 19433850 },
   { name: 'بقالة البركة - يور / اب سم', amount: 1554000 },
   { name: 'اسعد الزمزمي', amount: 57750 },
   { name: 'عزالدين الحوري', amount: 33618000 },
@@ -226,11 +226,11 @@ const groceryCustomers = [
   { name: 'خالد مدرسة المجد', amount: 488700 },
   { name: 'هيثم حمد النيل', amount: 91450 },
   { name: 'محمد عوض', amount: 730000 },
-  { name: 'عابدین محمد - معتوق', amount: 5000 },
+  { name: 'عابدين محمد - معتوق', amount: 5000 },
   { name: 'حسين علي', amount: 74100 },
   { name: 'اسامه ابراهیم', amount: 351500 },
   { name: 'محمد مهدي', amount: 640000 },
-  { name: 'مرکز معتوق - ممدوح', amount: 16377800 },
+  { name: 'مرکز معتوق ممدوح', amount: 16377800 },
   { name: 'مركز القرشي - عدي', amount: 31704500 },
   { name: 'علي اب رش الكريمت', amount: 1520000 },
   { name: 'عبد الرحمن عبدالله', amount: 41200 },
