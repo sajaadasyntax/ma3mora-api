@@ -247,12 +247,6 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GRO
       }
     }
 
-    // Check if this is a bakery wholesale customer order (eligible for offer prices)
-    const isBakeryWholesale = data.section === 'BAKERY' && 
-                               customer && 
-                               customer.type === 'WHOLESALE' && 
-                               customer.division === 'BAKERY';
-
     // Calculate line totals
     const invoiceItems = data.items.map((lineItem) => {
       const item = items.find((i) => i.id === lineItem.itemId);
@@ -261,12 +255,24 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GRO
       }
 
       let unitPrice: Prisma.Decimal;
-
-      // For bakery wholesale customers, check for offer price first
       const itemWithRelations = item as any; // Type assertion needed until Prisma client is regenerated
-      if (isBakeryWholesale && itemWithRelations.offers && itemWithRelations.offers.length > 0) {
-        // Use offer price if available
-        unitPrice = itemWithRelations.offers[0].offerPrice;
+
+      // Check if an offer was explicitly selected
+      if (lineItem.offerId) {
+        const selectedOffer = itemWithRelations.offers?.find((offer: any) => offer.id === lineItem.offerId);
+        if (selectedOffer) {
+          // Validate offer is active and valid
+          const now = new Date();
+          if (selectedOffer.isActive && 
+              new Date(selectedOffer.validFrom) <= now &&
+              (!selectedOffer.validTo || new Date(selectedOffer.validTo) >= now)) {
+            unitPrice = selectedOffer.offerPrice;
+          } else {
+            throw new Error(`العرض المحدد غير صالح للصنف ${item.name}`);
+          }
+        } else {
+          throw new Error(`العرض المحدد غير موجود للصنف ${item.name}`);
+        }
       } else if (itemWithRelations.prices && itemWithRelations.prices.length > 0) {
         // Use regular price
         unitPrice = itemWithRelations.prices[0].price;
