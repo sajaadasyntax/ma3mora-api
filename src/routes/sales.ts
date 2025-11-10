@@ -149,7 +149,7 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GRO
 
     // Get customer to determine pricing tier (default to RETAIL if no customer)
     let customer = null;
-    let pricingTier: 'WHOLESALE' | 'RETAIL' | 'AGENT' | 'AGENT_WHOLESALE' | 'AGENT_RETAIL' = data.pricingTier || 'RETAIL';
+    let pricingTier: 'WHOLESALE' | 'RETAIL' | 'AGENT' | 'AGENT_WHOLESALE' | 'AGENT_RETAIL' | 'OFFER_1' | 'OFFER_2' = data.pricingTier || 'RETAIL';
     
     const isAgentUser = req.user?.role === 'AGENT_GROCERY' || req.user?.role === 'AGENT_BAKERY';
     
