@@ -180,7 +180,7 @@ router.get('/:id/prices', async (req: AuthRequest, res) => {
 router.put('/:id/prices', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('ItemPrice'), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
-    const { wholesalePrice, retailPrice, agentWholesalePrice, agentRetailPrice, agentPrice, inventoryId } = updatePriceSchema.parse(req.body);
+    const { wholesalePrice, retailPrice, agentWholesalePrice, agentRetailPrice, agentPrice, offer1Price, offer2Price, inventoryId } = updatePriceSchema.parse(req.body);
 
     const updates = [];
 
