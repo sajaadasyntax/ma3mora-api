@@ -197,12 +197,20 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GRO
     
     const allItemIds = [...new Set([...itemIds, ...giftItemIds])]; // Unique item IDs
     
+    // Collect all unique tiers that might be used (from pricingTier and item priceTier overrides)
+    const allTiers = new Set([pricingTier]);
+    data.items.forEach(item => {
+      if (item.priceTier) {
+        allTiers.add(item.priceTier);
+      }
+    });
+
     const items = await prisma.item.findMany({
       where: { id: { in: allItemIds } },
       include: {
         prices: {
           where: {
-            tier: pricingTier as any,
+            tier: { in: Array.from(allTiers) as any }, // Fetch prices for all possible tiers
             OR: [
               { inventoryId: data.inventoryId }, // Inventory-specific price
               { inventoryId: null }, // Global price (applies to all inventories)
@@ -212,7 +220,6 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GRO
             { inventoryId: 'desc' }, // Prefer inventory-specific over global (null comes last with desc)
             { validFrom: 'desc' },
           ],
-          take: 1, // Get the most relevant price (inventory-specific if available, otherwise global)
         },
         offers: {
           where: {
