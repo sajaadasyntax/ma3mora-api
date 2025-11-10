@@ -63,7 +63,7 @@ const createInvoiceSchema = z.object({
   inventoryId: z.string(),
   section: z.enum(['GROCERY', 'BAKERY']),
   customerId: z.string().optional(),
-  pricingTier: z.enum(['WHOLESALE', 'RETAIL', 'AGENT']).optional(), // Used when no customer selected
+  pricingTier: z.enum(['WHOLESALE', 'RETAIL', 'AGENT', 'AGENT_WHOLESALE', 'AGENT_RETAIL']).optional(), // Used when no customer selected
   paymentMethod: z.enum(['CASH', 'BANK', 'BANK_NILE']).default('CASH'),
   discount: z.number().min(0).default(0),
   items: z.array(invoiceItemSchema).min(1),
@@ -148,7 +148,9 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GRO
 
     // Get customer to determine pricing tier (default to RETAIL if no customer)
     let customer = null;
-    let pricingTier: 'WHOLESALE' | 'RETAIL' | 'AGENT' = data.pricingTier || 'RETAIL';
+    let pricingTier: 'WHOLESALE' | 'RETAIL' | 'AGENT' | 'AGENT_WHOLESALE' | 'AGENT_RETAIL' = data.pricingTier || 'RETAIL';
+    
+    const isAgentUser = req.user?.role === 'AGENT_GROCERY' || req.user?.role === 'AGENT_BAKERY';
     
     if (data.customerId) {
       customer = await prisma.customer.findUnique({
@@ -159,13 +161,30 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GRO
         return res.status(404).json({ error: 'العميل غير موجود' });
       }
       
-      // For agent users, allow them to use WHOLESALE, RETAIL, or AGENT pricing
-      // If pricingTier is explicitly provided, use it; otherwise use customer type
-      const isAgentUser = req.user?.role === 'AGENT_GROCERY' || req.user?.role === 'AGENT_BAKERY';
-      if (!isAgentUser || !data.pricingTier) {
-        pricingTier = customer.type; // Customer type overrides any provided pricingTier for non-agents
+      // For agent users, map customer types to agent pricing tiers
+      // If pricingTier is explicitly provided, use it; otherwise map customer type
+      if (isAgentUser) {
+        if (data.pricingTier) {
+          // Use provided pricing tier (could be AGENT_WHOLESALE or AGENT_RETAIL)
+          pricingTier = data.pricingTier;
+        } else {
+          // Map customer type to agent pricing tier
+          if (customer.type === 'WHOLESALE') {
+            pricingTier = 'AGENT_WHOLESALE';
+          } else if (customer.type === 'RETAIL') {
+            pricingTier = 'AGENT_RETAIL';
+          } else {
+            // For AGENT customers, default to AGENT_RETAIL
+            pricingTier = 'AGENT_RETAIL';
+          }
+        }
+      } else {
+        // For non-agent users, use customer type directly
+        pricingTier = customer.type;
       }
-      // For agents, if pricingTier is provided, it's already set above
+    } else if (isAgentUser && !data.pricingTier) {
+      // If no customer and agent user, default to AGENT_RETAIL
+      pricingTier = 'AGENT_RETAIL';
     }
 
     // Get items with prices (including gift items)

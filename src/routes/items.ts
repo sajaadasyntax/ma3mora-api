@@ -16,13 +16,17 @@ const createItemSchema = z.object({
   section: z.enum(['GROCERY', 'BAKERY']),
   wholesalePrice: z.number().positive(),
   retailPrice: z.number().positive(),
-  agentPrice: z.number().positive().optional(),
+  agentWholesalePrice: z.number().positive().optional(),
+  agentRetailPrice: z.number().positive().optional(),
+  agentPrice: z.number().positive().optional(), // Deprecated: kept for backward compatibility
 });
 
 const updatePriceSchema = z.object({
   wholesalePrice: z.number().positive().optional(),
   retailPrice: z.number().positive().optional(),
-  agentPrice: z.number().positive().optional(),
+  agentWholesalePrice: z.number().positive().optional(),
+  agentRetailPrice: z.number().positive().optional(),
+  agentPrice: z.number().positive().optional(), // Deprecated: kept for backward compatibility
   inventoryId: z.string().optional(), // If provided, update price for specific inventory
 });
 
@@ -67,18 +71,30 @@ router.get('/', async (req: AuthRequest, res) => {
 
 router.post('/', requireRole('PROCUREMENT', 'MANAGER'), createAuditLog('Item'), async (req: AuthRequest, res) => {
   try {
-    const { name, section, wholesalePrice, retailPrice, agentPrice } = createItemSchema.parse(req.body);
+    const { name, section, wholesalePrice, retailPrice, agentWholesalePrice, agentRetailPrice, agentPrice } = createItemSchema.parse(req.body);
 
-    const pricesToCreate: Array<{ tier: 'WHOLESALE' | 'RETAIL' | 'AGENT'; price: number }> = [
+    const pricesToCreate: Array<{ tier: 'WHOLESALE' | 'RETAIL' | 'AGENT' | 'AGENT_WHOLESALE' | 'AGENT_RETAIL'; price: number }> = [
       { tier: 'WHOLESALE' as const, price: wholesalePrice },
       { tier: 'RETAIL' as const, price: retailPrice },
     ];
     
-    // Add agent price if provided, otherwise use retail price as default
-    if (agentPrice !== undefined) {
-      pricesToCreate.push({ tier: 'AGENT' as const, price: agentPrice });
+    // Add agent prices - prioritize new separate prices, fallback to legacy agentPrice
+    if (agentWholesalePrice !== undefined) {
+      pricesToCreate.push({ tier: 'AGENT_WHOLESALE' as const, price: agentWholesalePrice });
+    } else if (agentPrice !== undefined) {
+      // Legacy: use agentPrice for both agent tiers if new prices not provided
+      pricesToCreate.push({ tier: 'AGENT_WHOLESALE' as const, price: agentPrice });
     } else {
-      pricesToCreate.push({ tier: 'AGENT' as const, price: retailPrice });
+      pricesToCreate.push({ tier: 'AGENT_WHOLESALE' as const, price: wholesalePrice });
+    }
+    
+    if (agentRetailPrice !== undefined) {
+      pricesToCreate.push({ tier: 'AGENT_RETAIL' as const, price: agentRetailPrice });
+    } else if (agentPrice !== undefined) {
+      // Legacy: use agentPrice for both agent tiers if new prices not provided
+      pricesToCreate.push({ tier: 'AGENT_RETAIL' as const, price: agentPrice });
+    } else {
+      pricesToCreate.push({ tier: 'AGENT_RETAIL' as const, price: retailPrice });
     }
 
     const item = await prisma.item.create({
@@ -150,7 +166,7 @@ router.get('/:id/prices', async (req: AuthRequest, res) => {
 router.put('/:id/prices', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('ItemPrice'), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
-    const { wholesalePrice, retailPrice, agentPrice, inventoryId } = updatePriceSchema.parse(req.body);
+    const { wholesalePrice, retailPrice, agentWholesalePrice, agentRetailPrice, agentPrice, inventoryId } = updatePriceSchema.parse(req.body);
 
     const updates = [];
 
@@ -180,13 +196,50 @@ router.put('/:id/prices', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('
       );
     }
 
-    if (agentPrice !== undefined) {
+    if (agentWholesalePrice !== undefined) {
       updates.push(
         prisma.itemPrice.create({
           data: {
             itemId: id,
             inventoryId: inventoryId || null, // null means applies to all inventories
-            tier: 'AGENT',
+            tier: 'AGENT_WHOLESALE',
+            price: agentWholesalePrice,
+          },
+        })
+      );
+    }
+
+    if (agentRetailPrice !== undefined) {
+      updates.push(
+        prisma.itemPrice.create({
+          data: {
+            itemId: id,
+            inventoryId: inventoryId || null, // null means applies to all inventories
+            tier: 'AGENT_RETAIL',
+            price: agentRetailPrice,
+          },
+        })
+      );
+    }
+
+    // Legacy: if agentPrice is provided but new prices are not, use it for both
+    if (agentPrice !== undefined && agentWholesalePrice === undefined && agentRetailPrice === undefined) {
+      updates.push(
+        prisma.itemPrice.create({
+          data: {
+            itemId: id,
+            inventoryId: inventoryId || null, // null means applies to all inventories
+            tier: 'AGENT_WHOLESALE',
+            price: agentPrice,
+          },
+        })
+      );
+      updates.push(
+        prisma.itemPrice.create({
+          data: {
+            itemId: id,
+            inventoryId: inventoryId || null, // null means applies to all inventories
+            tier: 'AGENT_RETAIL',
             price: agentPrice,
           },
         })

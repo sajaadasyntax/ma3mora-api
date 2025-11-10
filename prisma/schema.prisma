@@ -28,6 +28,8 @@ enum CustomerType {
   WHOLESALE
   RETAIL
   AGENT
+  AGENT_WHOLESALE
+  AGENT_RETAIL
 }
 
 enum PaymentMethod {
