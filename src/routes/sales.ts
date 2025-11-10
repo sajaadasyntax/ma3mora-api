@@ -64,7 +64,7 @@ const createInvoiceSchema = z.object({
   inventoryId: z.string(),
   section: z.enum(['GROCERY', 'BAKERY']),
   customerId: z.string().optional(),
-  pricingTier: z.enum(['WHOLESALE', 'RETAIL', 'AGENT', 'AGENT_WHOLESALE', 'AGENT_RETAIL']).optional(), // Used when no customer selected
+  pricingTier: z.enum(['WHOLESALE', 'RETAIL', 'AGENT', 'AGENT_WHOLESALE', 'AGENT_RETAIL', 'OFFER_1', 'OFFER_2']).optional(), // Used when no customer selected
   paymentMethod: z.enum(['CASH', 'BANK', 'BANK_NILE']).default('CASH'),
   discount: z.number().min(0).default(0),
   items: z.array(invoiceItemSchema).min(1),
