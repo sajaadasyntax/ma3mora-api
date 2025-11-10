@@ -201,7 +201,7 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GRO
       include: {
         prices: {
           where: {
-            tier: pricingTier,
+            tier: pricingTier as any,
             OR: [
               { inventoryId: data.inventoryId }, // Inventory-specific price
               { inventoryId: null }, // Global price (applies to all inventories)
@@ -263,12 +263,13 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GRO
       let unitPrice: Prisma.Decimal;
 
       // For bakery wholesale customers, check for offer price first
-      if (isBakeryWholesale && item.offers && item.offers.length > 0) {
+      const itemWithRelations = item as any; // Type assertion needed until Prisma client is regenerated
+      if (isBakeryWholesale && itemWithRelations.offers && itemWithRelations.offers.length > 0) {
         // Use offer price if available
-        unitPrice = item.offers[0].offerPrice;
-      } else if (item.prices && item.prices.length > 0) {
+        unitPrice = itemWithRelations.offers[0].offerPrice;
+      } else if (itemWithRelations.prices && itemWithRelations.prices.length > 0) {
         // Use regular price
-        unitPrice = item.prices[0].price;
+        unitPrice = itemWithRelations.prices[0].price;
       } else {
         throw new Error(`السعر غير متوفر للصنف ${item.name}`);
       }
@@ -1414,29 +1415,29 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
         const correctPaymentStatus = calculatePaymentStatus(invoice.paidAmount, invoice.total);
         
         return {
-          invoiceNumber: invoice.invoiceNumber,
-          date: invoice.createdAt,
-          customer: invoice.customer?.name || 'بدون عميل',
-          inventory: invoice.inventory.name,
-          notes: invoice.notes || null,
-          total: invoice.total.toString(),
-          paidAmount: invoice.paidAmount.toString(),
-          outstanding: new Prisma.Decimal(invoice.total).sub(invoice.paidAmount).toString(),
+        invoiceNumber: invoice.invoiceNumber,
+        date: invoice.createdAt,
+        customer: invoice.customer?.name || 'بدون عميل',
+        inventory: invoice.inventory.name,
+        notes: invoice.notes || null,
+        total: invoice.total.toString(),
+        paidAmount: invoice.paidAmount.toString(),
+        outstanding: new Prisma.Decimal(invoice.total).sub(invoice.paidAmount).toString(),
           paymentStatus: correctPaymentStatus,
-          deliveryStatus: invoice.deliveryStatus,
-          paymentConfirmed: invoice.paymentConfirmed,
-          items: invoice.items.map(item => ({
-            itemName: item.item.name,
-            quantity: item.quantity.toString(),
-            unitPrice: item.unitPrice.toString(),
-            lineTotal: item.lineTotal.toString(),
-          })),
-          payments: invoice.payments.map(payment => ({
-            amount: payment.amount.toString(),
-            method: payment.method,
-            paidAt: payment.paidAt,
-            recordedBy: payment.recordedByUser?.username || 'غير محدد',
-          })),
+        deliveryStatus: invoice.deliveryStatus,
+        paymentConfirmed: invoice.paymentConfirmed,
+        items: invoice.items.map(item => ({
+          itemName: item.item.name,
+          quantity: item.quantity.toString(),
+          unitPrice: item.unitPrice.toString(),
+          lineTotal: item.lineTotal.toString(),
+        })),
+        payments: invoice.payments.map(payment => ({
+          amount: payment.amount.toString(),
+          method: payment.method,
+          paidAt: payment.paidAt,
+          recordedBy: payment.recordedByUser?.username || 'غير محدد',
+        })),
         };
       });
 

@@ -73,28 +73,28 @@ router.post('/', requireRole('PROCUREMENT', 'MANAGER'), createAuditLog('Item'), 
   try {
     const { name, section, wholesalePrice, retailPrice, agentWholesalePrice, agentRetailPrice, agentPrice } = createItemSchema.parse(req.body);
 
-    const pricesToCreate: Array<{ tier: 'WHOLESALE' | 'RETAIL' | 'AGENT' | 'AGENT_WHOLESALE' | 'AGENT_RETAIL'; price: number }> = [
-      { tier: 'WHOLESALE' as const, price: wholesalePrice },
-      { tier: 'RETAIL' as const, price: retailPrice },
+    const pricesToCreate: Array<{ tier: any; price: number }> = [
+      { tier: 'WHOLESALE', price: wholesalePrice },
+      { tier: 'RETAIL', price: retailPrice },
     ];
     
     // Add agent prices - prioritize new separate prices, fallback to legacy agentPrice
     if (agentWholesalePrice !== undefined) {
-      pricesToCreate.push({ tier: 'AGENT_WHOLESALE' as const, price: agentWholesalePrice });
+      pricesToCreate.push({ tier: 'AGENT_WHOLESALE', price: agentWholesalePrice });
     } else if (agentPrice !== undefined) {
       // Legacy: use agentPrice for both agent tiers if new prices not provided
-      pricesToCreate.push({ tier: 'AGENT_WHOLESALE' as const, price: agentPrice });
+      pricesToCreate.push({ tier: 'AGENT_WHOLESALE', price: agentPrice });
     } else {
-      pricesToCreate.push({ tier: 'AGENT_WHOLESALE' as const, price: wholesalePrice });
+      pricesToCreate.push({ tier: 'AGENT_WHOLESALE', price: wholesalePrice });
     }
     
     if (agentRetailPrice !== undefined) {
-      pricesToCreate.push({ tier: 'AGENT_RETAIL' as const, price: agentRetailPrice });
+      pricesToCreate.push({ tier: 'AGENT_RETAIL', price: agentRetailPrice });
     } else if (agentPrice !== undefined) {
       // Legacy: use agentPrice for both agent tiers if new prices not provided
-      pricesToCreate.push({ tier: 'AGENT_RETAIL' as const, price: agentPrice });
+      pricesToCreate.push({ tier: 'AGENT_RETAIL', price: agentPrice });
     } else {
-      pricesToCreate.push({ tier: 'AGENT_RETAIL' as const, price: retailPrice });
+      pricesToCreate.push({ tier: 'AGENT_RETAIL', price: retailPrice });
     }
 
     const item = await prisma.item.create({
@@ -202,7 +202,7 @@ router.put('/:id/prices', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('
           data: {
             itemId: id,
             inventoryId: inventoryId || null, // null means applies to all inventories
-            tier: 'AGENT_WHOLESALE',
+            tier: 'AGENT_WHOLESALE' as any,
             price: agentWholesalePrice,
           },
         })
@@ -215,7 +215,7 @@ router.put('/:id/prices', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('
           data: {
             itemId: id,
             inventoryId: inventoryId || null, // null means applies to all inventories
-            tier: 'AGENT_RETAIL',
+            tier: 'AGENT_RETAIL' as any,
             price: agentRetailPrice,
           },
         })
@@ -229,7 +229,7 @@ router.put('/:id/prices', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('
           data: {
             itemId: id,
             inventoryId: inventoryId || null, // null means applies to all inventories
-            tier: 'AGENT_WHOLESALE',
+            tier: 'AGENT_WHOLESALE' as any,
             price: agentPrice,
           },
         })
@@ -239,7 +239,7 @@ router.put('/:id/prices', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('
           data: {
             itemId: id,
             inventoryId: inventoryId || null, // null means applies to all inventories
-            tier: 'AGENT_RETAIL',
+            tier: 'AGENT_RETAIL' as any,
             price: agentPrice,
           },
         })

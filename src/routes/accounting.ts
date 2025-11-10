@@ -2508,29 +2508,29 @@ router.get('/outstanding-fees', requireRole('ACCOUNTANT', 'MANAGER', 'SALES_GROC
       const correctPaymentStatus = calculatePaymentStatus(invoice.paidAmount, invoice.total);
       
       return {
-        invoiceNumber: invoice.invoiceNumber,
-        date: invoice.createdAt,
-        customer: invoice.customer?.name || 'بدون عميل',
-        customerType: invoice.customer?.type || 'غير محدد',
-        inventory: invoice.inventory.name,
-        notes: invoice.notes || null,
-        total: invoice.total.toString(),
-        paidAmount: invoice.paidAmount.toString(),
-        outstanding: new Prisma.Decimal(invoice.total).sub(invoice.paidAmount).toString(),
+      invoiceNumber: invoice.invoiceNumber,
+      date: invoice.createdAt,
+      customer: invoice.customer?.name || 'بدون عميل',
+      customerType: invoice.customer?.type || 'غير محدد',
+      inventory: invoice.inventory.name,
+      notes: invoice.notes || null,
+      total: invoice.total.toString(),
+      paidAmount: invoice.paidAmount.toString(),
+      outstanding: new Prisma.Decimal(invoice.total).sub(invoice.paidAmount).toString(),
         paymentStatus: correctPaymentStatus,
-        deliveryStatus: invoice.deliveryStatus,
-        items: invoice.items.map(item => ({
-          itemName: item.item.name,
-          quantity: item.quantity.toString(),
-          unitPrice: item.unitPrice.toString(),
-          lineTotal: item.lineTotal.toString(),
-        })),
-        payments: invoice.payments.map(payment => ({
-          amount: payment.amount.toString(),
-          method: payment.method,
-          paidAt: payment.paidAt,
-          recordedBy: payment.recordedByUser?.username || 'غير محدد',
-        })),
+      deliveryStatus: invoice.deliveryStatus,
+      items: invoice.items.map(item => ({
+        itemName: item.item.name,
+        quantity: item.quantity.toString(),
+        unitPrice: item.unitPrice.toString(),
+        lineTotal: item.lineTotal.toString(),
+      })),
+      payments: invoice.payments.map(payment => ({
+        amount: payment.amount.toString(),
+        method: payment.method,
+        paidAt: payment.paidAt,
+        recordedBy: payment.recordedByUser?.username || 'غير محدد',
+      })),
       };
     });
     
@@ -3948,29 +3948,29 @@ router.get('/customer-report', requireRole('ACCOUNTANT', 'MANAGER', 'SALES_GROCE
       const correctPaymentStatus = calculatePaymentStatus(invoice.paidAmount, invoice.total);
       
       return {
-        invoiceNumber: invoice.invoiceNumber,
-        date: invoice.createdAt,
-        customer: invoice.customer?.name || 'غير محدد',
-        customerType: invoice.customer?.type || 'غير محدد',
-        paymentMethod: invoice.paymentMethod,
-        subtotal: invoice.subtotal.toString(),
-        discount: invoice.discount.toString(),
-        total: invoice.total.toString(),
-        paidAmount: invoice.paidAmount.toString(),
-        outstanding: invoice.total.sub(invoice.paidAmount).toString(),
+      invoiceNumber: invoice.invoiceNumber,
+      date: invoice.createdAt,
+      customer: invoice.customer?.name || 'غير محدد',
+      customerType: invoice.customer?.type || 'غير محدد',
+      paymentMethod: invoice.paymentMethod,
+      subtotal: invoice.subtotal.toString(),
+      discount: invoice.discount.toString(),
+      total: invoice.total.toString(),
+      paidAmount: invoice.paidAmount.toString(),
+      outstanding: invoice.total.sub(invoice.paidAmount).toString(),
         paymentStatus: correctPaymentStatus,
-        items: invoice.items.map(item => ({
-          itemName: item.item.name,
-          quantity: item.quantity.toString(),
-          unitPrice: item.unitPrice.toString(),
-          lineTotal: item.lineTotal.toString(),
-        })),
-        payments: invoice.payments.map(payment => ({
-          amount: payment.amount.toString(),
-          method: payment.method,
-          paidAt: payment.paidAt,
-          recordedBy: payment.recordedByUser?.username || 'غير محدد',
-        })),
+      items: invoice.items.map(item => ({
+        itemName: item.item.name,
+        quantity: item.quantity.toString(),
+        unitPrice: item.unitPrice.toString(),
+        lineTotal: item.lineTotal.toString(),
+      })),
+      payments: invoice.payments.map(payment => ({
+        amount: payment.amount.toString(),
+        method: payment.method,
+        paidAt: payment.paidAt,
+        recordedBy: payment.recordedByUser?.username || 'غير محدد',
+      })),
       };
     });
     
