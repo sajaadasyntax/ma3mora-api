@@ -49,6 +49,7 @@ const invoiceItemSchema = z.object({
   giftQty: z.number().min(0).default(0).optional(), // Deprecated: kept for backward compatibility
   giftItemId: z.string().optional(), // New: The item being given as gift
   giftQuantity: z.number().min(0).optional(), // New: Quantity of the gift item
+  offerId: z.string().optional(), // Optional: ID of the offer to apply (if any)
 }).refine((data) => {
   // Either use old giftQty or new giftItemId/giftQuantity, but not both
   const hasOldGift = data.giftQty !== undefined && data.giftQty > 0;
