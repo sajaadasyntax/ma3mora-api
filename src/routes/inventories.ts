@@ -157,8 +157,19 @@ router.get('/:id/stocks', requireRole('INVENTORY', 'MANAGER', 'ACCOUNTANT', 'AUD
           .filter((d): d is Date => d !== null)
           .sort((a, b) => a.getTime() - b.getTime())[0] || null;
 
+        // Calculate total quantity from batches
+        const totalQuantityFromBatches = batches.reduce((sum, b) => {
+          try {
+            return sum + parseFloat((b?.quantity || 0).toString());
+          } catch {
+            return sum;
+          }
+        }, 0);
+
         return {
           ...stock,
+          // Always use quantity from batches if batches exist, otherwise use stock.quantity
+          quantity: batches.length > 0 ? new Prisma.Decimal(totalQuantityFromBatches) : stock.quantity,
           batches: batches.map((b: any) => {
             try {
               const expiryDate = parseDate(b?.expiryDate);
