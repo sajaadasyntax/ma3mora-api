@@ -63,7 +63,21 @@ router.get('/', requireRole('ACCOUNTANT', 'MANAGER'), async (req: AuthRequest, r
     res.json(offers);
   } catch (error) {
     console.error('Get offers error:', error);
-    res.status(500).json({ error: 'خطأ في الخادم' });
+    if (error instanceof Error) {
+      console.error('Error message:', error.message);
+      console.error('Error stack:', error.stack);
+      // Check if it's a Prisma error about missing model
+      if (error.message.includes('itemOffer') || error.message.includes('ItemOffer')) {
+        return res.status(500).json({ 
+          error: 'خطأ في قاعدة البيانات: يرجى تشغيل Prisma migration و generate',
+          details: error.message 
+        });
+      }
+    }
+    res.status(500).json({ 
+      error: 'خطأ في الخادم',
+      details: error instanceof Error ? error.message : String(error)
+    });
   }
 });
 
@@ -98,7 +112,19 @@ router.get('/item/:itemId', requireRole('ACCOUNTANT', 'MANAGER', 'SALES_BAKERY',
     res.json(offers);
   } catch (error) {
     console.error('Get item offers error:', error);
-    res.status(500).json({ error: 'خطأ في الخادم' });
+    if (error instanceof Error) {
+      console.error('Error message:', error.message);
+      if (error.message.includes('itemOffer') || error.message.includes('ItemOffer')) {
+        return res.status(500).json({ 
+          error: 'خطأ في قاعدة البيانات: يرجى تشغيل Prisma migration و generate',
+          details: error.message 
+        });
+      }
+    }
+    res.status(500).json({ 
+      error: 'خطأ في الخادم',
+      details: error instanceof Error ? error.message : String(error)
+    });
   }
 });
 
