@@ -49,7 +49,7 @@ const invoiceItemSchema = z.object({
   giftQty: z.number().min(0).default(0).optional(), // Deprecated: kept for backward compatibility
   giftItemId: z.string().optional(), // New: The item being given as gift
   giftQuantity: z.number().min(0).optional(), // New: Quantity of the gift item
-  offerId: z.string().optional(), // Optional: ID of the offer to apply (if any)
+  priceTier: z.enum(['WHOLESALE', 'RETAIL', 'AGENT', 'AGENT_WHOLESALE', 'AGENT_RETAIL', 'OFFER_1', 'OFFER_2']).optional(), // Optional: Override price tier (for bakery wholesale offers)
 }).refine((data) => {
   // Either use old giftQty or new giftItemId/giftQuantity, but not both
   const hasOldGift = data.giftQty !== undefined && data.giftQty > 0;
@@ -257,25 +257,34 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GRO
       let unitPrice: Prisma.Decimal;
       const itemWithRelations = item as any; // Type assertion needed until Prisma client is regenerated
 
-      // Check if an offer was explicitly selected
-      if (lineItem.offerId) {
-        const selectedOffer = itemWithRelations.offers?.find((offer: any) => offer.id === lineItem.offerId);
-        if (selectedOffer) {
-          // Validate offer is active and valid
-          const now = new Date();
-          if (selectedOffer.isActive && 
-              new Date(selectedOffer.validFrom) <= now &&
-              (!selectedOffer.validTo || new Date(selectedOffer.validTo) >= now)) {
-            unitPrice = selectedOffer.offerPrice;
-          } else {
-            throw new Error(`العرض المحدد غير صالح للصنف ${item.name}`);
-          }
+      // Determine which price tier to use
+      let tierToUse = pricingTier as any;
+      if (lineItem.priceTier) {
+        // Override with explicitly selected price tier (for bakery wholesale offers)
+        tierToUse = lineItem.priceTier;
+      }
+
+      // Find the price for the selected tier
+      if (itemWithRelations.prices && itemWithRelations.prices.length > 0) {
+        const matchingPrices = itemWithRelations.prices
+          .filter((p: any) => p.tier === tierToUse)
+          .filter((p: any) => {
+            // Include inventory-specific price OR global price (inventoryId is null)
+            return p.inventoryId === data.inventoryId || p.inventoryId === null;
+          })
+          .sort((a: any, b: any) => {
+            // Prefer inventory-specific over global (null comes last)
+            if (a.inventoryId && !b.inventoryId) return -1;
+            if (!a.inventoryId && b.inventoryId) return 1;
+            // Then by validFrom (most recent first)
+            return new Date(b.validFrom).getTime() - new Date(a.validFrom).getTime();
+          });
+
+        if (matchingPrices.length > 0) {
+          unitPrice = matchingPrices[0].price;
         } else {
-          throw new Error(`العرض المحدد غير موجود للصنف ${item.name}`);
+          throw new Error(`السعر غير متوفر للصنف ${item.name} للفئة ${tierToUse}`);
         }
-      } else if (itemWithRelations.prices && itemWithRelations.prices.length > 0) {
-        // Use regular price
-        unitPrice = itemWithRelations.prices[0].price;
       } else {
         throw new Error(`السعر غير متوفر للصنف ${item.name}`);
       }
