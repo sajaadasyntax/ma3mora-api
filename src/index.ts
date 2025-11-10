@@ -13,6 +13,7 @@ import accountingRoutes from './routes/accounting';
 import employeesRoutes from './routes/employees';
 import uploadsRoutes from './routes/uploads';
 import usersRoutes from './routes/users';
+import offersRoutes from './routes/offers';
 import path from 'path';
 
 const app = express();
@@ -41,6 +42,7 @@ app.use('/api/accounting', accountingRoutes);
 app.use('/api/employees', employeesRoutes);
 app.use('/api/uploads', uploadsRoutes);
 app.use('/api/users', usersRoutes);
+app.use('/api/offers', offersRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

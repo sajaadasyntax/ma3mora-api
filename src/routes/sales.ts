@@ -194,6 +194,18 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GRO
           ],
           take: 1, // Get the most relevant price (inventory-specific if available, otherwise global)
         },
+        offers: {
+          where: {
+            isActive: true,
+            validFrom: { lte: new Date() },
+            OR: [
+              { validTo: null },
+              { validTo: { gte: new Date() } },
+            ],
+          },
+          orderBy: { validFrom: 'desc' },
+          take: 1, // Get the most recent active offer
+        },
       },
     });
 
@@ -216,14 +228,32 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GRO
       }
     }
 
+    // Check if this is a bakery wholesale customer order (eligible for offer prices)
+    const isBakeryWholesale = data.section === 'BAKERY' && 
+                               customer && 
+                               customer.type === 'WHOLESALE' && 
+                               customer.division === 'BAKERY';
+
     // Calculate line totals
     const invoiceItems = data.items.map((lineItem) => {
       const item = items.find((i) => i.id === lineItem.itemId);
-      if (!item || item.prices.length === 0) {
-        throw new Error(`السعر غير متوفر للصنف ${item?.name || lineItem.itemId}`);
+      if (!item) {
+        throw new Error(`الصنف غير موجود: ${lineItem.itemId}`);
       }
 
-      const unitPrice = item.prices[0].price;
+      let unitPrice: Prisma.Decimal;
+
+      // For bakery wholesale customers, check for offer price first
+      if (isBakeryWholesale && item.offers && item.offers.length > 0) {
+        // Use offer price if available
+        unitPrice = item.offers[0].offerPrice;
+      } else if (item.prices && item.prices.length > 0) {
+        // Use regular price
+        unitPrice = item.prices[0].price;
+      } else {
+        throw new Error(`السعر غير متوفر للصنف ${item.name}`);
+      }
+
       const lineTotal = new Prisma.Decimal(lineItem.quantity).mul(unitPrice);
 
       return {

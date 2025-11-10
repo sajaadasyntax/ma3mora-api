@@ -89,6 +89,7 @@ model User {
   advances               Advance[]
   cashExchanges          CashExchange[]
   refundedOrders         ProcOrder[]         @relation("OrderRefunder")
+  itemOffers             ItemOffer[]
 
   @@map("users")
 }
@@ -137,6 +138,7 @@ model Item {
   updatedAt DateTime @updatedAt
 
   prices            ItemPrice[]
+  offers            ItemOffer[]
   stocks            InventoryStock[]
   batches           StockBatch[]
   transfers         InventoryTransfer[]
@@ -165,6 +167,26 @@ model ItemPrice {
 
   @@index([itemId, tier, inventoryId])
   @@map("item_prices")
+}
+
+model ItemOffer {
+  id        String   @id @default(cuid())
+  itemId    String
+  offerPrice Decimal  @db.Decimal(10, 2)
+  validFrom DateTime  @default(now())
+  validTo   DateTime? // Null means offer is active indefinitely
+  isActive  Boolean  @default(true)
+  notes     String?
+  createdBy String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  item      Item @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  creator   User @relation(fields: [createdBy], references: [id])
+
+  @@index([itemId, isActive])
+  @@index([validFrom, validTo])
+  @@map("item_offers")
 }
 
 model InventoryStock {
