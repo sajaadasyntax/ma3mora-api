@@ -182,6 +182,21 @@ router.put('/:id/prices', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('
     const { id } = req.params;
     const { wholesalePrice, retailPrice, agentWholesalePrice, agentRetailPrice, agentPrice, offer1Price, offer2Price, inventoryId } = updatePriceSchema.parse(req.body);
 
+    // Verify item exists
+    const item = await prisma.item.findUnique({
+      where: { id },
+      select: { id: true, section: true, name: true },
+    });
+
+    if (!item) {
+      return res.status(404).json({ error: 'الصنف غير موجود' });
+    }
+
+    // Validate that offer prices are only for bakery items
+    if ((offer1Price !== undefined || offer2Price !== undefined) && item.section !== 'BAKERY') {
+      return res.status(400).json({ error: 'عروض الأسعار متاحة فقط لأصناف الأفران' });
+    }
+
     const updates = [];
 
     if (wholesalePrice !== undefined) {
@@ -286,6 +301,10 @@ router.put('/:id/prices', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('
       );
     }
 
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'لم يتم تحديد أي أسعار للتحديث' });
+    }
+
     const newPrices = await Promise.all(updates);
 
     res.json(newPrices);
@@ -294,7 +313,12 @@ router.put('/:id/prices', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('
       return res.status(400).json({ error: 'بيانات غير صالحة', details: error.errors });
     }
     console.error('Update prices error:', error);
-    res.status(500).json({ error: 'خطأ في الخادم' });
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error('Error details:', errorMessage);
+    res.status(500).json({ 
+      error: 'خطأ في الخادم',
+      details: process.env.NODE_ENV === 'development' ? errorMessage : undefined
+    });
   }
 });
 
