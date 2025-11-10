@@ -224,9 +224,8 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GRO
             ],
           },
           orderBy: { validFrom: 'desc' },
-          take: 1, // Get the most recent active offer
         },
-      },
+      } as any,
     });
 
     // Check stock availability for gift items

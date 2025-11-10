@@ -19,6 +19,8 @@ const createItemSchema = z.object({
   agentWholesalePrice: z.number().positive().optional(),
   agentRetailPrice: z.number().positive().optional(),
   agentPrice: z.number().positive().optional(), // Deprecated: kept for backward compatibility
+  offer1Price: z.number().positive().optional(), // First offer price (for bakery items)
+  offer2Price: z.number().positive().optional(), // Second offer price (for bakery items)
 });
 
 const updatePriceSchema = z.object({
@@ -27,6 +29,8 @@ const updatePriceSchema = z.object({
   agentWholesalePrice: z.number().positive().optional(),
   agentRetailPrice: z.number().positive().optional(),
   agentPrice: z.number().positive().optional(), // Deprecated: kept for backward compatibility
+  offer1Price: z.number().positive().optional(), // First offer price (for bakery items)
+  offer2Price: z.number().positive().optional(), // Second offer price (for bakery items)
   inventoryId: z.string().optional(), // If provided, update price for specific inventory
 });
 
@@ -71,7 +75,7 @@ router.get('/', async (req: AuthRequest, res) => {
 
 router.post('/', requireRole('PROCUREMENT', 'MANAGER'), createAuditLog('Item'), async (req: AuthRequest, res) => {
   try {
-    const { name, section, wholesalePrice, retailPrice, agentWholesalePrice, agentRetailPrice, agentPrice } = createItemSchema.parse(req.body);
+    const { name, section, wholesalePrice, retailPrice, agentWholesalePrice, agentRetailPrice, agentPrice, offer1Price, offer2Price } = createItemSchema.parse(req.body);
 
     const pricesToCreate: Array<{ tier: any; price: number }> = [
       { tier: 'WHOLESALE', price: wholesalePrice },
@@ -95,6 +99,16 @@ router.post('/', requireRole('PROCUREMENT', 'MANAGER'), createAuditLog('Item'), 
       pricesToCreate.push({ tier: 'AGENT_RETAIL', price: agentPrice });
     } else {
       pricesToCreate.push({ tier: 'AGENT_RETAIL', price: retailPrice });
+    }
+
+    // Add offer prices for bakery items
+    if (section === 'BAKERY') {
+      if (offer1Price !== undefined) {
+        pricesToCreate.push({ tier: 'OFFER_1', price: offer1Price });
+      }
+      if (offer2Price !== undefined) {
+        pricesToCreate.push({ tier: 'OFFER_2', price: offer2Price });
+      }
     }
 
     const item = await prisma.item.create({
@@ -241,6 +255,32 @@ router.put('/:id/prices', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('
             inventoryId: inventoryId || null, // null means applies to all inventories
             tier: 'AGENT_RETAIL' as any,
             price: agentPrice,
+          },
+        })
+      );
+    }
+
+    if (offer1Price !== undefined) {
+      updates.push(
+        prisma.itemPrice.create({
+          data: {
+            itemId: id,
+            inventoryId: inventoryId || null, // null means applies to all inventories
+            tier: 'OFFER_1' as any,
+            price: offer1Price,
+          },
+        })
+      );
+    }
+
+    if (offer2Price !== undefined) {
+      updates.push(
+        prisma.itemPrice.create({
+          data: {
+            itemId: id,
+            inventoryId: inventoryId || null, // null means applies to all inventories
+            tier: 'OFFER_2' as any,
+            price: offer2Price,
           },
         })
       );
