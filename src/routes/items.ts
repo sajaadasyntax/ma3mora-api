@@ -197,6 +197,33 @@ router.put('/:id/prices', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('
       return res.status(400).json({ error: 'عروض الأسعار متاحة فقط لأصناف الأفران' });
     }
 
+    // Determine which tiers we're updating
+    const tiersToUpdate: string[] = [];
+    if (wholesalePrice !== undefined) tiersToUpdate.push('WHOLESALE');
+    if (retailPrice !== undefined) tiersToUpdate.push('RETAIL');
+    if (agentWholesalePrice !== undefined) tiersToUpdate.push('AGENT_WHOLESALE');
+    if (agentRetailPrice !== undefined) tiersToUpdate.push('AGENT_RETAIL');
+    if (agentPrice !== undefined && agentWholesalePrice === undefined && agentRetailPrice === undefined) {
+      tiersToUpdate.push('AGENT_WHOLESALE', 'AGENT_RETAIL');
+    }
+    if (offer1Price !== undefined) tiersToUpdate.push('OFFER_1');
+    if (offer2Price !== undefined) tiersToUpdate.push('OFFER_2');
+
+    if (tiersToUpdate.length === 0) {
+      return res.status(400).json({ error: 'لم يتم تحديد أي أسعار للتحديث' });
+    }
+
+    // Delete existing prices for the tiers being updated (for this inventoryId or null)
+    const targetInventoryId = inventoryId || null;
+    await prisma.itemPrice.deleteMany({
+      where: {
+        itemId: id,
+        tier: { in: tiersToUpdate as any },
+        inventoryId: targetInventoryId,
+      },
+    });
+
+    // Create new prices
     const updates = [];
 
     if (wholesalePrice !== undefined) {
@@ -204,7 +231,7 @@ router.put('/:id/prices', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('
         prisma.itemPrice.create({
           data: {
             itemId: id,
-            inventoryId: inventoryId || null, // null means applies to all inventories
+            inventoryId: targetInventoryId,
             tier: 'WHOLESALE',
             price: wholesalePrice,
           },
@@ -217,7 +244,7 @@ router.put('/:id/prices', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('
         prisma.itemPrice.create({
           data: {
             itemId: id,
-            inventoryId: inventoryId || null, // null means applies to all inventories
+            inventoryId: targetInventoryId,
             tier: 'RETAIL',
             price: retailPrice,
           },
@@ -230,7 +257,7 @@ router.put('/:id/prices', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('
         prisma.itemPrice.create({
           data: {
             itemId: id,
-            inventoryId: inventoryId || null, // null means applies to all inventories
+            inventoryId: targetInventoryId,
             tier: 'AGENT_WHOLESALE' as any,
             price: agentWholesalePrice,
           },
@@ -243,7 +270,7 @@ router.put('/:id/prices', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('
         prisma.itemPrice.create({
           data: {
             itemId: id,
-            inventoryId: inventoryId || null, // null means applies to all inventories
+            inventoryId: targetInventoryId,
             tier: 'AGENT_RETAIL' as any,
             price: agentRetailPrice,
           },
@@ -257,7 +284,7 @@ router.put('/:id/prices', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('
         prisma.itemPrice.create({
           data: {
             itemId: id,
-            inventoryId: inventoryId || null, // null means applies to all inventories
+            inventoryId: targetInventoryId,
             tier: 'AGENT_WHOLESALE' as any,
             price: agentPrice,
           },
@@ -267,7 +294,7 @@ router.put('/:id/prices', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('
         prisma.itemPrice.create({
           data: {
             itemId: id,
-            inventoryId: inventoryId || null, // null means applies to all inventories
+            inventoryId: targetInventoryId,
             tier: 'AGENT_RETAIL' as any,
             price: agentPrice,
           },
@@ -280,7 +307,7 @@ router.put('/:id/prices', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('
         prisma.itemPrice.create({
           data: {
             itemId: id,
-            inventoryId: inventoryId || null, // null means applies to all inventories
+            inventoryId: targetInventoryId,
             tier: 'OFFER_1' as any,
             price: offer1Price,
           },
@@ -293,16 +320,12 @@ router.put('/:id/prices', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('
         prisma.itemPrice.create({
           data: {
             itemId: id,
-            inventoryId: inventoryId || null, // null means applies to all inventories
+            inventoryId: targetInventoryId,
             tier: 'OFFER_2' as any,
             price: offer2Price,
           },
         })
       );
-    }
-
-    if (updates.length === 0) {
-      return res.status(400).json({ error: 'لم يتم تحديد أي أسعار للتحديث' });
     }
 
     const newPrices = await Promise.all(updates);
