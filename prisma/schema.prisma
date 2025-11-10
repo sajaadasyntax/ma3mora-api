@@ -533,6 +533,7 @@ model Expense {
   inventory Inventory? @relation(fields: [inventoryId], references: [id])
   creator   User       @relation(fields: [createdBy], references: [id])
 
+  @@index([isDebt])
   @@map("expenses")
 }
 
@@ -550,6 +551,7 @@ model Income {
   inventory Inventory? @relation(fields: [inventoryId], references: [id])
   creator   User       @relation(fields: [createdBy], references: [id])
 
+  @@index([isDebt])
   @@map("income")
 }
 
