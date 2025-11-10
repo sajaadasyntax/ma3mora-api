@@ -290,6 +290,7 @@ model Customer {
   openingBalance OpeningBalance[]
   cumulativeAggregates CustomerCumulativeAggregate[]
 
+  @@index([isAgentCustomer])
   @@map("customers")
 }
 
