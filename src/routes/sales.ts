@@ -162,6 +162,16 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GRO
         return res.status(404).json({ error: 'العميل غير موجود' });
       }
       
+      // Validate that agents can only create invoices for agent customers
+      if (isAgentUser && !customer.isAgentCustomer) {
+        return res.status(403).json({ error: 'لا يمكنك إنشاء فاتورة لهذا العميل' });
+      }
+      
+      // Validate that regular sales users cannot create invoices for agent customers
+      if (!isAgentUser && customer.isAgentCustomer) {
+        return res.status(403).json({ error: 'لا يمكنك إنشاء فاتورة لهذا العميل' });
+      }
+      
       // For agent users, map customer types to agent pricing tiers
       // If pricingTier is explicitly provided, use it; otherwise map customer type
       if (isAgentUser) {
