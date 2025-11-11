@@ -1210,6 +1210,7 @@ async function main() {
           name: customerInfo.name,
           type: CustomerType.RETAIL,
           division: Section.GROCERY,
+          isAgentCustomer: true, // Mark as agent customer so agent users can see them
         },
       });
     } else {
@@ -1218,6 +1219,7 @@ async function main() {
         data: {
           type: CustomerType.RETAIL,
           division: Section.GROCERY,
+          isAgentCustomer: true, // Mark as agent customer so agent users can see them
         },
       });
     }
