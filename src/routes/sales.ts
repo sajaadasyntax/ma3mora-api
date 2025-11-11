@@ -236,21 +236,29 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GRO
     });
 
     // Check stock availability for gift items
+    // Aggregate gift quantities per gift item to handle multiple offers with same gift
+    const giftQuantities: Record<string, number> = {};
     for (const lineItem of data.items) {
       if (lineItem.giftItemId && lineItem.giftQuantity) {
-        const giftStock = await prisma.inventoryStock.findUnique({
-          where: {
-            inventoryId_itemId: {
-              inventoryId: data.inventoryId,
-              itemId: lineItem.giftItemId,
-            },
-          },
-        });
+        const currentQty = giftQuantities[lineItem.giftItemId] || 0;
+        giftQuantities[lineItem.giftItemId] = currentQty + lineItem.giftQuantity;
+      }
+    }
 
-        if (!giftStock || giftStock.quantity.lessThan(lineItem.giftQuantity)) {
-          const giftItem = items.find((i) => i.id === lineItem.giftItemId);
-          throw new Error(`الرصيد غير كافٍ للهدية: ${giftItem?.name || lineItem.giftItemId}. المطلوب: ${lineItem.giftQuantity}, المتاح: ${giftStock?.quantity.toString() || '0'}`);
-        }
+    // Check stock for each unique gift item (with aggregated quantities)
+    for (const [giftItemId, totalQuantity] of Object.entries(giftQuantities)) {
+      const giftStock = await prisma.inventoryStock.findUnique({
+        where: {
+          inventoryId_itemId: {
+            inventoryId: data.inventoryId,
+            itemId: giftItemId,
+          },
+        },
+      });
+
+      if (!giftStock || giftStock.quantity.lessThan(totalQuantity)) {
+        const giftItem = items.find((i) => i.id === giftItemId);
+        throw new Error(`الرصيد غير كافٍ للهدية: ${giftItem?.name || giftItemId}. المطلوب: ${totalQuantity}, المتاح: ${giftStock?.quantity.toString() || '0'}`);
       }
     }
 
