@@ -226,7 +226,7 @@ async function main() {
               paymentMethod: PaymentMethod.CASH,
               paymentStatus: PaymentStatus.CREDIT, // Unpaid
               deliveryStatus: DeliveryStatus.DELIVERED, // Marked as delivered but NO delivery record created
-              paymentConfirmed: false,
+              paymentConfirmationStatus: 'PENDING',
               subtotal: amount,
               discount: new Prisma.Decimal(0),
               total: amount,

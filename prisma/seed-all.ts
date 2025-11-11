@@ -1,4 +1,4 @@
-import { PrismaClient, Section, CustomerType, PaymentStatus, DeliveryStatus, PaymentMethod, Prisma, Role, ProcOrderStatus, BalanceScope } from '@prisma/client';
+import { PrismaClient, Section, CustomerType, PaymentStatus, DeliveryStatus, PaymentMethod, Prisma, Role, ProcOrderStatus, BalanceScope, PaymentConfirmationStatus } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
@@ -1053,7 +1053,7 @@ async function main() {
           paymentMethod: PaymentMethod.CASH,
           paymentStatus: PaymentStatus.CREDIT,
           deliveryStatus: DeliveryStatus.DELIVERED,
-          paymentConfirmed: false,
+          paymentConfirmationStatus: PaymentConfirmationStatus.PENDING,
           subtotal: amount,
           discount: new Prisma.Decimal(0),
           total: amount,
@@ -1139,7 +1139,7 @@ async function main() {
               paymentMethod: PaymentMethod.CASH,
               paymentStatus: PaymentStatus.CREDIT,
               deliveryStatus: DeliveryStatus.DELIVERED,
-              paymentConfirmed: false,
+              paymentConfirmationStatus: PaymentConfirmationStatus.PENDING,
               subtotal: amount,
               discount: new Prisma.Decimal(0),
               total: amount,
@@ -1174,7 +1174,7 @@ async function main() {
             paymentMethod: PaymentMethod.CASH,
             paymentStatus: PaymentStatus.CREDIT,
             deliveryStatus: DeliveryStatus.DELIVERED,
-            paymentConfirmed: false,
+            paymentConfirmationStatus: PaymentConfirmationStatus.PENDING,
             subtotal: amount,
             discount: new Prisma.Decimal(0),
             total: amount,
@@ -1258,7 +1258,7 @@ async function main() {
           paymentMethod: PaymentMethod.CASH,
           paymentStatus: PaymentStatus.CREDIT,
           deliveryStatus: DeliveryStatus.DELIVERED,
-          paymentConfirmed: false,
+          paymentConfirmationStatus: PaymentConfirmationStatus.PENDING,
           subtotal: amount,
           discount: new Prisma.Decimal(0),
           total: amount,
