@@ -216,9 +216,11 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GRO
     });
 
     // For agent users, always include both agent tiers to ensure we have prices
+    // Also include legacy 'AGENT' tier for backward compatibility
     if (isAgentUser) {
       allTiers.add('AGENT_RETAIL');
       allTiers.add('AGENT_WHOLESALE');
+      allTiers.add('AGENT'); // Legacy tier
     }
 
     const items = await prisma.item.findMany({
@@ -297,7 +299,8 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GRO
 
       // Find the price for the selected tier
       if (itemWithRelations.prices && itemWithRelations.prices.length > 0) {
-        const matchingPrices = itemWithRelations.prices
+        // First try to find exact tier match
+        let matchingPrices = itemWithRelations.prices
           .filter((p: any) => p.tier === tierToUse)
           .filter((p: any) => {
             // Include inventory-specific price OR global price (inventoryId is null)
@@ -310,6 +313,23 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GRO
             // Then by validFrom (most recent first)
             return new Date(b.validFrom).getTime() - new Date(a.validFrom).getTime();
           });
+
+        // If no exact match and looking for AGENT_RETAIL or AGENT_WHOLESALE, try legacy 'AGENT' tier
+        if (matchingPrices.length === 0 && (tierToUse === 'AGENT_RETAIL' || tierToUse === 'AGENT_WHOLESALE')) {
+          matchingPrices = itemWithRelations.prices
+            .filter((p: any) => p.tier === 'AGENT')
+            .filter((p: any) => {
+              // Include inventory-specific price OR global price (inventoryId is null)
+              return p.inventoryId === data.inventoryId || p.inventoryId === null;
+            })
+            .sort((a: any, b: any) => {
+              // Prefer inventory-specific over global (null comes last)
+              if (a.inventoryId && !b.inventoryId) return -1;
+              if (!a.inventoryId && b.inventoryId) return 1;
+              // Then by validFrom (most recent first)
+              return new Date(b.validFrom).getTime() - new Date(a.validFrom).getTime();
+            });
+        }
 
         if (matchingPrices.length > 0) {
           unitPrice = matchingPrices[0].price;
