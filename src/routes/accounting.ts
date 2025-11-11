@@ -2656,7 +2656,7 @@ router.get('/bank-transactions', requireRole('ACCOUNTANT', 'MANAGER'), async (re
       where: {
         method: { in: methodFilter },
         ...(Object.keys(dateFilter).length > 0 ? { paidAt: dateFilter } : {}),
-        invoice: { paymentConfirmed: true },
+        invoice: { paymentConfirmationStatus: 'CONFIRMED' },
       },
       include: {
         invoice: {
@@ -3425,7 +3425,7 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
     const prePeriodSalesPayments = await prisma.salesPayment.findMany({
       where: {
         paidAt: { lt: startOfDay },
-        invoice: { paymentConfirmed: true },
+        invoice: { paymentConfirmationStatus: 'CONFIRMED' },
         ...(method ? { method: method as 'CASH' | 'BANK' | 'BANK_NILE' } : {}),
       },
     });

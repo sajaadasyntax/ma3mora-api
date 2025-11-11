@@ -977,7 +977,7 @@ router.post('/orders/:id/payments', requireRole('MANAGER'), checkBalanceOpen, cr
     };
 
     // Sales payments inflow (only confirmed invoices)
-    const salesPays = await prisma.salesPayment.findMany({ where: { invoice: { paymentConfirmed: true } } });
+    const salesPays = await prisma.salesPayment.findMany({ where: { invoice: { paymentConfirmationStatus: 'CONFIRMED' } } });
     const salesIn: Record<'CASH'|'BANK'|'BANK_NILE', Prisma.Decimal> = {
       CASH: salesPays.filter(p => p.method === 'CASH').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
       BANK: salesPays.filter(p => p.method === 'BANK').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
