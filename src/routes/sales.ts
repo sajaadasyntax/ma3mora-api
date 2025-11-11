@@ -112,7 +112,7 @@ router.get('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GROC
 
     // Inventory users can only see payment-confirmed invoices
     if (req.user?.role === 'INVENTORY') {
-      where.paymentConfirmed = true;
+      where.paymentConfirmationStatus = 'CONFIRMED';
     }
 
     const invoices = await prisma.salesInvoice.findMany({
@@ -478,7 +478,7 @@ router.get('/invoices/:id', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_
     }
 
     // Inventory users can only see payment-confirmed invoices
-    if (req.user?.role === 'INVENTORY' && !invoice.paymentConfirmed) {
+    if (req.user?.role === 'INVENTORY' && invoice.paymentConfirmationStatus !== 'CONFIRMED') {
       return res.status(403).json({ error: 'ليس لديك صلاحية للوصول' });
     }
 
@@ -673,14 +673,18 @@ router.post('/invoices/:id/confirm-payment', requireRole('ACCOUNTANT', 'MANAGER'
       return res.status(404).json({ error: 'الفاتورة غير موجودة' });
     }
 
-    if (invoice.paymentConfirmed) {
+    if (invoice.paymentConfirmationStatus === 'CONFIRMED') {
       return res.status(400).json({ error: 'الدفع مؤكد بالفعل' });
+    }
+
+    if (invoice.paymentConfirmationStatus === 'REJECTED') {
+      return res.status(400).json({ error: 'لا يمكن تأكيد الفاتورة المرفوضة' });
     }
 
     const updatedInvoice = await prisma.salesInvoice.update({
       where: { id },
       data: {
-        paymentConfirmed: true,
+        paymentConfirmationStatus: 'CONFIRMED',
         paymentConfirmedBy: req.user!.id,
         paymentConfirmedAt: new Date(),
       },
@@ -703,6 +707,55 @@ router.post('/invoices/:id/confirm-payment', requireRole('ACCOUNTANT', 'MANAGER'
   }
 });
 
+router.post('/invoices/:id/reject', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('SalesInvoice'), async (req: AuthRequest, res) => {
+  try {
+    const { id } = req.params;
+    const { notes } = req.body;
+
+    const invoice = await prisma.salesInvoice.findUnique({
+      where: { id },
+    });
+
+    if (!invoice) {
+      return res.status(404).json({ error: 'الفاتورة غير موجودة' });
+    }
+
+    // Only allow rejecting invoices that are NOT payment confirmed
+    if (invoice.paymentConfirmationStatus === 'CONFIRMED') {
+      return res.status(400).json({ error: 'لا يمكن رفض الفاتورة بعد تأكيد الدفع' });
+    }
+
+    if (invoice.paymentConfirmationStatus === 'REJECTED') {
+      return res.status(400).json({ error: 'الفاتورة مرفوضة بالفعل' });
+    }
+
+    const updatedInvoice = await prisma.salesInvoice.update({
+      where: { id },
+      data: {
+        paymentConfirmationStatus: 'REJECTED',
+        paymentConfirmedBy: req.user!.id,
+        paymentConfirmedAt: new Date(),
+        notes: notes ? (invoice.notes ? `${invoice.notes}\n[مرفوضة: ${notes}]` : `[مرفوضة: ${notes}]`) : invoice.notes || '[مرفوضة]',
+      },
+      include: {
+        customer: true,
+        inventory: true,
+        salesUser: {
+          select: { id: true, username: true },
+        },
+        paymentConfirmedByUser: {
+          select: { id: true, username: true },
+        },
+      },
+    });
+
+    res.json(updatedInvoice);
+  } catch (error) {
+    console.error('Reject invoice error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
 router.post('/invoices/:id/deliver', requireRole('INVENTORY', 'MANAGER'), createAuditLog('InventoryDelivery'), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
@@ -719,7 +772,7 @@ router.post('/invoices/:id/deliver', requireRole('INVENTORY', 'MANAGER'), create
       return res.status(404).json({ error: 'الفاتورة غير موجودة' });
     }
 
-    if (!invoice.paymentConfirmed) {
+    if (invoice.paymentConfirmationStatus !== 'CONFIRMED') {
       return res.status(400).json({ error: 'يجب تأكيد الدفع من المحاسب أولاً' });
     }
 
@@ -1087,7 +1140,7 @@ router.post('/invoices/:id/partial-deliver', requireRole('INVENTORY', 'MANAGER')
       return res.status(404).json({ error: 'الفاتورة غير موجودة' });
     }
 
-    if (!invoice.paymentConfirmed) {
+    if (invoice.paymentConfirmationStatus !== 'CONFIRMED') {
       return res.status(400).json({ error: 'يجب تأكيد الدفع من المحاسب أولاً' });
     }
 
@@ -1465,7 +1518,7 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
         outstanding: new Prisma.Decimal(invoice.total).sub(invoice.paidAmount).toString(),
           paymentStatus: correctPaymentStatus,
         deliveryStatus: invoice.deliveryStatus,
-        paymentConfirmed: invoice.paymentConfirmed,
+        paymentConfirmationStatus: invoice.paymentConfirmationStatus,
         items: invoice.items.map(item => ({
           itemName: item.item.name,
           quantity: item.quantity.toString(),

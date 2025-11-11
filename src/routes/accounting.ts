@@ -228,7 +228,7 @@ async function getAvailableByMethod() {
 
   // Sales payments (only confirmed invoices)
   const salesPays = await prisma.salesPayment.findMany({
-    where: { invoice: { paymentConfirmed: true } },
+    where: { invoice: { paymentConfirmationStatus: 'CONFIRMED' } },
   });
   const salesIn = {
     CASH: salesPays.filter(p => p.method === 'CASH').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
@@ -820,7 +820,7 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), asyn
         invoice: {
           ...(inventoryId ? { inventoryId: inventoryId as string } : {}),
           ...(section ? { section: section as any } : {}),
-          paymentConfirmed: true,
+          paymentConfirmationStatus: 'CONFIRMED',
         }
       },
       include: {
@@ -1431,7 +1431,7 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
 
     // Sales payments (only confirmed invoices)
     const salesPays = await prisma.salesPayment.findMany({
-      where: { invoice: { paymentConfirmed: true } },
+      where: { invoice: { paymentConfirmationStatus: 'CONFIRMED' } },
     });
     const salesIn = {
       CASH: salesPays.filter(p => p.method === 'CASH').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
@@ -1468,7 +1468,7 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
     const procPays = await prisma.procOrderPayment.findMany({ 
       where: { 
         order: { 
-          paymentConfirmed: true,
+          paymentConfirmationStatus: 'CONFIRMED',
           status: { not: 'CANCELLED' }
         } 
       } 
@@ -1934,7 +1934,7 @@ router.get('/balance/sessions', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'),
               lte: sessionEnd,
             },
             invoice: {
-              paymentConfirmed: true,
+              paymentConfirmationStatus: 'CONFIRMED',
             }
           }
         });
@@ -1975,7 +1975,7 @@ router.get('/balance/sessions', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'),
             },
             order: {
               status: { not: 'CANCELLED' },
-              paymentConfirmed: true,
+              paymentConfirmationStatus: 'CONFIRMED',
             }
           }
         });
@@ -3088,7 +3088,7 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
         },
         method: method ? (method as 'CASH' | 'BANK' | 'BANK_NILE') : undefined,
         invoice: {
-          paymentConfirmed: true,
+          paymentConfirmationStatus: 'CONFIRMED',
         },
       },
       include: {
@@ -3114,7 +3114,7 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
         },
         method: method ? (method as 'CASH' | 'BANK' | 'BANK_NILE') : undefined,
         order: {
-          paymentConfirmed: true,
+          paymentConfirmationStatus: 'CONFIRMED',
           status: { not: 'CANCELLED' },
         },
       },

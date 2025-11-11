@@ -53,6 +53,12 @@ enum DeliveryStatus {
   DELIVERED
 }
 
+enum PaymentConfirmationStatus {
+  PENDING
+  CONFIRMED
+  REJECTED
+}
+
 enum ProcOrderStatus {
   CREATED
   RECEIVED
@@ -317,11 +323,11 @@ model SalesInvoice {
   salesUserId        String
   customerId         String?
   paymentMethod      PaymentMethod
-  paymentStatus      PaymentStatus  @default(CREDIT)
-  deliveryStatus     DeliveryStatus @default(NOT_DELIVERED)
-  paymentConfirmed   Boolean        @default(false)
-  paymentConfirmedBy String?
-  paymentConfirmedAt DateTime?
+  paymentStatus            PaymentStatus            @default(CREDIT)
+  deliveryStatus           DeliveryStatus           @default(NOT_DELIVERED)
+  paymentConfirmationStatus PaymentConfirmationStatus @default(PENDING)
+  paymentConfirmedBy       String?
+  paymentConfirmedAt       DateTime?
   subtotal           Decimal        @db.Decimal(10, 2)
   discount           Decimal        @default(0) @db.Decimal(10, 2)
   total              Decimal        @db.Decimal(10, 2)
