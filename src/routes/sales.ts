@@ -215,6 +215,12 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GRO
       }
     });
 
+    // For agent users, always include both agent tiers to ensure we have prices
+    if (isAgentUser) {
+      allTiers.add('AGENT_RETAIL');
+      allTiers.add('AGENT_WHOLESALE');
+    }
+
     const items = await prisma.item.findMany({
       where: { id: { in: allItemIds } },
       include: {
@@ -308,9 +314,19 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GRO
         if (matchingPrices.length > 0) {
           unitPrice = matchingPrices[0].price;
         } else {
+          // Debug: log available prices to help diagnose the issue
+          const availablePrices = itemWithRelations.prices.map((p: any) => ({
+            tier: p.tier,
+            inventoryId: p.inventoryId,
+            price: p.price.toString(),
+            validFrom: p.validFrom
+          }));
+          console.error(`Price not found for item ${item.name}, tier: ${tierToUse}, inventory: ${data.inventoryId}`);
+          console.error('Available prices:', availablePrices);
           throw new Error(`السعر غير متوفر للصنف ${item.name} للفئة ${tierToUse}`);
         }
       } else {
+        console.error(`No prices found for item ${item.name}`);
         throw new Error(`السعر غير متوفر للصنف ${item.name}`);
       }
 
