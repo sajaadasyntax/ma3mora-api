@@ -2494,7 +2494,10 @@ router.get('/outstanding-fees', requireRole('ACCOUNTANT', 'MANAGER', 'SALES_GROC
     }
     
     const customerInvoices = await prisma.salesInvoice.findMany({
-      where: customerInvoiceWhere,
+      where: {
+        ...customerInvoiceWhere,
+        paymentConfirmationStatus: { not: 'REJECTED' }, // Exclude rejected invoices
+      },
       include: {
         customer: true,
         inventory: true,
@@ -2515,7 +2518,7 @@ router.get('/outstanding-fees', requireRole('ACCOUNTANT', 'MANAGER', 'SALES_GROC
       orderBy: { createdAt: 'desc' },
     });
     
-    // Filter invoices with outstanding balances
+    // Filter invoices with outstanding balances (exclude rejected)
     const customerInvoicesOutstanding = customerInvoices.filter(inv => {
       const outstanding = new Prisma.Decimal(inv.total).sub(inv.paidAmount);
       return outstanding.greaterThan(0);
