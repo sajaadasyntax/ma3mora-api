@@ -502,6 +502,11 @@ router.post('/invoices/:id/payments', requireRole('ACCOUNTANT', 'SALES_GROCERY',
       return res.status(404).json({ error: 'الفاتورة غير موجودة' });
     }
 
+    // Prevent adding payments to rejected invoices
+    if (invoice.paymentConfirmationStatus === 'REJECTED') {
+      return res.status(400).json({ error: 'لا يمكن إضافة دفعة للفاتورة المرفوضة' });
+    }
+
     const newPaidAmount = new Prisma.Decimal(invoice.paidAmount).add(paymentData.amount);
 
     if (newPaidAmount.greaterThan(invoice.total)) {
