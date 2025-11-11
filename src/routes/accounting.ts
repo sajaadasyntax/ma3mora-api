@@ -824,6 +824,9 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), asyn
         }
       },
       include: {
+        recordedByUser: {
+          select: { id: true, username: true },
+        },
         invoice: {
           include: {
             inventory: true,
@@ -1468,7 +1471,7 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
     const procPays = await prisma.procOrderPayment.findMany({ 
       where: { 
         order: { 
-          paymentConfirmationStatus: 'CONFIRMED',
+          paymentConfirmed: true,
           status: { not: 'CANCELLED' }
         } 
       } 
@@ -1936,7 +1939,23 @@ router.get('/balance/sessions', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'),
             invoice: {
               paymentConfirmationStatus: 'CONFIRMED',
             }
-          }
+          },
+          include: {
+            invoice: {
+              include: {
+                customer: true,
+                inventory: true,
+                items: {
+                  include: {
+                    item: true,
+                  },
+                },
+              },
+            },
+            recordedByUser: {
+              select: { id: true, username: true },
+            },
+          },
         });
 
         const totalReceived = salesPayments.reduce((sum, payment) => 
@@ -1975,7 +1994,7 @@ router.get('/balance/sessions', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'),
             },
             order: {
               status: { not: 'CANCELLED' },
-              paymentConfirmationStatus: 'CONFIRMED',
+              paymentConfirmed: true,
             }
           }
         });
@@ -3114,11 +3133,14 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
         },
         method: method ? (method as 'CASH' | 'BANK' | 'BANK_NILE') : undefined,
         order: {
-          paymentConfirmationStatus: 'CONFIRMED',
+          paymentConfirmed: true,
           status: { not: 'CANCELLED' },
         },
       },
       include: {
+        recordedByUser: {
+          select: { id: true, username: true },
+        },
         order: {
           include: {
             supplier: {
@@ -3128,9 +3150,6 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
               select: { name: true },
             },
           },
-        },
-        recordedByUser: {
-          select: { id: true, username: true },
         },
       },
       orderBy: { paidAt: 'asc' },
@@ -3427,6 +3446,17 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'MANAGER'), async (re
         paidAt: { lt: startOfDay },
         invoice: { paymentConfirmationStatus: 'CONFIRMED' },
         ...(method ? { method: method as 'CASH' | 'BANK' | 'BANK_NILE' } : {}),
+      },
+      include: {
+        invoice: {
+          include: {
+            customer: true,
+            inventory: true,
+          },
+        },
+        recordedByUser: {
+          select: { id: true, username: true },
+        },
       },
     });
 
