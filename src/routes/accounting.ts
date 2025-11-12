@@ -564,8 +564,10 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
   try {
     const { inventoryId, section } = req.query;
 
-    // Sales summary
-    const salesWhere: any = {};
+    // Sales summary - exclude rejected invoices
+    const salesWhere: any = {
+      paymentConfirmationStatus: { not: 'REJECTED' },
+    };
     if (inventoryId) salesWhere.inventoryId = inventoryId;
     if (section) salesWhere.section = section;
 
@@ -1526,6 +1528,7 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
       where: {
         deliveryStatus: 'DELIVERED',
         paymentStatus: { not: 'PAID' },
+        paymentConfirmationStatus: { not: 'REJECTED' }, // Exclude rejected invoices
       },
       include: {
         inventory: true,
@@ -1918,7 +1921,8 @@ router.get('/balance/sessions', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'),
             createdAt: {
               gte: sessionStart,
               lte: sessionEnd,
-            }
+            },
+            paymentConfirmationStatus: { not: 'REJECTED' }, // Exclude rejected invoices
           },
           include: {
             payments: true,
@@ -2351,6 +2355,7 @@ router.get('/daily-report', requireRole('AUDITOR', 'MANAGER'), async (req: AuthR
           gte: startOfDay,
           lte: endOfDay,
         },
+        paymentConfirmationStatus: { not: 'REJECTED' }, // Exclude rejected invoices
       },
       include: {
         customer: true,
@@ -3946,9 +3951,12 @@ router.get('/customer-report', requireRole('ACCOUNTANT', 'MANAGER', 'SALES_GROCE
       where.paymentMethod = paymentMethod;
     }
     
-    // Get invoices with related data
+    // Get invoices with related data - exclude rejected invoices
     const invoices = await prisma.salesInvoice.findMany({
-      where,
+      where: {
+        ...where,
+        paymentConfirmationStatus: { not: 'REJECTED' },
+      },
       include: {
         customer: true,
         inventory: true,

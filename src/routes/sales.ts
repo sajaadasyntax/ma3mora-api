@@ -1544,9 +1544,12 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
       }
     }
 
-    // Get invoices with detailed information
+    // Get invoices with detailed information - exclude rejected invoices
     const invoices = await prisma.salesInvoice.findMany({
-      where,
+      where: {
+        ...where,
+        paymentConfirmationStatus: { not: 'REJECTED' },
+      },
       include: {
         customer: true,
         inventory: true,
@@ -2426,9 +2429,12 @@ router.get('/reports/daily-by-item', requireRole('SALES_GROCERY', 'SALES_BAKERY'
       where.section = section;
     }
 
-    // Get all invoices for the day
+    // Get all invoices for the day - exclude rejected invoices
     const invoices = await prisma.salesInvoice.findMany({
-      where,
+      where: {
+        ...where,
+        paymentConfirmationStatus: { not: 'REJECTED' },
+      },
       include: {
         inventory: true,
         customer: true,

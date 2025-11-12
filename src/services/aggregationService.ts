@@ -924,8 +924,13 @@ export class AggregationService {
     if (inventoryId) where.inventoryId = inventoryId;
     if (section) where.section = section;
 
-    // Get all transactions
-    const invoices = await prisma.salesInvoice.findMany({ where });
+    // Get all transactions - exclude rejected invoices
+    const invoices = await prisma.salesInvoice.findMany({ 
+      where: {
+        ...where,
+        paymentConfirmationStatus: { not: 'REJECTED' },
+      }
+    });
     const orders = await prisma.procOrder.findMany({ where });
     const expenses = await prisma.expense.findMany({ where });
     const salaries = await prisma.salary.findMany({
