@@ -692,27 +692,6 @@ router.get('/stock-movements', requireRole('INVENTORY', 'SALES_GROCERY', 'SALES_
         // Use StockMovement records from database (NEW SYSTEM)
         const itemMovements = [];
         
-        // Calculate current stock from batches (same as dashboard shows)
-        // Dashboard logic: use batches if they exist, otherwise use InventoryStock.quantity
-        const batches = await prisma.stockBatch.findMany({
-          where: {
-            inventoryId: inventoryId as string,
-            itemId: stock.itemId,
-            quantity: {
-              gt: 0
-            }
-          }
-        });
-        
-        const currentStockFromBatches = batches.reduce((sum, b) => {
-          return sum + parseFloat(b.quantity.toString());
-        }, 0);
-        
-        // Match dashboard logic: use batches if they exist, otherwise use stock.quantity
-        const currentStock = batches.length > 0 
-          ? currentStockFromBatches 
-          : parseFloat(stock.quantity.toString());
-        
         // Get stock movements for this item in the date range
         const stockMovements = await prisma.stockMovement.findMany({
           where: {
@@ -787,11 +766,47 @@ router.get('/stock-movements', requireRole('INVENTORY', 'SALES_GROCERY', 'SALES_
             }
           }
 
+        // Calculate current stock: use closing balance from most recent StockMovement
+        // This ensures consistency with the movement records (accounts for all gifts, etc.)
+        const mostRecentMovement = await prisma.stockMovement.findFirst({
+          where: {
+            inventoryId: inventoryId as string,
+            itemId: stock.itemId,
+          },
+          orderBy: { movementDate: 'desc' },
+        });
+
+        let currentStock: number;
+        if (mostRecentMovement) {
+          // Use closing balance from most recent movement (source of truth)
+          currentStock = parseFloat(mostRecentMovement.closingBalance.toString());
+        } else {
+          // No movements exist - fall back to batches/InventoryStock.quantity
+          const batches = await prisma.stockBatch.findMany({
+            where: {
+              inventoryId: inventoryId as string,
+              itemId: stock.itemId,
+              quantity: {
+                gt: 0
+              }
+            }
+          });
+          
+          const currentStockFromBatches = batches.reduce((sum, b) => {
+            return sum + parseFloat(b.quantity.toString());
+          }, 0);
+          
+          // Match dashboard logic: use batches if they exist, otherwise use stock.quantity
+          currentStock = batches.length > 0 
+            ? currentStockFromBatches 
+            : parseFloat(stock.quantity.toString());
+        }
+
         return {
           itemId: stock.itemId,
           itemName: stock.item.name,
           section: stock.item.section,
-          currentStock: currentStock.toString(), // Match dashboard logic: batches if exist, otherwise InventoryStock.quantity
+          currentStock: currentStock.toString(), // Use closing balance from most recent movement
           movements: itemMovements,
         };
       })
