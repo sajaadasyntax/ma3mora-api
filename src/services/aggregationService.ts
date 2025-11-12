@@ -57,10 +57,11 @@ export class AggregationService {
     dateOnly.setHours(0, 0, 0, 0);
 
     // Get existing aggregate or create default
+    // Handle null values explicitly for Prisma unique constraint
     const whereClause: any = {
       date: dateOnly,
-      inventoryId: (inventoryId ?? null) as any,
-      section: (section ?? null) as any,
+      inventoryId: inventoryId ?? null,
+      section: section ?? null,
     };
     const existing = await prisma.dailyFinancialAggregate.findUnique({
       where: {
@@ -358,22 +359,24 @@ export class AggregationService {
     }
 
     // Upsert the aggregate
+    // Handle null values explicitly for Prisma unique constraint
     const upsertWhereClause: any = {
       date: dateOnly,
-      inventoryId: (inventoryId ?? null) as any,
-      section: (section ?? null) as any,
+      inventoryId: inventoryId ?? null,
+      section: section ?? null,
+    };
+    const createData: any = {
+      date: dateOnly,
+      inventoryId: inventoryId ?? null,
+      section: section ?? null,
+      ...updateData,
     };
     await prisma.dailyFinancialAggregate.upsert({
       where: {
         date_inventoryId_section: upsertWhereClause,
       },
       update: updateData,
-      create: {
-        date: dateOnly,
-        inventoryId: (inventoryId ?? null) as any,
-        section: (section ?? null) as any,
-        ...updateData,
-      },
+      create: createData,
     });
 
     // Update monthly aggregate
@@ -992,10 +995,11 @@ export class AggregationService {
 
     // Update aggregate - use absolute values instead of increments for recalculation
     // First, get existing aggregate to clear it
+    // Handle null values explicitly for Prisma unique constraint
     const whereClause: any = {
       date: dateOnly,
-      inventoryId: (inventoryId ?? null) as any,
-      section: (section ?? null) as any,
+      inventoryId: inventoryId ?? null,
+      section: section ?? null,
     };
     
     const existing = await prisma.dailyFinancialAggregate.findUnique({
