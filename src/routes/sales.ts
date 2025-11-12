@@ -253,7 +253,35 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GRO
       } as any,
     });
 
-    // Check stock availability for gift items
+    // Check stock availability for main items (including old gift system where giftQty is same item)
+    // Aggregate quantities per item to handle multiple line items with same item
+    const itemQuantities: Record<string, number> = {};
+    for (const lineItem of data.items) {
+      const currentQty = itemQuantities[lineItem.itemId] || 0;
+      // For old gift system: giftQty is the same item, so add it to total needed
+      const totalNeeded = lineItem.quantity + (lineItem.giftQty || 0);
+      itemQuantities[lineItem.itemId] = currentQty + totalNeeded;
+    }
+
+    // Check stock for each unique main item (with aggregated quantities including old giftQty)
+    for (const [itemId, totalQuantity] of Object.entries(itemQuantities)) {
+      const stock = await prisma.inventoryStock.findUnique({
+        where: {
+          inventoryId_itemId: {
+            inventoryId: data.inventoryId,
+            itemId: itemId,
+          },
+        },
+      });
+
+      const totalQuantityDecimal = new Prisma.Decimal(totalQuantity);
+      if (!stock || stock.quantity.lessThan(totalQuantityDecimal)) {
+        const item = items.find((i) => i.id === itemId);
+        throw new Error(`الرصيد غير كافٍ للصنف: ${item?.name || itemId}. المطلوب: ${totalQuantity}, المتاح: ${stock?.quantity.toString() || '0'}`);
+      }
+    }
+
+    // Check stock availability for new gift items (separate gift items)
     // Aggregate gift quantities per gift item to handle multiple offers with same gift
     const giftQuantities: Record<string, number> = {};
     for (const lineItem of data.items) {
@@ -274,7 +302,8 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GRO
         },
       });
 
-      if (!giftStock || giftStock.quantity.lessThan(totalQuantity)) {
+      const totalQuantityDecimal = new Prisma.Decimal(totalQuantity);
+      if (!giftStock || giftStock.quantity.lessThan(totalQuantityDecimal)) {
         const giftItem = items.find((i) => i.id === giftItemId);
         throw new Error(`الرصيد غير كافٍ للهدية: ${giftItem?.name || giftItemId}. المطلوب: ${totalQuantity}, المتاح: ${giftStock?.quantity.toString() || '0'}`);
       }
