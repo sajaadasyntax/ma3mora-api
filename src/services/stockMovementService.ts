@@ -77,7 +77,14 @@ export class StockMovementService {
       await this.propagateClosingBalanceToFutureDays(inventoryId, itemId, movementDate, closingBalance);
     } else {
       // Create new movement - get opening balance from previous day
-      const openingBalance = await this.getOpeningBalanceForDate(inventoryId, itemId, movementDate);
+      // If we're adding incoming stock, pass it to subtract from current stock
+      const openingBalance = await this.getOpeningBalanceForDate(
+        inventoryId, 
+        itemId, 
+        movementDate,
+        changes.incoming,
+        changes.incomingGifts
+      );
 
       const incoming = new Prisma.Decimal(changes.incoming || 0);
       const outgoing = new Prisma.Decimal(changes.outgoing || 0);
@@ -116,11 +123,14 @@ export class StockMovementService {
    * Get opening balance for a specific date
    * Opening balance = Previous day's closing balance
    * If no previous day exists, get from current InventoryStock
+   * If there are movements on the same date, subtract them to get the true opening balance
    */
   private async getOpeningBalanceForDate(
     inventoryId: string,
     itemId: string,
-    date: Date
+    date: Date,
+    incomingToSubtract?: number,
+    incomingGiftsToSubtract?: number
   ): Promise<Prisma.Decimal> {
     // Get the previous day's movement
     const previousDay = new Date(date);
@@ -145,8 +155,8 @@ export class StockMovementService {
       return previousMovement.closingBalance;
     }
 
-    // No previous movement - get from current stock (fallback)
-    // This should ideally be the initial stock when the system started
+    // No previous movement - need to calculate from current stock
+    // If we're adding incoming stock, we need to subtract it to get the opening balance
     const stock = await prisma.inventoryStock.findUnique({
       where: {
         inventoryId_itemId: {
@@ -156,7 +166,42 @@ export class StockMovementService {
       },
     });
 
-    return stock?.quantity || new Prisma.Decimal(0);
+    if (!stock) {
+      return new Prisma.Decimal(0);
+    }
+
+    // Check if there's already a movement for this date (might be created by another transaction)
+    const movementDate = new Date(date);
+    movementDate.setHours(0, 0, 0, 0);
+    
+    const sameDayMovement = await prisma.stockMovement.findUnique({
+      where: {
+        inventoryId_itemId_movementDate: {
+          inventoryId,
+          itemId,
+          movementDate,
+        },
+      },
+    });
+
+    if (sameDayMovement) {
+      // If movement already exists, use its opening balance
+      return sameDayMovement.openingBalance;
+    }
+
+    // No previous movement and no same-day movement
+    // If we're adding incoming stock, subtract it from current stock to get opening balance
+    let openingBalance = stock.quantity;
+    
+    if (incomingToSubtract !== undefined && incomingToSubtract > 0) {
+      openingBalance = openingBalance.sub(incomingToSubtract);
+    }
+    
+    if (incomingGiftsToSubtract !== undefined && incomingGiftsToSubtract > 0) {
+      openingBalance = openingBalance.sub(incomingGiftsToSubtract);
+    }
+
+    return openingBalance;
   }
 
   /**
