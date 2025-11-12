@@ -692,7 +692,8 @@ router.get('/stock-movements', requireRole('INVENTORY', 'SALES_GROCERY', 'SALES_
         // Use StockMovement records from database (NEW SYSTEM)
         const itemMovements = [];
         
-        // Calculate current stock from batches + InventoryStock.quantity
+        // Calculate current stock from batches (same as dashboard shows)
+        // Dashboard logic: use batches if they exist, otherwise use InventoryStock.quantity
         const batches = await prisma.stockBatch.findMany({
           where: {
             inventoryId: inventoryId as string,
@@ -707,8 +708,10 @@ router.get('/stock-movements', requireRole('INVENTORY', 'SALES_GROCERY', 'SALES_
           return sum + parseFloat(b.quantity.toString());
         }, 0);
         
-        const inventoryStockQuantity = parseFloat(stock.quantity.toString());
-        const currentStock = currentStockFromBatches + inventoryStockQuantity;
+        // Match dashboard logic: use batches if they exist, otherwise use stock.quantity
+        const currentStock = batches.length > 0 
+          ? currentStockFromBatches 
+          : parseFloat(stock.quantity.toString());
         
         // Get stock movements for this item in the date range
         const stockMovements = await prisma.stockMovement.findMany({
@@ -788,7 +791,7 @@ router.get('/stock-movements', requireRole('INVENTORY', 'SALES_GROCERY', 'SALES_
           itemId: stock.itemId,
           itemName: stock.item.name,
           section: stock.item.section,
-          currentStock: currentStock.toString(), // batch total + InventoryStock.quantity
+          currentStock: currentStock.toString(), // Match dashboard logic: batches if exist, otherwise InventoryStock.quantity
           movements: itemMovements,
         };
       })

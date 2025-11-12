@@ -58,7 +58,7 @@ async function main() {
       continue;
     }
 
-    // Get current stock from batches + InventoryStock.quantity (same as page uses)
+    // Get current stock from batches (source of truth)
     const batches = await prisma.stockBatch.findMany({
       where: {
         inventoryId: mainWarehouse.id,
@@ -73,12 +73,7 @@ async function main() {
       return sum + parseFloat(b.quantity.toString());
     }, 0);
 
-    const inventoryStockQuantity = parseFloat(stock.quantity.toString());
-    const currentStock = currentStockFromBatches + inventoryStockQuantity;
-
     console.log(`   📊 Current stock from batches: ${currentStockFromBatches}`);
-    console.log(`   📊 InventoryStock.quantity: ${inventoryStockQuantity}`);
-    console.log(`   📊 Total current stock (batches + InventoryStock): ${currentStock}`);
 
     // Get all stock movements for this item, ordered by date
     const movements = await prisma.stockMovement.findMany({
@@ -105,8 +100,8 @@ async function main() {
     });
 
     // Calculate what the opening balance should be for the first movement
-    // by working backwards from current stock (batches + InventoryStock.quantity)
-    let runningTotal = currentStock;
+    // by working backwards from current stock
+    let runningTotal = currentStockFromBatches;
     console.log(`   🔄 Working backwards from current stock: ${runningTotal}`);
     
     // Work backwards through movements (from most recent to oldest)
@@ -191,10 +186,10 @@ async function main() {
     });
     
     const lastClosing = updatedLastMovement ? parseFloat(updatedLastMovement.closingBalance.toString()) : 0;
-    const difference = Math.abs(lastClosing - currentStock);
+    const difference = Math.abs(lastClosing - currentStockFromBatches);
 
     if (difference > 0.01) {
-      console.log(`   ⚠️  Warning: Last closing balance (${lastClosing}) doesn't match current stock (${currentStock})`);
+      console.log(`   ⚠️  Warning: Last closing balance (${lastClosing}) doesn't match current stock (${currentStockFromBatches})`);
       console.log(`      Difference: ${difference}`);
     } else {
       console.log(`   ✅ Verified: Last closing balance matches current stock`);
