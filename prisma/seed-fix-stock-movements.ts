@@ -8,7 +8,7 @@
  * It recalculates opening and closing balances to match actual stock.
  */
 
-import { PrismaClient, Prisma } from '@prisma/client';
+import { PrismaClient, Prisma, Section } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
@@ -34,11 +34,12 @@ async function main() {
 
   // Items to fix (based on the mismatches shown)
   const itemsToFix = [
-    { name: 'الاول', section: 'GROCERY' },
-    { name: 'كابو 1ك', section: 'GROCERY' },
-    { name: 'شعيرية نوبو 300 جم * 30', section: 'GROCERY' },
-    { name: 'خميرة فكتوريا', section: 'BAKERY' },
-    { name: 'الالي', section: 'BAKERY' }
+    { name: 'الاول', section: Section.GROCERY },
+    { name: 'كابو 1ك', section: Section.GROCERY },
+    { name: 'شعيرية نوبو 300 جم * 30', section: Section.GROCERY },
+    { name: 'خميرة بيضاء', section: Section.BAKERY },
+    { name: 'خميرة فكتوريا', section: Section.BAKERY },
+    { name: 'الالي', section: Section.BAKERY }
   ];
 
   for (const itemInfo of itemsToFix) {
