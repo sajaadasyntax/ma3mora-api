@@ -577,8 +577,40 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
 
       // If batches are provided, use them; otherwise create default batches
       if (batches && batches.length > 0) {
-        // Process batches with expiry dates
+        // Aggregate batches by itemId and expiryDate to prevent duplicate increments
+        // If same itemId+expiryDate appears multiple times, sum their quantities
+        const aggregatedBatches = new Map<string, { itemId: string; quantity: number; expiryDate: string | null; notes?: string }>();
+        
         for (const batch of batches) {
+          // Normalize expiryDate: empty string, null, or undefined all become 'no-expiry' for aggregation
+          // This ensures batches with no expiry date are properly aggregated together
+          const normalizedExpiry = (batch.expiryDate && typeof batch.expiryDate === 'string' && batch.expiryDate.trim() !== '') 
+            ? batch.expiryDate 
+            : 'no-expiry';
+          const key = `${batch.itemId}|${normalizedExpiry}`;
+          const existing = aggregatedBatches.get(key);
+          
+          if (existing) {
+            // Aggregate quantities for same itemId+expiryDate
+            existing.quantity += batch.quantity;
+            // Merge notes if both have them
+            if (batch.notes && existing.notes) {
+              existing.notes = `${existing.notes}, ${batch.notes}`;
+            } else if (batch.notes) {
+              existing.notes = batch.notes;
+            }
+          } else {
+            aggregatedBatches.set(key, {
+              itemId: batch.itemId,
+              quantity: batch.quantity,
+              expiryDate: batch.expiryDate || null,
+              notes: batch.notes,
+            });
+          }
+        }
+        
+        // Process aggregated batches
+        for (const batch of aggregatedBatches.values()) {
           // Verify this item exists in the order (either as main item or gift item)
           const orderItem = order.items.find((oi) => oi.itemId === batch.itemId);
           const giftOrderItem = !orderItem ? order.items.find((oi) => oi.giftItemId === batch.itemId) : null;
@@ -608,11 +640,10 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
             throw new Error(`المخزون غير موجود للصنف ${batch.itemId}`);
           }
 
-          // For main items, include old gift quantity (same item gift system)
+          // When batches are provided, batch.quantity is the total quantity received
+          // (it already includes any gift quantity for the same item in the old system)
           // For gift items (new system), use batch quantity as is
-          const totalQuantity = isGiftItem 
-            ? new Prisma.Decimal(batch.quantity)
-            : new Prisma.Decimal(batch.quantity).add((orderItem?.giftQty || 0) as Prisma.Decimal);
+          const totalQuantity = new Prisma.Decimal(batch.quantity);
 
           // Create stock batch with expiry date
           // For gift items, mark it as a gift. For main items, include old gift quantity note
@@ -648,8 +679,8 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
 
           // Handle gift item (new system - separate item) ONLY if this is not already a gift item batch
           if (!isGiftItem && orderItem && orderItem.giftItemId && orderItem.giftQuantity) {
-            // Check if gift item is already processed in batches
-            const giftBatchExists = batches.some((b) => b.itemId === orderItem.giftItemId && b.quantity > 0);
+            // Check if gift item is already processed in aggregated batches
+            const giftBatchExists = Array.from(aggregatedBatches.values()).some((b) => b.itemId === orderItem.giftItemId && b.quantity > 0);
             
             // Only process gift item if it's not in batches (legacy support)
             if (!giftBatchExists) {
