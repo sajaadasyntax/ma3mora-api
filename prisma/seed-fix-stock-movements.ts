@@ -32,14 +32,11 @@ async function main() {
 
   console.log(`📦 Found warehouse: ${mainWarehouse.name}\n`);
 
-  // Items to fix (based on the mismatches shown)
+  // Items to fix - only these three items
   const itemsToFix = [
     { name: 'الاول', section: Section.GROCERY },
     { name: 'كابو 1ك', section: Section.GROCERY },
-    { name: 'شعيرية نوبو 300 جم * 30', section: Section.GROCERY },
-    { name: 'خميرة بيضاء', section: Section.BAKERY },
-    { name: 'خميرة فكتوريا', section: Section.BAKERY },
-    { name: 'الالي', section: Section.BAKERY }
+    { name: 'شعيرية نوبو 300 جم * 30', section: Section.GROCERY }
   ];
 
   for (const itemInfo of itemsToFix) {
