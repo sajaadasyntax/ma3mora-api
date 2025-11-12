@@ -84,6 +84,9 @@ router.get('/:id', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GROCERY',
       where: { id },
       include: {
         salesInvoices: {
+          where: {
+            paymentConfirmationStatus: { not: 'REJECTED' },
+          },
           include: {
             items: {
               include: {
