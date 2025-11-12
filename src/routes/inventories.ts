@@ -770,6 +770,7 @@ router.get('/stock-movements', requireRole('INVENTORY', 'SALES_GROCERY', 'SALES_
           itemId: stock.itemId,
           itemName: stock.item.name,
           section: stock.item.section,
+          currentStock: stock.quantity.toString(),
           movements: itemMovements,
         };
       })
