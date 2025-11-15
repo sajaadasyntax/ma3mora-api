@@ -116,5 +116,42 @@ router.get('/:id', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GROCERY',
   }
 });
 
+router.put('/:id', requireRole('MANAGER'), createAuditLog('Customer'), async (req: AuthRequest, res) => {
+  try {
+    const { id } = req.params;
+    const data = createCustomerSchema.parse(req.body);
+
+    // Check if customer exists
+    const existingCustomer = await prisma.customer.findUnique({
+      where: { id },
+    });
+
+    if (!existingCustomer) {
+      return res.status(404).json({ error: 'العميل غير موجود' });
+    }
+
+    // Update customer
+    const customer = await prisma.customer.update({
+      where: { id },
+      data: {
+        name: data.name,
+        type: data.type,
+        division: data.division,
+        phone: data.phone || null,
+        address: data.address || null,
+        isAgentCustomer: data.isAgentCustomer !== undefined ? data.isAgentCustomer : existingCustomer.isAgentCustomer,
+      },
+    });
+
+    res.json(customer);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: 'بيانات غير صالحة', details: error.errors });
+    }
+    console.error('Update customer error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
 export default router;
 
