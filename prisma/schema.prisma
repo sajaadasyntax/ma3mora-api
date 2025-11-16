@@ -434,13 +434,13 @@ model ProcOrder {
   createdBy          String
   supplierId         String
   status             ProcOrderStatus  @default(CREATED)
-  total              Decimal          @db.Decimal(10, 2)
-  paidAmount         Decimal          @default(0) @db.Decimal(10, 2)
+  total              Decimal          @db.Decimal(15, 2)
+  paidAmount         Decimal          @default(0) @db.Decimal(15, 2)
   paymentConfirmed   Boolean          @default(false)
   paymentConfirmedBy String?
   paymentConfirmedAt DateTime?
   refundMethod       PaymentMethod?
-  refundAmount       Decimal?         @db.Decimal(10, 2)
+  refundAmount       Decimal?         @db.Decimal(15, 2)
   refundNotes        String?
   refundedBy         String?
   refundedAt         DateTime?
@@ -470,8 +470,8 @@ model ProcOrderItem {
   giftQty      Decimal @default(0) @db.Decimal(10, 2)  // Deprecated: kept for backward compatibility
   giftItemId   String?  // The item being given as gift (separate from the ordered item)
   giftQuantity Decimal? @db.Decimal(10, 2)  // Quantity of the gift item
-  unitCost     Decimal @db.Decimal(10, 2)
-  lineTotal    Decimal @db.Decimal(10, 2)
+  unitCost     Decimal @db.Decimal(15, 2)
+  lineTotal    Decimal @db.Decimal(15, 2)
 
   order    ProcOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
   item     Item      @relation(fields: [itemId], references: [id])
@@ -497,7 +497,7 @@ model ProcOrderReturn {
 model ProcOrderPayment {
   id        String        @id @default(cuid())
   orderId   String
-  amount    Decimal       @db.Decimal(10, 2)
+  amount    Decimal       @db.Decimal(15, 2)
   method    PaymentMethod
   paidAt    DateTime      @default(now())
   recordedBy String
