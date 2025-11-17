@@ -1250,7 +1250,13 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
     // Additional filters
     if (inventoryId) where.inventoryId = inventoryId;
     if (section) where.section = section;
-    if (status) where.status = status;
+    
+    // Exclude cancelled orders by default (unless status filter explicitly requests them)
+    if (status) {
+      where.status = status;
+    } else {
+      where.status = { not: 'CANCELLED' };
+    }
 
     // Get orders with detailed information
     const orders = await prisma.procOrder.findMany({
