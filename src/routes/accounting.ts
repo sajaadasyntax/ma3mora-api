@@ -304,11 +304,19 @@ router.post('/expenses', requireRole('ACCOUNTANT', 'MANAGER'), checkBalanceOpen,
   try {
     const data = createExpenseSchema.parse(req.body);
 
+    // Convert amount to Prisma.Decimal and validate it doesn't exceed database limit
+    const amount = new Prisma.Decimal(data.amount);
+    const maxAmount = new Prisma.Decimal('99999999.99'); // Decimal(10,2) max value
+    
+    if (amount.greaterThan(maxAmount)) {
+      return res.status(400).json({ error: 'المبلغ كبير جداً. الحد الأقصى هو 99,999,999.99' });
+    }
+
     // Enforce sufficient balance for chosen payment method (skip check for debts)
     if (!data.isDebt) {
       const available = await getAvailableByMethod();
       const method = data.method as 'CASH'|'BANK'|'BANK_NILE';
-      if (available[method].lessThan(data.amount)) {
+      if (available[method].lessThan(amount)) {
         return res.status(400).json({ error: 'الرصيد غير كافٍ لطريقة الدفع المحددة' });
       }
     }
@@ -316,6 +324,7 @@ router.post('/expenses', requireRole('ACCOUNTANT', 'MANAGER'), checkBalanceOpen,
     const expense = await prisma.expense.create({
       data: {
         ...data,
+        amount: amount, // Use Prisma.Decimal instead of JavaScript number
         createdBy: req.user!.id,
       },
       include: {
@@ -326,7 +335,7 @@ router.post('/expenses', requireRole('ACCOUNTANT', 'MANAGER'), checkBalanceOpen,
     // Update aggregates (async, don't block response)
     try {
       const expenseDate = expense.createdAt;
-      const expenseAmount = new Prisma.Decimal(data.amount);
+      const expenseAmount = amount; // Use the already converted Decimal
       const expensesByMethod = {
         CASH: data.method === 'CASH' ? expenseAmount : new Prisma.Decimal(0),
         BANK: data.method === 'BANK' ? expenseAmount : new Prisma.Decimal(0),
@@ -435,9 +444,18 @@ router.post('/income', requireRole('ACCOUNTANT', 'MANAGER'), checkBalanceOpen, c
   try {
     const data = createIncomeSchema.parse(req.body);
 
+    // Convert amount to Prisma.Decimal and validate it doesn't exceed database limit
+    const amount = new Prisma.Decimal(data.amount);
+    const maxAmount = new Prisma.Decimal('99999999.99'); // Decimal(10,2) max value
+    
+    if (amount.greaterThan(maxAmount)) {
+      return res.status(400).json({ error: 'المبلغ كبير جداً. الحد الأقصى هو 99,999,999.99' });
+    }
+
     const income = await prisma.income.create({
       data: {
         ...data,
+        amount: amount, // Use Prisma.Decimal instead of JavaScript number
         createdBy: req.user!.id,
       },
       include: {
@@ -448,7 +466,7 @@ router.post('/income', requireRole('ACCOUNTANT', 'MANAGER'), checkBalanceOpen, c
     // Update aggregates (async, don't block response)
     try {
       const incomeDate = income.createdAt;
-      const incomeAmount = new Prisma.Decimal(data.amount);
+      const incomeAmount = amount; // Use the already converted Decimal
       const incomeByMethod = {
         CASH: data.method === 'CASH' ? incomeAmount : new Prisma.Decimal(0),
         BANK: data.method === 'BANK' ? incomeAmount : new Prisma.Decimal(0),
