@@ -396,7 +396,20 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GRO
       (sum, item) => sum.add(item.lineTotal),
       new Prisma.Decimal(0)
     );
-    const total = subtotal.sub(data.discount);
+    const discountDecimal = new Prisma.Decimal(data.discount);
+    const total = subtotal.sub(discountDecimal);
+
+    // Validate amounts don't exceed database limit (Decimal(15,2) max value)
+    const maxAmount = new Prisma.Decimal('999999999999999.99'); // Decimal(15,2) max value
+    if (subtotal.greaterThan(maxAmount)) {
+      return res.status(400).json({ error: 'المجموع الفرعي كبير جداً. الحد الأقصى هو 999,999,999,999,999.99' });
+    }
+    if (total.greaterThan(maxAmount)) {
+      return res.status(400).json({ error: 'المجموع الكلي كبير جداً. الحد الأقصى هو 999,999,999,999,999.99' });
+    }
+    if (discountDecimal.greaterThan(maxAmount)) {
+      return res.status(400).json({ error: 'مبلغ الخصم كبير جداً. الحد الأقصى هو 999,999,999,999,999.99' });
+    }
 
     const invoiceNumber = await generateInvoiceNumber();
 
@@ -411,9 +424,9 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GRO
         paymentStatus: 'CREDIT',
         deliveryStatus: 'NOT_DELIVERED',
         subtotal,
-        discount: data.discount,
+        discount: discountDecimal,
         total,
-        paidAmount: 0,
+        paidAmount: new Prisma.Decimal(0),
         notes: data.notes,
         items: {
           create: invoiceItems,
@@ -642,10 +655,18 @@ router.post('/invoices/:id/payments', requireRole('ACCOUNTANT', 'SALES_GROCERY',
       }
     }
 
+    // Convert amount to Prisma.Decimal and validate it doesn't exceed database limit
+    const paymentAmount = new Prisma.Decimal(paymentData.amount);
+    const maxAmount = new Prisma.Decimal('999999999999999.99'); // Decimal(15,2) max value
+    
+    if (paymentAmount.greaterThan(maxAmount)) {
+      return res.status(400).json({ error: 'المبلغ كبير جداً. الحد الأقصى هو 999,999,999,999,999.99' });
+    }
+
     const payment = await prisma.salesPayment.create({
       data: {
         invoiceId: id,
-        amount: paymentData.amount,
+        amount: paymentAmount, // Use Prisma.Decimal instead of JavaScript number
         method: paymentData.method,
         recordedBy: req.user!.id,
         notes: paymentData.notes,

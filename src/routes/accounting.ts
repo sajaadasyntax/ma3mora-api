@@ -306,10 +306,10 @@ router.post('/expenses', requireRole('ACCOUNTANT', 'MANAGER'), checkBalanceOpen,
 
     // Convert amount to Prisma.Decimal and validate it doesn't exceed database limit
     const amount = new Prisma.Decimal(data.amount);
-    const maxAmount = new Prisma.Decimal('99999999.99'); // Decimal(10,2) max value
+    const maxAmount = new Prisma.Decimal('999999999999999.99'); // Decimal(15,2) max value
     
     if (amount.greaterThan(maxAmount)) {
-      return res.status(400).json({ error: 'المبلغ كبير جداً. الحد الأقصى هو 99,999,999.99' });
+      return res.status(400).json({ error: 'المبلغ كبير جداً. الحد الأقصى هو 999,999,999,999,999.99' });
     }
 
     // Enforce sufficient balance for chosen payment method (skip check for debts)
@@ -446,10 +446,10 @@ router.post('/income', requireRole('ACCOUNTANT', 'MANAGER'), checkBalanceOpen, c
 
     // Convert amount to Prisma.Decimal and validate it doesn't exceed database limit
     const amount = new Prisma.Decimal(data.amount);
-    const maxAmount = new Prisma.Decimal('99999999.99'); // Decimal(10,2) max value
+    const maxAmount = new Prisma.Decimal('999999999999999.99'); // Decimal(15,2) max value
     
     if (amount.greaterThan(maxAmount)) {
-      return res.status(400).json({ error: 'المبلغ كبير جداً. الحد الأقصى هو 99,999,999.99' });
+      return res.status(400).json({ error: 'المبلغ كبير جداً. الحد الأقصى هو 999,999,999,999,999.99' });
     }
 
     const income = await prisma.income.create({

@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { requireAuth, requireRole, blockAuditorWrites } from '../middleware/auth';
 import { createAuditLog } from '../middleware/audit';
@@ -77,37 +77,55 @@ router.post('/', requireRole('PROCUREMENT', 'MANAGER'), createAuditLog('Item'), 
   try {
     const { name, section, wholesalePrice, retailPrice, agentWholesalePrice, agentRetailPrice, agentPrice, offer1Price, offer2Price } = createItemSchema.parse(req.body);
 
-    const pricesToCreate: Array<{ tier: any; price: number }> = [
-      { tier: 'WHOLESALE', price: wholesalePrice },
-      { tier: 'RETAIL', price: retailPrice },
+    // Validate prices don't exceed database limit
+    const maxAmount = new Prisma.Decimal('999999999999999.99'); // Decimal(15,2) max value
+    const pricesToValidate = [
+      { name: 'سعر الجملة', value: wholesalePrice },
+      { name: 'سعر القطاعي', value: retailPrice },
+      ...(agentWholesalePrice !== undefined ? [{ name: 'سعر الجملة للوكيل', value: agentWholesalePrice }] : []),
+      ...(agentRetailPrice !== undefined ? [{ name: 'سعر القطاعي للوكيل', value: agentRetailPrice }] : []),
+      ...(agentPrice !== undefined ? [{ name: 'سعر الوكيل', value: agentPrice }] : []),
+      ...(offer1Price !== undefined ? [{ name: 'سعر العرض الأول', value: offer1Price }] : []),
+      ...(offer2Price !== undefined ? [{ name: 'سعر العرض الثاني', value: offer2Price }] : []),
+    ];
+
+    for (const price of pricesToValidate) {
+      if (new Prisma.Decimal(price.value).greaterThan(maxAmount)) {
+        return res.status(400).json({ error: `${price.name} كبير جداً. الحد الأقصى هو 999,999,999,999,999.99` });
+      }
+    }
+
+    const pricesToCreate: Array<{ tier: any; price: Prisma.Decimal }> = [
+      { tier: 'WHOLESALE', price: new Prisma.Decimal(wholesalePrice) },
+      { tier: 'RETAIL', price: new Prisma.Decimal(retailPrice) },
     ];
     
     // Add agent prices - prioritize new separate prices, fallback to legacy agentPrice
     if (agentWholesalePrice !== undefined) {
-      pricesToCreate.push({ tier: 'AGENT_WHOLESALE', price: agentWholesalePrice });
+      pricesToCreate.push({ tier: 'AGENT_WHOLESALE', price: new Prisma.Decimal(agentWholesalePrice) });
     } else if (agentPrice !== undefined) {
       // Legacy: use agentPrice for both agent tiers if new prices not provided
-      pricesToCreate.push({ tier: 'AGENT_WHOLESALE', price: agentPrice });
+      pricesToCreate.push({ tier: 'AGENT_WHOLESALE', price: new Prisma.Decimal(agentPrice) });
     } else {
-      pricesToCreate.push({ tier: 'AGENT_WHOLESALE', price: wholesalePrice });
+      pricesToCreate.push({ tier: 'AGENT_WHOLESALE', price: new Prisma.Decimal(wholesalePrice) });
     }
     
     if (agentRetailPrice !== undefined) {
-      pricesToCreate.push({ tier: 'AGENT_RETAIL', price: agentRetailPrice });
+      pricesToCreate.push({ tier: 'AGENT_RETAIL', price: new Prisma.Decimal(agentRetailPrice) });
     } else if (agentPrice !== undefined) {
       // Legacy: use agentPrice for both agent tiers if new prices not provided
-      pricesToCreate.push({ tier: 'AGENT_RETAIL', price: agentPrice });
+      pricesToCreate.push({ tier: 'AGENT_RETAIL', price: new Prisma.Decimal(agentPrice) });
     } else {
-      pricesToCreate.push({ tier: 'AGENT_RETAIL', price: retailPrice });
+      pricesToCreate.push({ tier: 'AGENT_RETAIL', price: new Prisma.Decimal(retailPrice) });
     }
 
     // Add offer prices for bakery items
     if (section === 'BAKERY') {
       if (offer1Price !== undefined) {
-        pricesToCreate.push({ tier: 'OFFER_1', price: offer1Price });
+        pricesToCreate.push({ tier: 'OFFER_1', price: new Prisma.Decimal(offer1Price) });
       }
       if (offer2Price !== undefined) {
-        pricesToCreate.push({ tier: 'OFFER_2', price: offer2Price });
+        pricesToCreate.push({ tier: 'OFFER_2', price: new Prisma.Decimal(offer2Price) });
       }
     }
 
@@ -233,7 +251,7 @@ router.put('/:id/prices', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('
             itemId: id,
             inventoryId: targetInventoryId,
             tier: 'WHOLESALE',
-            price: wholesalePrice,
+            price: new Prisma.Decimal(wholesalePrice),
           },
         })
       );
@@ -246,7 +264,7 @@ router.put('/:id/prices', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('
             itemId: id,
             inventoryId: targetInventoryId,
             tier: 'RETAIL',
-            price: retailPrice,
+            price: new Prisma.Decimal(retailPrice),
           },
         })
       );
@@ -259,7 +277,7 @@ router.put('/:id/prices', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('
             itemId: id,
             inventoryId: targetInventoryId,
             tier: 'AGENT_WHOLESALE' as any,
-            price: agentWholesalePrice,
+            price: new Prisma.Decimal(agentWholesalePrice),
           },
         })
       );
@@ -272,7 +290,7 @@ router.put('/:id/prices', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('
             itemId: id,
             inventoryId: targetInventoryId,
             tier: 'AGENT_RETAIL' as any,
-            price: agentRetailPrice,
+            price: new Prisma.Decimal(agentRetailPrice),
           },
         })
       );
@@ -286,7 +304,7 @@ router.put('/:id/prices', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('
             itemId: id,
             inventoryId: targetInventoryId,
             tier: 'AGENT_WHOLESALE' as any,
-            price: agentPrice,
+            price: new Prisma.Decimal(agentPrice),
           },
         })
       );
@@ -296,7 +314,7 @@ router.put('/:id/prices', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('
             itemId: id,
             inventoryId: targetInventoryId,
             tier: 'AGENT_RETAIL' as any,
-            price: agentPrice,
+            price: new Prisma.Decimal(agentPrice),
           },
         })
       );
@@ -309,7 +327,7 @@ router.put('/:id/prices', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('
             itemId: id,
             inventoryId: targetInventoryId,
             tier: 'OFFER_1' as any,
-            price: offer1Price,
+            price: new Prisma.Decimal(offer1Price),
           },
         })
       );
@@ -322,7 +340,7 @@ router.put('/:id/prices', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('
             itemId: id,
             inventoryId: targetInventoryId,
             tier: 'OFFER_2' as any,
-            price: offer2Price,
+            price: new Prisma.Decimal(offer2Price),
           },
         })
       );

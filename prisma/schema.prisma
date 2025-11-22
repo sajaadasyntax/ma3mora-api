@@ -169,7 +169,7 @@ model ItemPrice {
   itemId      String
   inventoryId String?      // Nullable for backward compatibility, null means applies to all inventories
   tier        CustomerType
-  price       Decimal      @db.Decimal(10, 2)
+  price       Decimal      @db.Decimal(15, 2)
   validFrom   DateTime     @default(now())
 
   item      Item       @relation(fields: [itemId], references: [id], onDelete: Cascade)
@@ -182,7 +182,7 @@ model ItemPrice {
 model ItemOffer {
   id        String   @id @default(cuid())
   itemId    String
-  offerPrice Decimal  @db.Decimal(10, 2)
+  offerPrice Decimal  @db.Decimal(15, 2)
   validFrom DateTime  @default(now())
   validTo   DateTime? // Null means offer is active indefinitely
   isActive  Boolean  @default(true)
@@ -202,7 +202,7 @@ model ItemOffer {
 model InventoryStock {
   inventoryId String
   itemId      String
-  quantity    Decimal @default(0) @db.Decimal(10, 2)
+  quantity    Decimal @default(0) @db.Decimal(15, 2)
 
   inventory Inventory @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
   item      Item      @relation(fields: [itemId], references: [id], onDelete: Cascade)
@@ -216,7 +216,7 @@ model StockBatch {
   id           String   @id @default(cuid())
   inventoryId  String
   itemId       String
-  quantity     Decimal  @db.Decimal(10, 2)
+  quantity     Decimal  @db.Decimal(15, 2)
   expiryDate   DateTime?
   receivedAt   DateTime @default(now())
   receiptId    String?
@@ -239,7 +239,7 @@ model InventoryTransfer {
   fromInventoryId String
   toInventoryId   String
   itemId          String
-  quantity        Decimal @db.Decimal(10, 2)
+  quantity        Decimal @db.Decimal(15, 2)
   transferredBy   String
   transferredAt   DateTime @default(now())
   notes           String?
@@ -262,13 +262,13 @@ model StockMovement {
   inventoryId   String
   itemId        String
   movementDate  DateTime @db.Date
-  openingBalance Decimal @db.Decimal(10, 2)  // Opening stock balance at start of day
-  incoming      Decimal  @default(0) @db.Decimal(10, 2)  // Stock received from procurement
-  outgoing      Decimal  @default(0) @db.Decimal(10, 2)  // Stock sold and delivered
-  pendingOutgoing Decimal @default(0) @db.Decimal(10, 2)  // Stock sold but not yet delivered
-  incomingGifts Decimal  @default(0) @db.Decimal(10, 2)  // Gifts received (from procurement)
-  outgoingGifts Decimal  @default(0) @db.Decimal(10, 2)  // Gifts given (from sales)
-  closingBalance Decimal @db.Decimal(10, 2)  // Closing stock balance at end of day
+  openingBalance Decimal @db.Decimal(15, 2)  // Opening stock balance at start of day
+  incoming      Decimal  @default(0) @db.Decimal(15, 2)  // Stock received from procurement
+  outgoing      Decimal  @default(0) @db.Decimal(15, 2)  // Stock sold and delivered
+  pendingOutgoing Decimal @default(0) @db.Decimal(15, 2)  // Stock sold but not yet delivered
+  incomingGifts Decimal  @default(0) @db.Decimal(15, 2)  // Gifts received (from procurement)
+  outgoingGifts Decimal  @default(0) @db.Decimal(15, 2)  // Gifts given (from sales)
+  closingBalance Decimal @db.Decimal(15, 2)  // Closing stock balance at end of day
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -328,10 +328,10 @@ model SalesInvoice {
   paymentConfirmationStatus PaymentConfirmationStatus @default(PENDING)
   paymentConfirmedBy       String?
   paymentConfirmedAt       DateTime?
-  subtotal           Decimal        @db.Decimal(10, 2)
-  discount           Decimal        @default(0) @db.Decimal(10, 2)
-  total              Decimal        @db.Decimal(10, 2)
-  paidAmount         Decimal        @default(0) @db.Decimal(10, 2)
+  subtotal           Decimal        @db.Decimal(15, 2)
+  discount           Decimal        @default(0) @db.Decimal(15, 2)
+  total              Decimal        @db.Decimal(15, 2)
+  paidAmount         Decimal        @default(0) @db.Decimal(15, 2)
   notes              String?
   createdAt          DateTime       @default(now())
   updatedAt          DateTime       @updatedAt
@@ -352,12 +352,12 @@ model SalesInvoiceItem {
   id           String  @id @default(cuid())
   invoiceId   String
   itemId       String
-  quantity     Decimal @db.Decimal(10, 2)
-  giftQty      Decimal @default(0) @db.Decimal(10, 2)  // Deprecated: kept for backward compatibility
+  quantity     Decimal @db.Decimal(15, 2)
+  giftQty      Decimal @default(0) @db.Decimal(15, 2)  // Deprecated: kept for backward compatibility
   giftItemId   String?  // The item being given as gift (separate from the sold item)
-  giftQuantity Decimal? @db.Decimal(10, 2)  // Quantity of the gift item
-  unitPrice    Decimal @db.Decimal(10, 2)
-  lineTotal    Decimal @db.Decimal(10, 2)
+  giftQuantity Decimal? @db.Decimal(15, 2)  // Quantity of the gift item
+  unitPrice    Decimal @db.Decimal(15, 2)
+  lineTotal    Decimal @db.Decimal(15, 2)
 
   invoice SalesInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   item    Item         @relation(fields: [itemId], references: [id])
@@ -369,7 +369,7 @@ model SalesInvoiceItem {
 model SalesPayment {
   id        String        @id @default(cuid())
   invoiceId String
-  amount    Decimal       @db.Decimal(10, 2)
+  amount    Decimal       @db.Decimal(15, 2)
   method    PaymentMethod
   paidAt    DateTime      @default(now())
   recordedBy String
@@ -401,10 +401,10 @@ model InventoryDeliveryItem {
   id            String   @id @default(cuid())
   deliveryId    String
   itemId        String
-  quantity      Decimal  @db.Decimal(10, 2)
-  giftQty       Decimal  @default(0) @db.Decimal(10, 2)  // Deprecated: kept for backward compatibility
+  quantity      Decimal  @db.Decimal(15, 2)
+  giftQty       Decimal  @default(0) @db.Decimal(15, 2)  // Deprecated: kept for backward compatibility
   giftItemId    String?  // The item being given as gift
-  giftQuantity  Decimal? @db.Decimal(10, 2)  // Quantity of the gift item
+  giftQuantity  Decimal? @db.Decimal(15, 2)  // Quantity of the gift item
 
   delivery InventoryDelivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
   item     Item               @relation(fields: [itemId], references: [id])
@@ -418,7 +418,7 @@ model InventoryDeliveryBatch {
   id              String  @id @default(cuid())
   deliveryItemId  String
   batchId         String
-  quantity        Decimal @db.Decimal(10, 2)
+  quantity        Decimal @db.Decimal(15, 2)
 
   deliveryItem InventoryDeliveryItem @relation(fields: [deliveryItemId], references: [id], onDelete: Cascade)
   batch        StockBatch             @relation(fields: [batchId], references: [id])
@@ -466,10 +466,10 @@ model ProcOrderItem {
   id           String  @id @default(cuid())
   orderId      String
   itemId       String
-  quantity     Decimal @db.Decimal(10, 2)
-  giftQty      Decimal @default(0) @db.Decimal(10, 2)  // Deprecated: kept for backward compatibility
+  quantity     Decimal @db.Decimal(15, 2)
+  giftQty      Decimal @default(0) @db.Decimal(15, 2)  // Deprecated: kept for backward compatibility
   giftItemId   String?  // The item being given as gift (separate from the ordered item)
-  giftQuantity Decimal? @db.Decimal(10, 2)  // Quantity of the gift item
+  giftQuantity Decimal? @db.Decimal(15, 2)  // Quantity of the gift item
   unitCost     Decimal @db.Decimal(15, 2)
   lineTotal    Decimal @db.Decimal(15, 2)
 
@@ -529,7 +529,7 @@ model Expense {
   id          String        @id @default(cuid())
   inventoryId String?
   section     Section?
-  amount      Decimal       @db.Decimal(10, 2)
+  amount      Decimal       @db.Decimal(15, 2)
   method      PaymentMethod
   description String
   isDebt      Boolean       @default(false)
@@ -547,7 +547,7 @@ model Income {
   id          String        @id @default(cuid())
   inventoryId String?
   section     Section?
-  amount      Decimal       @db.Decimal(10, 2)
+  amount      Decimal       @db.Decimal(15, 2)
   method      PaymentMethod
   description String
   isDebt      Boolean       @default(false)
@@ -565,7 +565,7 @@ model OpeningBalance {
   id            String        @id @default(cuid())
   scope         BalanceScope
   refId         String?
-  amount        Decimal       @db.Decimal(10, 2)
+  amount        Decimal       @db.Decimal(15, 2)
   paymentMethod PaymentMethod @default(CASH)  // Track which payment method this balance is for (CASH, BANK, BANK_NILE)
   openedAt      DateTime      @default(now())
   closedAt      DateTime?
@@ -602,7 +602,7 @@ model Employee {
   position  String
   phone     String?
   address   String?
-  salary    Decimal  @db.Decimal(10, 2)
+  salary    Decimal  @db.Decimal(15, 2)
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -616,7 +616,7 @@ model Employee {
 model Salary {
   id            String        @id @default(cuid())
   employeeId    String
-  amount        Decimal       @db.Decimal(10, 2)
+  amount        Decimal       @db.Decimal(15, 2)
   month         Int
   year          Int
   paymentMethod PaymentMethod @default(CASH)
@@ -635,7 +635,7 @@ model Salary {
 model Advance {
   id            String        @id @default(cuid())
   employeeId    String
-  amount        Decimal       @db.Decimal(10, 2)
+  amount        Decimal       @db.Decimal(15, 2)
   reason        String
   paymentMethod PaymentMethod @default(CASH)
   paidAt        DateTime?
@@ -651,7 +651,7 @@ model Advance {
 
 model CashExchange {
   id            String        @id @default(cuid())
-  amount        Decimal       @db.Decimal(10, 2)
+  amount        Decimal       @db.Decimal(15, 2)
   fromMethod    PaymentMethod
   toMethod      PaymentMethod
   receiptNumber String?       @unique
@@ -673,70 +673,70 @@ model DailyFinancialAggregate {
   section         Section?
   
   // Sales aggregates
-  salesTotal      Decimal  @default(0) @db.Decimal(10, 2)
-  salesReceived   Decimal  @default(0) @db.Decimal(10, 2)
-  salesDebt       Decimal  @default(0) @db.Decimal(10, 2)
+  salesTotal      Decimal  @default(0) @db.Decimal(15, 2)
+  salesReceived   Decimal  @default(0) @db.Decimal(15, 2)
+  salesDebt       Decimal  @default(0) @db.Decimal(15, 2)
   salesCount      Int      @default(0)
   
   // Sales by payment method
-  salesCash       Decimal  @default(0) @db.Decimal(10, 2)
-  salesBank       Decimal  @default(0) @db.Decimal(10, 2)
-  salesBankNile   Decimal  @default(0) @db.Decimal(10, 2)
+  salesCash       Decimal  @default(0) @db.Decimal(15, 2)
+  salesBank       Decimal  @default(0) @db.Decimal(15, 2)
+  salesBankNile   Decimal  @default(0) @db.Decimal(15, 2)
   
   // Procurement aggregates
-  procurementTotal      Decimal  @default(0) @db.Decimal(10, 2)
-  procurementPaid        Decimal  @default(0) @db.Decimal(10, 2)
-  procurementDebt       Decimal  @default(0) @db.Decimal(10, 2)
+  procurementTotal      Decimal  @default(0) @db.Decimal(15, 2)
+  procurementPaid        Decimal  @default(0) @db.Decimal(15, 2)
+  procurementDebt       Decimal  @default(0) @db.Decimal(15, 2)
   procurementCount       Int      @default(0)
-  procurementCancelled   Decimal  @default(0) @db.Decimal(10, 2)
+  procurementCancelled   Decimal  @default(0) @db.Decimal(15, 2)
   
   // Procurement by payment method
-  procurementCash        Decimal  @default(0) @db.Decimal(10, 2)
-  procurementBank        Decimal  @default(0) @db.Decimal(10, 2)
-  procurementBankNile    Decimal  @default(0) @db.Decimal(10, 2)
+  procurementCash        Decimal  @default(0) @db.Decimal(15, 2)
+  procurementBank        Decimal  @default(0) @db.Decimal(15, 2)
+  procurementBankNile    Decimal  @default(0) @db.Decimal(15, 2)
   
   // Expenses aggregates
-  expensesTotal   Decimal  @default(0) @db.Decimal(10, 2)
+  expensesTotal   Decimal  @default(0) @db.Decimal(15, 2)
   expensesCount   Int      @default(0)
   
   // Expenses by payment method
-  expensesCash       Decimal  @default(0) @db.Decimal(10, 2)
-  expensesBank       Decimal  @default(0) @db.Decimal(10, 2)
-  expensesBankNile   Decimal  @default(0) @db.Decimal(10, 2)
+  expensesCash       Decimal  @default(0) @db.Decimal(15, 2)
+  expensesBank       Decimal  @default(0) @db.Decimal(15, 2)
+  expensesBankNile   Decimal  @default(0) @db.Decimal(15, 2)
   
   // Income aggregates (opposite of expenses)
-  incomeTotal     Decimal  @default(0) @db.Decimal(10, 2)
+  incomeTotal     Decimal  @default(0) @db.Decimal(15, 2)
   incomeCount     Int      @default(0)
   
   // Income by payment method
-  incomeCash      Decimal  @default(0) @db.Decimal(10, 2)
-  incomeBank      Decimal  @default(0) @db.Decimal(10, 2)
-  incomeBankNile  Decimal  @default(0) @db.Decimal(10, 2)
+  incomeCash      Decimal  @default(0) @db.Decimal(15, 2)
+  incomeBank      Decimal  @default(0) @db.Decimal(15, 2)
+  incomeBankNile  Decimal  @default(0) @db.Decimal(15, 2)
   
   // Salaries aggregates
-  salariesTotal     Decimal  @default(0) @db.Decimal(10, 2)
+  salariesTotal     Decimal  @default(0) @db.Decimal(15, 2)
   salariesCount     Int      @default(0)
-  salariesCash      Decimal  @default(0) @db.Decimal(10, 2)
-  salariesBank      Decimal  @default(0) @db.Decimal(10, 2)
-  salariesBankNile  Decimal  @default(0) @db.Decimal(10, 2)
+  salariesCash      Decimal  @default(0) @db.Decimal(15, 2)
+  salariesBank      Decimal  @default(0) @db.Decimal(15, 2)
+  salariesBankNile  Decimal  @default(0) @db.Decimal(15, 2)
   
   // Advances aggregates
-  advancesTotal     Decimal  @default(0) @db.Decimal(10, 2)
+  advancesTotal     Decimal  @default(0) @db.Decimal(15, 2)
   advancesCount     Int      @default(0)
-  advancesCash      Decimal  @default(0) @db.Decimal(10, 2)
-  advancesBank      Decimal  @default(0) @db.Decimal(10, 2)
-  advancesBankNile  Decimal  @default(0) @db.Decimal(10, 2)
+  advancesCash      Decimal  @default(0) @db.Decimal(15, 2)
+  advancesBank      Decimal  @default(0) @db.Decimal(15, 2)
+  advancesBankNile  Decimal  @default(0) @db.Decimal(15, 2)
   
   // Cash exchanges (net impact)
-  cashExchangesCash       Decimal  @default(0) @db.Decimal(10, 2)
-  cashExchangesBank       Decimal  @default(0) @db.Decimal(10, 2)
-  cashExchangesBankNile   Decimal  @default(0) @db.Decimal(10, 2)
+  cashExchangesCash       Decimal  @default(0) @db.Decimal(15, 2)
+  cashExchangesBank       Decimal  @default(0) @db.Decimal(15, 2)
+  cashExchangesBankNile   Decimal  @default(0) @db.Decimal(15, 2)
   
   // Net calculations (calculated fields, updated on aggregate changes)
-  netCash         Decimal  @default(0) @db.Decimal(10, 2)
-  netBank         Decimal  @default(0) @db.Decimal(10, 2)
-  netBankNile     Decimal  @default(0) @db.Decimal(10, 2)
-  netTotal        Decimal  @default(0) @db.Decimal(10, 2)
+  netCash         Decimal  @default(0) @db.Decimal(15, 2)
+  netBank         Decimal  @default(0) @db.Decimal(15, 2)
+  netBankNile     Decimal  @default(0) @db.Decimal(15, 2)
+  netTotal        Decimal  @default(0) @db.Decimal(15, 2)
   
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
@@ -759,49 +759,49 @@ model MonthlyFinancialAggregate {
   section         Section?
   
   // Same structure as DailyFinancialAggregate
-  salesTotal      Decimal  @default(0) @db.Decimal(10, 2)
-  salesReceived   Decimal  @default(0) @db.Decimal(10, 2)
-  salesDebt       Decimal  @default(0) @db.Decimal(10, 2)
+  salesTotal      Decimal  @default(0) @db.Decimal(15, 2)
+  salesReceived   Decimal  @default(0) @db.Decimal(15, 2)
+  salesDebt       Decimal  @default(0) @db.Decimal(15, 2)
   salesCount      Int      @default(0)
-  salesCash       Decimal  @default(0) @db.Decimal(10, 2)
-  salesBank       Decimal  @default(0) @db.Decimal(10, 2)
-  salesBankNile   Decimal  @default(0) @db.Decimal(10, 2)
+  salesCash       Decimal  @default(0) @db.Decimal(15, 2)
+  salesBank       Decimal  @default(0) @db.Decimal(15, 2)
+  salesBankNile   Decimal  @default(0) @db.Decimal(15, 2)
   
-  procurementTotal      Decimal  @default(0) @db.Decimal(10, 2)
-  procurementPaid        Decimal  @default(0) @db.Decimal(10, 2)
-  procurementDebt       Decimal  @default(0) @db.Decimal(10, 2)
+  procurementTotal      Decimal  @default(0) @db.Decimal(15, 2)
+  procurementPaid        Decimal  @default(0) @db.Decimal(15, 2)
+  procurementDebt       Decimal  @default(0) @db.Decimal(15, 2)
   procurementCount       Int      @default(0)
-  procurementCancelled   Decimal  @default(0) @db.Decimal(10, 2)
-  procurementCash        Decimal  @default(0) @db.Decimal(10, 2)
-  procurementBank        Decimal  @default(0) @db.Decimal(10, 2)
-  procurementBankNile    Decimal  @default(0) @db.Decimal(10, 2)
+  procurementCancelled   Decimal  @default(0) @db.Decimal(15, 2)
+  procurementCash        Decimal  @default(0) @db.Decimal(15, 2)
+  procurementBank        Decimal  @default(0) @db.Decimal(15, 2)
+  procurementBankNile    Decimal  @default(0) @db.Decimal(15, 2)
   
-  expensesTotal   Decimal  @default(0) @db.Decimal(10, 2)
+  expensesTotal   Decimal  @default(0) @db.Decimal(15, 2)
   expensesCount   Int      @default(0)
-  expensesCash    Decimal  @default(0) @db.Decimal(10, 2)
-  expensesBank    Decimal  @default(0) @db.Decimal(10, 2)
-  expensesBankNile Decimal @default(0) @db.Decimal(10, 2)
+  expensesCash    Decimal  @default(0) @db.Decimal(15, 2)
+  expensesBank    Decimal  @default(0) @db.Decimal(15, 2)
+  expensesBankNile Decimal @default(0) @db.Decimal(15, 2)
   
-  salariesTotal     Decimal  @default(0) @db.Decimal(10, 2)
+  salariesTotal     Decimal  @default(0) @db.Decimal(15, 2)
   salariesCount     Int      @default(0)
-  salariesCash      Decimal  @default(0) @db.Decimal(10, 2)
-  salariesBank      Decimal  @default(0) @db.Decimal(10, 2)
-  salariesBankNile  Decimal  @default(0) @db.Decimal(10, 2)
+  salariesCash      Decimal  @default(0) @db.Decimal(15, 2)
+  salariesBank      Decimal  @default(0) @db.Decimal(15, 2)
+  salariesBankNile  Decimal  @default(0) @db.Decimal(15, 2)
   
-  advancesTotal     Decimal  @default(0) @db.Decimal(10, 2)
+  advancesTotal     Decimal  @default(0) @db.Decimal(15, 2)
   advancesCount     Int      @default(0)
-  advancesCash      Decimal  @default(0) @db.Decimal(10, 2)
-  advancesBank      Decimal  @default(0) @db.Decimal(10, 2)
-  advancesBankNile  Decimal  @default(0) @db.Decimal(10, 2)
+  advancesCash      Decimal  @default(0) @db.Decimal(15, 2)
+  advancesBank      Decimal  @default(0) @db.Decimal(15, 2)
+  advancesBankNile  Decimal  @default(0) @db.Decimal(15, 2)
   
-  cashExchangesCash       Decimal  @default(0) @db.Decimal(10, 2)
-  cashExchangesBank       Decimal  @default(0) @db.Decimal(10, 2)
-  cashExchangesBankNile   Decimal  @default(0) @db.Decimal(10, 2)
+  cashExchangesCash       Decimal  @default(0) @db.Decimal(15, 2)
+  cashExchangesBank       Decimal  @default(0) @db.Decimal(15, 2)
+  cashExchangesBankNile   Decimal  @default(0) @db.Decimal(15, 2)
   
-  netCash         Decimal  @default(0) @db.Decimal(10, 2)
-  netBank         Decimal  @default(0) @db.Decimal(10, 2)
-  netBankNile     Decimal  @default(0) @db.Decimal(10, 2)
-  netTotal        Decimal  @default(0) @db.Decimal(10, 2)
+  netCash         Decimal  @default(0) @db.Decimal(15, 2)
+  netBank         Decimal  @default(0) @db.Decimal(15, 2)
+  netBankNile     Decimal  @default(0) @db.Decimal(15, 2)
+  netTotal        Decimal  @default(0) @db.Decimal(15, 2)
   
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
@@ -824,12 +824,12 @@ model DailyItemSalesAggregate {
   section         Section?
   
   // Quantity aggregates
-  totalQuantity   Decimal  @default(0) @db.Decimal(10, 2)
-  totalGiftQty    Decimal  @default(0) @db.Decimal(10, 2)
+  totalQuantity   Decimal  @default(0) @db.Decimal(15, 2)
+  totalGiftQty    Decimal  @default(0) @db.Decimal(15, 2)
   
   // Revenue aggregates
-  totalAmount     Decimal  @default(0) @db.Decimal(10, 2)
-  averageUnitPrice Decimal @default(0) @db.Decimal(10, 2)
+  totalAmount     Decimal  @default(0) @db.Decimal(15, 2)
+  averageUnitPrice Decimal @default(0) @db.Decimal(15, 2)
   
   // Count
   invoiceCount    Int      @default(0)
@@ -856,14 +856,14 @@ model CustomerCumulativeAggregate {
   
   // Cumulative totals
   totalInvoices   Int      @default(0)
-  totalSales      Decimal  @default(0) @db.Decimal(10, 2)
-  totalPaid       Decimal  @default(0) @db.Decimal(10, 2)
-  totalOutstanding Decimal @default(0) @db.Decimal(10, 2)
+  totalSales      Decimal  @default(0) @db.Decimal(15, 2)
+  totalPaid       Decimal  @default(0) @db.Decimal(15, 2)
+  totalOutstanding Decimal @default(0) @db.Decimal(15, 2)
   
   // By payment method
-  salesCash       Decimal  @default(0) @db.Decimal(10, 2)
-  salesBank       Decimal  @default(0) @db.Decimal(10, 2)
-  salesBankNile   Decimal  @default(0) @db.Decimal(10, 2)
+  salesCash       Decimal  @default(0) @db.Decimal(15, 2)
+  salesBank       Decimal  @default(0) @db.Decimal(15, 2)
+  salesBankNile   Decimal  @default(0) @db.Decimal(15, 2)
   
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
@@ -884,14 +884,14 @@ model SupplierCumulativeAggregate {
   
   // Cumulative totals
   totalOrders     Int      @default(0)
-  totalPurchases  Decimal  @default(0) @db.Decimal(10, 2)
-  totalPaid       Decimal  @default(0) @db.Decimal(10, 2)
-  totalOutstanding Decimal @default(0) @db.Decimal(10, 2)
+  totalPurchases  Decimal  @default(0) @db.Decimal(15, 2)
+  totalPaid       Decimal  @default(0) @db.Decimal(15, 2)
+  totalOutstanding Decimal @default(0) @db.Decimal(15, 2)
   
   // By payment method
-  purchasesCash   Decimal  @default(0) @db.Decimal(10, 2)
-  purchasesBank   Decimal  @default(0) @db.Decimal(10, 2)
-  purchasesBankNile Decimal @default(0) @db.Decimal(10, 2)
+  purchasesCash   Decimal  @default(0) @db.Decimal(15, 2)
+  purchasesBank   Decimal  @default(0) @db.Decimal(15, 2)
+  purchasesBankNile Decimal @default(0) @db.Decimal(15, 2)
   
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
@@ -912,19 +912,19 @@ model CumulativeBalanceSnapshot {
   section         Section?
   
   // Opening balances (cumulative from previous day)
-  openingCash     Decimal  @default(0) @db.Decimal(10, 2)
-  openingBank     Decimal  @default(0) @db.Decimal(10, 2)
-  openingBankNile Decimal  @default(0) @db.Decimal(10, 2)
+  openingCash     Decimal  @default(0) @db.Decimal(15, 2)
+  openingBank     Decimal  @default(0) @db.Decimal(15, 2)
+  openingBankNile Decimal  @default(0) @db.Decimal(15, 2)
   
   // Closing balances (calculated)
-  closingCash     Decimal  @default(0) @db.Decimal(10, 2)
-  closingBank     Decimal  @default(0) @db.Decimal(10, 2)
-  closingBankNile Decimal  @default(0) @db.Decimal(10, 2)
+  closingCash     Decimal  @default(0) @db.Decimal(15, 2)
+  closingBank     Decimal  @default(0) @db.Decimal(15, 2)
+  closingBankNile Decimal  @default(0) @db.Decimal(15, 2)
   
   // Receivables/Payables
-  receivablesTotal Decimal @default(0) @db.Decimal(10, 2)
-  payablesTotal    Decimal @default(0) @db.Decimal(10, 2)
-  payablesWithExpenses Decimal @default(0) @db.Decimal(10, 2)
+  receivablesTotal Decimal @default(0) @db.Decimal(15, 2)
+  payablesTotal    Decimal @default(0) @db.Decimal(15, 2)
+  payablesWithExpenses Decimal @default(0) @db.Decimal(15, 2)
   
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt

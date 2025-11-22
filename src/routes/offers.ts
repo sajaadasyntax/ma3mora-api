@@ -146,13 +146,21 @@ router.post('/', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('ItemOffer
       return res.status(400).json({ error: 'العروض متاحة فقط لأصناف الأفران' });
     }
 
+    // Validate offer price doesn't exceed database limit
+    const maxAmount = new Prisma.Decimal('999999999999999.99'); // Decimal(15,2) max value
+    const offerPriceDecimal = new Prisma.Decimal(data.offerPrice);
+    
+    if (offerPriceDecimal.greaterThan(maxAmount)) {
+      return res.status(400).json({ error: 'سعر العرض كبير جداً. الحد الأقصى هو 999,999,999,999,999.99' });
+    }
+
     const validFrom = data.validFrom ? new Date(data.validFrom) : new Date();
     const validTo = data.validTo ? new Date(data.validTo) : null;
 
     const offer = await prisma.itemOffer.create({
       data: {
         itemId: data.itemId,
-        offerPrice: data.offerPrice,
+        offerPrice: offerPriceDecimal,
         validFrom,
         validTo,
         isActive: data.isActive ?? true,

@@ -154,10 +154,18 @@ router.post('/salaries', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('S
   try {
     const data = salarySchema.parse(req.body);
     
+    // Validate amount doesn't exceed database limit
+    const maxAmount = new Prisma.Decimal('999999999999999.99'); // Decimal(15,2) max value
+    const amountDecimal = new Prisma.Decimal(data.amount);
+    
+    if (amountDecimal.greaterThan(maxAmount)) {
+      return res.status(400).json({ error: 'المبلغ كبير جداً. الحد الأقصى هو 999,999,999,999,999.99' });
+    }
+    
     const salary = await prisma.salary.create({
       data: {
         ...data,
-        amount: data.amount,
+        amount: amountDecimal,
         paymentMethod: data.paymentMethod || 'CASH',
         createdBy: req.user!.id,
       },
@@ -260,10 +268,18 @@ router.post('/advances', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('A
   try {
     const data = advanceSchema.parse(req.body);
     
+    // Validate amount doesn't exceed database limit
+    const maxAmount = new Prisma.Decimal('999999999999999.99'); // Decimal(15,2) max value
+    const amountDecimal = new Prisma.Decimal(data.amount);
+    
+    if (amountDecimal.greaterThan(maxAmount)) {
+      return res.status(400).json({ error: 'المبلغ كبير جداً. الحد الأقصى هو 999,999,999,999,999.99' });
+    }
+    
     const advance = await prisma.advance.create({
       data: {
         ...data,
-        amount: data.amount,
+        amount: amountDecimal,
         paymentMethod: data.paymentMethod || 'CASH',
         createdBy: req.user!.id,
       },
