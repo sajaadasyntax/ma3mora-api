@@ -1537,6 +1537,8 @@ router.post('/orders/:id/assign-delivered', requireRole('INVENTORY', 'MANAGER'),
     // Validate that each ordered item (and its gift item if any) is fully received
     const errors: string[] = [];
     for (const it of order.items) {
+      // For old system: giftQty is a separate quantity that needs to be received
+      // The total ordered is quantity + giftQty (both need to be received)
       const orderedMain = new Prisma.Decimal(it.quantity).add(it.giftQty || 0);
       const receivedMain = receivedByItem[it.itemId] || new Prisma.Decimal(0);
       if (receivedMain.lessThan(orderedMain)) {
