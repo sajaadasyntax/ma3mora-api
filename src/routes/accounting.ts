@@ -236,12 +236,20 @@ async function getAvailableByMethod() {
     BANK_NILE: salesPays.filter(p => p.method === 'BANK_NILE').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
   } as const;
 
-  // Expenses
+  // Expenses (exclude debts - they don't reduce liquid cash)
   const expenses = await prisma.expense.findMany();
   const expOut = {
-    CASH: expenses.filter(e => e.method === 'CASH').reduce((s, e) => s.add(e.amount), new Prisma.Decimal(0)),
-    BANK: expenses.filter(e => e.method === 'BANK').reduce((s, e) => s.add(e.amount), new Prisma.Decimal(0)),
-    BANK_NILE: expenses.filter(e => e.method === 'BANK_NILE').reduce((s, e) => s.add(e.amount), new Prisma.Decimal(0)),
+    CASH: expenses.filter(e => e.method === 'CASH' && !e.isDebt).reduce((s, e) => s.add(e.amount), new Prisma.Decimal(0)),
+    BANK: expenses.filter(e => e.method === 'BANK' && !e.isDebt).reduce((s, e) => s.add(e.amount), new Prisma.Decimal(0)),
+    BANK_NILE: expenses.filter(e => e.method === 'BANK_NILE' && !e.isDebt).reduce((s, e) => s.add(e.amount), new Prisma.Decimal(0)),
+  } as const;
+
+  // Income (exclude debts - they don't increase liquid cash until paid)
+  const income = await prisma.income.findMany();
+  const incomeIn = {
+    CASH: income.filter(i => i.method === 'CASH' && !i.isDebt).reduce((s, i) => s.add(i.amount), new Prisma.Decimal(0)),
+    BANK: income.filter(i => i.method === 'BANK' && !i.isDebt).reduce((s, i) => s.add(i.amount), new Prisma.Decimal(0)),
+    BANK_NILE: income.filter(i => i.method === 'BANK_NILE' && !i.isDebt).reduce((s, i) => s.add(i.amount), new Prisma.Decimal(0)),
   } as const;
 
   // Salaries (paid)
@@ -286,9 +294,9 @@ async function getAvailableByMethod() {
   });
 
   return {
-    CASH: opening.CASH.add(salesIn.CASH).add(exImpact.CASH).sub(expOut.CASH).sub(salOut.CASH).sub(advOut.CASH).sub(procOut.CASH),
-    BANK: opening.BANK.add(salesIn.BANK).add(exImpact.BANK).sub(expOut.BANK).sub(salOut.BANK).sub(advOut.BANK).sub(procOut.BANK),
-    BANK_NILE: opening.BANK_NILE.add(salesIn.BANK_NILE).add(exImpact.BANK_NILE).sub(expOut.BANK_NILE).sub(salOut.BANK_NILE).sub(advOut.BANK_NILE).sub(procOut.BANK_NILE),
+    CASH: opening.CASH.add(salesIn.CASH).add(incomeIn.CASH).add(exImpact.CASH).sub(expOut.CASH).sub(salOut.CASH).sub(advOut.CASH).sub(procOut.CASH),
+    BANK: opening.BANK.add(salesIn.BANK).add(incomeIn.BANK).add(exImpact.BANK).sub(expOut.BANK).sub(salOut.BANK).sub(advOut.BANK).sub(procOut.BANK),
+    BANK_NILE: opening.BANK_NILE.add(salesIn.BANK_NILE).add(incomeIn.BANK_NILE).add(exImpact.BANK_NILE).sub(expOut.BANK_NILE).sub(salOut.BANK_NILE).sub(advOut.BANK_NILE).sub(procOut.BANK_NILE),
   };
 }
 
