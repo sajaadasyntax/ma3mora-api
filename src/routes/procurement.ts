@@ -831,32 +831,43 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
 
       // Check if all items are fully received
       let allFullyReceived = true;
+      let hasAnyReceived = false;
       for (const it of order.items) {
         // For old system: giftQty is a separate quantity that needs to be received
         // The total ordered is quantity + giftQty (both need to be received)
         const orderedMain = new Prisma.Decimal(it.quantity).add(it.giftQty || 0);
         const receivedMain = receivedByItem[it.itemId] || new Prisma.Decimal(0);
+        if (receivedMain.gt(0)) {
+          hasAnyReceived = true;
+        }
         if (receivedMain.lessThan(orderedMain)) {
           allFullyReceived = false;
-          break;
         }
 
         // Check new system gift items
         if (it.giftItemId && it.giftQuantity) {
           const orderedGift = new Prisma.Decimal(it.giftQuantity);
           const receivedGift = receivedByItem[it.giftItemId] || new Prisma.Decimal(0);
+          if (receivedGift.gt(0)) {
+            hasAnyReceived = true;
+          }
           if (receivedGift.lessThan(orderedGift)) {
             allFullyReceived = false;
-            break;
           }
         }
       }
+
+      // Determine status:
+      // - If all items fully received: RECEIVED
+      // - Otherwise: PARTIAL (since we're creating a receipt, order is no longer CREATED)
+      // Note: If receipt has 0 quantities, status will be PARTIAL, not RECEIVED
+      const newStatus: 'PARTIAL' | 'RECEIVED' = allFullyReceived ? 'RECEIVED' : 'PARTIAL';
 
       // Update order status based on actual received quantities
       const updatedOrder = await tx.procOrder.update({
         where: { id },
         data: {
-          status: allFullyReceived ? 'RECEIVED' : 'PARTIAL',
+          status: newStatus,
         },
         include: {
           items: {
