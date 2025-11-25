@@ -814,11 +814,49 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
         }
       }
 
-      // Update order status
+      // Calculate received quantities from all receipts (including the one just created)
+      const receivedByItem: Record<string, Prisma.Decimal> = {};
+      const allReceipts = await tx.inventoryReceipt.findMany({
+        where: { orderId: id },
+        include: { batches: true },
+      });
+      
+      for (const r of allReceipts) {
+        for (const b of r.batches) {
+          const key = b.itemId;
+          const qty = new Prisma.Decimal(b.quantity);
+          receivedByItem[key] = (receivedByItem[key] || new Prisma.Decimal(0)).add(qty);
+        }
+      }
+
+      // Check if all items are fully received
+      let allFullyReceived = true;
+      for (const it of order.items) {
+        // For old system: giftQty is a separate quantity that needs to be received
+        // The total ordered is quantity + giftQty (both need to be received)
+        const orderedMain = new Prisma.Decimal(it.quantity).add(it.giftQty || 0);
+        const receivedMain = receivedByItem[it.itemId] || new Prisma.Decimal(0);
+        if (receivedMain.lessThan(orderedMain)) {
+          allFullyReceived = false;
+          break;
+        }
+
+        // Check new system gift items
+        if (it.giftItemId && it.giftQuantity) {
+          const orderedGift = new Prisma.Decimal(it.giftQuantity);
+          const receivedGift = receivedByItem[it.giftItemId] || new Prisma.Decimal(0);
+          if (receivedGift.lessThan(orderedGift)) {
+            allFullyReceived = false;
+            break;
+          }
+        }
+      }
+
+      // Update order status based on actual received quantities
       const updatedOrder = await tx.procOrder.update({
         where: { id },
         data: {
-          status: partial ? 'PARTIAL' : 'RECEIVED',
+          status: allFullyReceived ? 'RECEIVED' : 'PARTIAL',
         },
         include: {
           items: {
