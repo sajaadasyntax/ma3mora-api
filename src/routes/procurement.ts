@@ -831,15 +831,13 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
 
       // Check if all items are fully received
       let allFullyReceived = true;
-      let hasAnyReceived = false;
+      const receivedTotals: Prisma.Decimal[] = [];
       for (const it of order.items) {
         // For old system: giftQty is a separate quantity that needs to be received
         // The total ordered is quantity + giftQty (both need to be received)
         const orderedMain = new Prisma.Decimal(it.quantity).add(it.giftQty || 0);
         const receivedMain = receivedByItem[it.itemId] || new Prisma.Decimal(0);
-        if (receivedMain.gt(0)) {
-          hasAnyReceived = true;
-        }
+        receivedTotals.push(receivedMain);
         if (receivedMain.lessThan(orderedMain)) {
           allFullyReceived = false;
         }
@@ -848,9 +846,7 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
         if (it.giftItemId && it.giftQuantity) {
           const orderedGift = new Prisma.Decimal(it.giftQuantity);
           const receivedGift = receivedByItem[it.giftItemId] || new Prisma.Decimal(0);
-          if (receivedGift.gt(0)) {
-            hasAnyReceived = true;
-          }
+          receivedTotals.push(receivedGift);
           if (receivedGift.lessThan(orderedGift)) {
             allFullyReceived = false;
           }
@@ -858,10 +854,18 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
       }
 
       // Determine status:
-      // - If all items fully received: RECEIVED
-      // - Otherwise: PARTIAL (since we're creating a receipt, order is no longer CREATED)
-      // Note: If receipt has 0 quantities, status will be PARTIAL, not RECEIVED
-      const newStatus: 'PARTIAL' | 'RECEIVED' = allFullyReceived ? 'RECEIVED' : 'PARTIAL';
+      // - If all items fully received with any positive receipt qty: RECEIVED
+      // - If some qty received but not all: PARTIAL
+      // - If no quantities received at all (e.g., empty receipt): CREATED
+      const hasPositiveReceipt = receivedTotals.some(total => total.gt(0));
+      let newStatus: 'CREATED' | 'PARTIAL' | 'RECEIVED';
+      if (allFullyReceived && hasPositiveReceipt) {
+        newStatus = 'RECEIVED';
+      } else if (hasPositiveReceipt) {
+        newStatus = 'PARTIAL';
+      } else {
+        newStatus = 'CREATED';
+      }
 
       // Update order status based on actual received quantities
       const updatedOrder = await tx.procOrder.update({
