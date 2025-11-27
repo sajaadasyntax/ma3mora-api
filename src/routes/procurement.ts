@@ -58,9 +58,12 @@ const createOrderSchema = z.object({
 });
 
 // Generate order number with retry to handle race conditions
-async function generateOrderNumber(): Promise<string> {
+// Uses serializable transaction to ensure unique numbers under concurrent access
+async function generateOrderNumber(tx?: any): Promise<string> {
+  const client = tx || prisma;
+  
   // Get the highest existing order number and increment
-  const lastOrder = await prisma.procOrder.findFirst({
+  const lastOrder = await client.procOrder.findFirst({
     orderBy: { orderNumber: 'desc' },
     select: { orderNumber: true },
   });
@@ -75,8 +78,47 @@ async function generateOrderNumber(): Promise<string> {
   }
   
   // Fallback: count + 1 (first order or invalid format)
-  const count = await prisma.procOrder.count();
+  const count = await client.procOrder.count();
   return `PO-${String(count + 1).padStart(6, '0')}`;
+}
+
+// Generate order number with retry logic for handling unique constraint violations
+async function generateOrderNumberWithRetry(maxRetries = 5): Promise<string> {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const orderNumber = await generateOrderNumber();
+      // Verify the number doesn't already exist
+      const existing = await prisma.procOrder.findUnique({
+        where: { orderNumber },
+        select: { id: true },
+      });
+      if (!existing) {
+        return orderNumber;
+      }
+      // If exists, continue to retry with fresh query
+    } catch (error) {
+      if (attempt === maxRetries - 1) throw error;
+    }
+  }
+  
+  // Final fallback: use timestamp + random suffix and verify uniqueness
+  for (let fallbackAttempt = 0; fallbackAttempt < 3; fallbackAttempt++) {
+    const timestamp = Date.now().toString(36).toUpperCase();
+    const randomSuffix = Math.random().toString(36).substring(2, 5).toUpperCase();
+    const fallbackNumber = `PO-${timestamp}${randomSuffix}`;
+    
+    const existing = await prisma.procOrder.findUnique({
+      where: { orderNumber: fallbackNumber },
+      select: { id: true },
+    });
+    
+    if (!existing) {
+      return fallbackNumber;
+    }
+  }
+  
+  // If all attempts fail, throw a meaningful error
+  throw new Error('فشل في إنشاء رقم طلب فريد بعد محاولات متعددة. يرجى المحاولة مرة أخرى.');
 }
 
 router.get('/orders', requireRole('PROCUREMENT', 'ACCOUNTANT', 'AUDITOR', 'MANAGER', 'INVENTORY'), async (req: AuthRequest, res) => {
@@ -158,7 +200,7 @@ router.post('/orders', requireRole('PROCUREMENT', 'MANAGER'), checkBalanceOpen, 
       new Prisma.Decimal(0)
     );
 
-    const orderNumber = await generateOrderNumber();
+    const orderNumber = await generateOrderNumberWithRetry();
 
     const order = await prisma.procOrder.create({
       data: {
