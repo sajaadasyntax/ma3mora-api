@@ -653,6 +653,8 @@ router.post('/transfers', requireRole('INVENTORY', 'MANAGER', 'SALES_GROCERY', '
       }
 
       // Create destination batches with same expiry dates (preserving FIFO info)
+      // Use a single timestamp for all batches to maintain correct FIFO ordering as a transfer group
+      const transferTimestamp = new Date();
       for (const batchInfo of transferredBatches) {
         await tx.stockBatch.create({
           data: {
@@ -661,6 +663,7 @@ router.post('/transfers', requireRole('INVENTORY', 'MANAGER', 'SALES_GROCERY', '
             quantity: batchInfo.quantity,
             expiryDate: batchInfo.expiryDate,
             notes: batchInfo.notes,
+            receivedAt: transferTimestamp,
           },
         });
       }
