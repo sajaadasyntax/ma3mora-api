@@ -88,8 +88,24 @@ const paymentSchema = z.object({
   path: ['receiptNumber'],
 });
 
-// Generate invoice number
+// Generate invoice number with retry to handle race conditions
 async function generateInvoiceNumber(): Promise<string> {
+  // Get the highest existing invoice number and increment
+  const lastInvoice = await prisma.salesInvoice.findFirst({
+    orderBy: { invoiceNumber: 'desc' },
+    select: { invoiceNumber: true },
+  });
+  
+  if (lastInvoice) {
+    // Extract number from format INV-000001
+    const match = lastInvoice.invoiceNumber.match(/INV-(\d+)/);
+    if (match) {
+      const nextNum = parseInt(match[1], 10) + 1;
+      return `INV-${String(nextNum).padStart(6, '0')}`;
+    }
+  }
+  
+  // Fallback: count + 1 (first invoice or invalid format)
   const count = await prisma.salesInvoice.count();
   return `INV-${String(count + 1).padStart(6, '0')}`;
 }
@@ -1113,12 +1129,21 @@ router.post('/invoices/:id/deliver', requireRole('INVENTORY', 'MANAGER'), create
       // Attach created delivery items (those created above need the deliveryId). Since we couldn't set deliveryId earlier within the loop easily,
       // we will instead create summary items now per remaining items.
       // Recompute remaining per item to attach to this delivery record.
+      // Also track what was actually delivered in this delivery for stock movements
+      const deliveredInThisDelivery: Array<{
+        itemId: string;
+        quantity: Prisma.Decimal;
+        giftQty: Prisma.Decimal;
+        giftItemId: string | null;
+        giftQuantity: Prisma.Decimal | null;
+      }> = [];
+      
       for (const item of invoice.items) {
         const totalQty = new Prisma.Decimal(item.quantity).add(item.giftQty || 0);
         const alreadyDelivered = deliveredSoFar[item.itemId] || new Prisma.Decimal(0);
         const remainingToDeliver = totalQty.sub(alreadyDelivered);
         
-        // Calculate remaining gift item
+        // Calculate remaining gift item (new system)
         let remainingGiftQty = new Prisma.Decimal(0);
         if (item.giftItemId && item.giftQuantity) {
           const alreadyGiftDelivered = giftDeliveredSoFar[item.giftItemId] || new Prisma.Decimal(0);
@@ -1127,15 +1152,33 @@ router.post('/invoices/:id/deliver', requireRole('INVENTORY', 'MANAGER'), create
         
         if (remainingToDeliver.lte(0) && remainingGiftQty.lte(0)) continue;
         
+        // Calculate old gift qty proportion: if we're delivering X out of total Y, old gift is proportional
+        // Old gift qty = (remainingToDeliver / totalQty) * item.giftQty
+        const oldGiftQty = item.giftQty && totalQty.gt(0) 
+          ? remainingToDeliver.mul(item.giftQty).div(totalQty).toDecimalPlaces(2)
+          : new Prisma.Decimal(0);
+        
+        // Calculate main quantity (excluding old gift qty from remaining)
+        const mainQuantity = remainingToDeliver.sub(oldGiftQty);
+        
         await tx.inventoryDeliveryItem.create({
           data: {
             deliveryId: delivery.id,
             itemId: item.itemId,
-            quantity: remainingToDeliver,
-            giftQty: new Prisma.Decimal(0), // Keep for backward compatibility
+            quantity: mainQuantity.gt(0) ? mainQuantity : remainingToDeliver,
+            giftQty: oldGiftQty,
             giftItemId: item.giftItemId || null,
             giftQuantity: remainingGiftQty.gt(0) ? remainingGiftQty : null,
           },
+        });
+        
+        // Track for stock movement update
+        deliveredInThisDelivery.push({
+          itemId: item.itemId,
+          quantity: mainQuantity.gt(0) ? mainQuantity : remainingToDeliver,
+          giftQty: oldGiftQty,
+          giftItemId: item.giftItemId || null,
+          giftQuantity: remainingGiftQty.gt(0) ? remainingGiftQty : null,
         });
       }
 
@@ -1155,7 +1198,7 @@ router.post('/invoices/:id/deliver', requireRole('INVENTORY', 'MANAGER'), create
         },
       });
 
-      return { delivery, invoice: updatedInvoice };
+      return { delivery, invoice: updatedInvoice, deliveredItems: deliveredInThisDelivery };
     });
 
     // Update StockMovement records after successful delivery (outside transaction to avoid deadlocks)
@@ -1163,30 +1206,30 @@ router.post('/invoices/:id/deliver', requireRole('INVENTORY', 'MANAGER'), create
       const { stockMovementService } = await import('../services/stockMovementService');
       const deliveryDate = new Date(); // Use actual delivery timestamp
       
-      for (const item of result.invoice.items) {
-        // Calculate delivered quantities for this delivery
-        const totalQty = new Prisma.Decimal(item.quantity);
-        const totalGiftQty = new Prisma.Decimal(item.giftQty || 0);
-        
+      // Use actual delivered quantities from this delivery, not invoice totals
+      for (const deliveredItem of result.deliveredItems) {
         // Update stock movement for main item (outgoing)
+        const mainQty = parseFloat(deliveredItem.quantity.toString());
+        const oldGiftQty = parseFloat(deliveredItem.giftQty.toString());
+        
         await stockMovementService.updateStockMovement(
           result.invoice.inventoryId,
-          item.itemId,
+          deliveredItem.itemId,
           deliveryDate,
           {
-            outgoing: parseFloat(totalQty.toString()),
-            outgoingGifts: parseFloat(totalGiftQty.toString()),
+            outgoing: mainQty,
+            outgoingGifts: oldGiftQty,
           }
         );
         
-        // Update stock movement for gift item if applicable
-        if (item.giftItemId && item.giftQuantity) {
+        // Update stock movement for gift item if applicable (new gift system)
+        if (deliveredItem.giftItemId && deliveredItem.giftQuantity) {
           await stockMovementService.updateStockMovement(
             result.invoice.inventoryId,
-            item.giftItemId,
+            deliveredItem.giftItemId,
             deliveryDate,
             {
-              outgoingGifts: parseFloat(item.giftQuantity.toString()),
+              outgoingGifts: parseFloat(deliveredItem.giftQuantity.toString()),
             }
           );
         }
@@ -1207,7 +1250,20 @@ router.post('/invoices/:id/deliver', requireRole('INVENTORY', 'MANAGER'), create
 const deliveryAllocationSchema = z.object({
   itemId: z.string(),
   allocations: z.array(z.object({ batchId: z.string(), quantity: z.number().positive() })).min(1),
-  giftQty: z.number().min(0).optional(),
+  giftQty: z.number().min(0).optional(), // Old gift system: same item as gift
+  giftItemId: z.string().optional(), // New gift system: separate item as gift
+  giftQuantity: z.number().min(0).optional(), // New gift system: quantity of gift item
+  giftAllocations: z.array(z.object({ batchId: z.string(), quantity: z.number().positive() })).optional(), // New gift system: batch allocations for gift item
+}).refine((data) => {
+  // If using new gift system, giftQuantity should match sum of giftAllocations
+  if (data.giftItemId && data.giftQuantity && data.giftAllocations) {
+    const allocatedSum = data.giftAllocations.reduce((sum, a) => sum + a.quantity, 0);
+    return Math.abs(allocatedSum - data.giftQuantity) < 0.01; // Allow small floating point difference
+  }
+  return true;
+}, {
+  message: 'كمية الهدية المخصصة لا تتطابق مع الدفعات المحددة',
+  path: ['giftAllocations'],
 });
 
 const partialDeliverySchema = z.object({
@@ -1223,7 +1279,12 @@ router.post('/invoices/:id/partial-deliver', requireRole('INVENTORY', 'MANAGER')
     const invoice = await prisma.salesInvoice.findUnique({
       where: { id },
       include: {
-        items: true,
+        items: {
+          include: {
+            item: true,
+            giftItem: true,
+          },
+        },
       },
     });
 
@@ -1245,12 +1306,14 @@ router.post('/invoices/:id/partial-deliver', requireRole('INVENTORY', 'MANAGER')
         },
       });
 
-      // Build a map of ordered quantities per item
-      const orderedByItem: Record<string, { qty: Prisma.Decimal; gift: Prisma.Decimal }> = {} as any;
+      // Build a map of ordered quantities per item (including new gift system)
+      const orderedByItem: Record<string, { qty: Prisma.Decimal; gift: Prisma.Decimal; giftItemId?: string; giftQuantity?: Prisma.Decimal }> = {};
       for (const it of invoice.items) {
         orderedByItem[it.itemId] = {
           qty: new Prisma.Decimal(it.quantity),
           gift: new Prisma.Decimal(it.giftQty),
+          giftItemId: it.giftItemId || undefined,
+          giftQuantity: it.giftQuantity ? new Prisma.Decimal(it.giftQuantity) : undefined,
         };
       }
 
@@ -1259,10 +1322,26 @@ router.post('/invoices/:id/partial-deliver', requireRole('INVENTORY', 'MANAGER')
         where: { delivery: { invoiceId: id } },
       });
       const deliveredSoFar: Record<string, Prisma.Decimal> = {};
+      const giftDeliveredSoFar: Record<string, Prisma.Decimal> = {}; // Track gift items (new system)
       for (const di of prevDeliveryItems) {
         const prev = deliveredSoFar[di.itemId] || new Prisma.Decimal(0);
         deliveredSoFar[di.itemId] = prev.add(di.quantity).add(di.giftQty);
+        
+        // Track gift items (new system)
+        if (di.giftItemId && di.giftQuantity) {
+          const prevGift = giftDeliveredSoFar[di.giftItemId] || new Prisma.Decimal(0);
+          giftDeliveredSoFar[di.giftItemId] = prevGift.add(di.giftQuantity);
+        }
       }
+
+      // Track what was delivered in this partial delivery for stock movements
+      const deliveredInThisDelivery: Array<{
+        itemId: string;
+        quantity: Prisma.Decimal;
+        giftQty: Prisma.Decimal;
+        giftItemId: string | null;
+        giftQuantity: Prisma.Decimal | null;
+      }> = [];
 
       for (const itemAlloc of payload.items) {
         const ordered = orderedByItem[itemAlloc.itemId];
@@ -1278,6 +1357,27 @@ router.post('/invoices/:id/partial-deliver', requireRole('INVENTORY', 'MANAGER')
           throw new Error('الكمية المراد تسليمها تتجاوز المطلوب في الفاتورة');
         }
 
+        // Validate new gift system quantities
+        let giftItemId: string | null = null;
+        let giftQuantityToDeliver: Prisma.Decimal | null = null;
+        
+        if (itemAlloc.giftItemId && itemAlloc.giftQuantity) {
+          // Verify the gift item matches the invoice item's gift
+          if (ordered.giftItemId !== itemAlloc.giftItemId) {
+            throw new Error('صنف الهدية المحدد لا يتطابق مع الفاتورة');
+          }
+          
+          const prevGift = giftDeliveredSoFar[itemAlloc.giftItemId] || new Prisma.Decimal(0);
+          const maxGift = ordered.giftQuantity || new Prisma.Decimal(0);
+          giftQuantityToDeliver = new Prisma.Decimal(itemAlloc.giftQuantity);
+          
+          if (prevGift.add(giftQuantityToDeliver).gt(maxGift)) {
+            throw new Error('كمية الهدية المراد تسليمها تتجاوز المطلوب في الفاتورة');
+          }
+          
+          giftItemId = itemAlloc.giftItemId;
+        }
+
         // Deduct from batches and record delivery item/batches
         const deliveryItem = await tx.inventoryDeliveryItem.create({
           data: {
@@ -1285,9 +1385,12 @@ router.post('/invoices/:id/partial-deliver', requireRole('INVENTORY', 'MANAGER')
             itemId: itemAlloc.itemId,
             quantity: deliverQty,
             giftQty: new Prisma.Decimal(itemAlloc.giftQty || 0),
+            giftItemId: giftItemId,
+            giftQuantity: giftQuantityToDeliver,
           },
         });
 
+        // Deduct main item batches
         for (const alloc of itemAlloc.allocations) {
           const batch = await tx.stockBatch.findUnique({ where: { id: alloc.batchId } });
           if (!batch || batch.inventoryId !== invoice.inventoryId || batch.itemId !== itemAlloc.itemId) {
@@ -1312,7 +1415,35 @@ router.post('/invoices/:id/partial-deliver', requireRole('INVENTORY', 'MANAGER')
           });
         }
 
-        // Update total stock for this item
+        // Deduct gift item batches (new system)
+        if (giftItemId && giftQuantityToDeliver && itemAlloc.giftAllocations) {
+          for (const giftAlloc of itemAlloc.giftAllocations) {
+            const giftBatch = await tx.stockBatch.findUnique({ where: { id: giftAlloc.batchId } });
+            if (!giftBatch || giftBatch.inventoryId !== invoice.inventoryId || giftBatch.itemId !== giftItemId) {
+              throw new Error('دفعة الهدية المحددة غير صالحة لهذا المخزن أو الصنف');
+            }
+            const giftAllocQty = new Prisma.Decimal(giftAlloc.quantity);
+            if (new Prisma.Decimal(giftBatch.quantity).lt(giftAllocQty)) {
+              throw new Error('كمية الهدية غير متوفرة في الدفعة المحددة');
+            }
+
+            await tx.stockBatch.update({
+              where: { id: giftAlloc.batchId },
+              data: { quantity: new Prisma.Decimal(giftBatch.quantity).sub(giftAllocQty) },
+            });
+          }
+
+          // Update gift item stock
+          await tx.inventoryStock.update({
+            where: { inventoryId_itemId: { inventoryId: invoice.inventoryId, itemId: giftItemId } },
+            data: { quantity: { decrement: giftQuantityToDeliver } },
+          });
+          
+          // Update gift delivered tracking
+          giftDeliveredSoFar[giftItemId] = (giftDeliveredSoFar[giftItemId] || new Prisma.Decimal(0)).add(giftQuantityToDeliver);
+        }
+
+        // Update total stock for main item
         await tx.inventoryStock.update({
           where: { inventoryId_itemId: { inventoryId: invoice.inventoryId, itemId: itemAlloc.itemId } },
           data: { quantity: { decrement: deliverQty } },
@@ -1320,6 +1451,15 @@ router.post('/invoices/:id/partial-deliver', requireRole('INVENTORY', 'MANAGER')
 
         // Update deliveredSoFar map
         deliveredSoFar[itemAlloc.itemId] = (deliveredSoFar[itemAlloc.itemId] || new Prisma.Decimal(0)).add(totalDeliver);
+        
+        // Track for stock movement
+        deliveredInThisDelivery.push({
+          itemId: itemAlloc.itemId,
+          quantity: deliverQty,
+          giftQty: new Prisma.Decimal(itemAlloc.giftQty || 0),
+          giftItemId: giftItemId,
+          giftQuantity: giftQuantityToDeliver,
+        });
       }
 
       // After partial delivery, set invoice status to PARTIAL or DELIVERED if fully delivered
@@ -1330,20 +1470,62 @@ router.post('/invoices/:id/partial-deliver', requireRole('INVENTORY', 'MANAGER')
           allDelivered = false;
           break;
         }
+        // Also check gift items (new system)
+        if (ordered.giftItemId && ordered.giftQuantity) {
+          const gd = giftDeliveredSoFar[ordered.giftItemId] || new Prisma.Decimal(0);
+          if (gd.lt(ordered.giftQuantity)) {
+            allDelivered = false;
+            break;
+          }
+        }
       }
 
       const updatedInvoice = await tx.salesInvoice.update({
         where: { id },
         data: { deliveryStatus: allDelivered ? 'DELIVERED' : 'PARTIAL' },
         include: {
-          items: { include: { item: true } },
+          items: { include: { item: true, giftItem: true } },
           deliveries: { include: { deliveredByUser: true } },
           customer: true,
         },
       });
 
-      return { invoice: updatedInvoice };
+      return { invoice: updatedInvoice, deliveredItems: deliveredInThisDelivery };
     });
+
+    // Update StockMovement records after successful partial delivery
+    try {
+      const { stockMovementService } = await import('../services/stockMovementService');
+      const deliveryDate = new Date();
+      
+      for (const deliveredItem of result.deliveredItems) {
+        // Update stock movement for main item
+        await stockMovementService.updateStockMovement(
+          result.invoice.inventoryId,
+          deliveredItem.itemId,
+          deliveryDate,
+          {
+            outgoing: parseFloat(deliveredItem.quantity.toString()),
+            outgoingGifts: parseFloat(deliveredItem.giftQty.toString()),
+          }
+        );
+        
+        // Update stock movement for gift item (new system)
+        if (deliveredItem.giftItemId && deliveredItem.giftQuantity) {
+          await stockMovementService.updateStockMovement(
+            result.invoice.inventoryId,
+            deliveredItem.giftItemId,
+            deliveryDate,
+            {
+              outgoingGifts: parseFloat(deliveredItem.giftQuantity.toString()),
+            }
+          );
+        }
+      }
+    } catch (error) {
+      console.error('Failed to update stock movements for partial delivery:', error);
+      // Don't fail the delivery if stock movement update fails
+    }
 
     res.json(result);
   } catch (error) {
@@ -1363,6 +1545,7 @@ router.get('/invoices/:id/delivery-batches', requireRole('INVENTORY', 'MANAGER')
         items: {
           include: {
             item: true,
+            giftItem: true, // Include gift item details (new system)
           },
         },
         deliveries: {
@@ -1385,14 +1568,88 @@ router.get('/invoices/:id/delivery-batches', requireRole('INVENTORY', 'MANAGER')
       return res.status(404).json({ error: 'الفاتورة غير موجودة' });
     }
 
-    // Calculate already delivered quantities per item
+    // Calculate already delivered quantities per item (main items and gift items separately)
     const deliveredByItem: Record<string, Prisma.Decimal> = {};
+    const giftDeliveredByItem: Record<string, Prisma.Decimal> = {}; // New gift system tracking
     for (const delivery of invoice.deliveries) {
       for (const deliveryItem of delivery.items) {
         const current = deliveredByItem[deliveryItem.itemId] || new Prisma.Decimal(0);
         deliveredByItem[deliveryItem.itemId] = current.add(deliveryItem.quantity).add(deliveryItem.giftQty);
+        
+        // Track gift items (new system)
+        if (deliveryItem.giftItemId && deliveryItem.giftQuantity) {
+          const currentGift = giftDeliveredByItem[deliveryItem.giftItemId] || new Prisma.Decimal(0);
+          giftDeliveredByItem[deliveryItem.giftItemId] = currentGift.add(deliveryItem.giftQuantity);
+        }
       }
     }
+
+    // Helper function to get batches for an item
+    const getBatchesForItem = async (itemId: string, inventoryId: string) => {
+      const batches = await prisma.stockBatch.findMany({
+        where: {
+          inventoryId: inventoryId,
+          itemId: itemId,
+          quantity: { gt: 0 },
+        },
+        orderBy: [{ receivedAt: 'asc' }],
+      });
+
+      // Sort batches: expiry date (earliest first, nulls last), then received date
+      batches.sort((a, b) => {
+        if (a.expiryDate && b.expiryDate) {
+          const dateDiff = a.expiryDate.getTime() - b.expiryDate.getTime();
+          if (dateDiff !== 0) return dateDiff;
+        }
+        if (a.expiryDate && !b.expiryDate) return -1;
+        if (!a.expiryDate && b.expiryDate) return 1;
+        return a.receivedAt.getTime() - b.receivedAt.getTime();
+      });
+
+      // Group batches by expiry date
+      const batchesByExpiry: Record<string, any[]> = {};
+      for (const batch of batches) {
+        const expiryKey = batch.expiryDate
+          ? new Date(batch.expiryDate).toISOString().split('T')[0]
+          : 'no-expiry';
+        
+        if (!batchesByExpiry[expiryKey]) {
+          batchesByExpiry[expiryKey] = [];
+        }
+        
+        batchesByExpiry[expiryKey].push({
+          id: batch.id,
+          quantity: batch.quantity.toString(),
+          expiryDate: batch.expiryDate ? new Date(batch.expiryDate).toISOString() : null,
+          receivedAt: new Date(batch.receivedAt).toISOString(),
+          notes: batch.notes,
+        });
+      }
+
+      // Convert to array format with expiry date info
+      const expiryGroups = Object.entries(batchesByExpiry).map(([expiryKey, batchList]) => {
+        const totalQty = batchList.reduce(
+          (sum, b) => sum.add(new Prisma.Decimal(b.quantity)),
+          new Prisma.Decimal(0)
+        );
+        
+        return {
+          expiryDate: expiryKey === 'no-expiry' ? null : expiryKey,
+          batches: batchList,
+          totalQuantity: totalQty.toString(),
+        };
+      });
+
+      // Sort expiry groups: earliest expiry first, no-expiry last
+      expiryGroups.sort((a, b) => {
+        if (!a.expiryDate && !b.expiryDate) return 0;
+        if (!a.expiryDate) return 1;
+        if (!b.expiryDate) return -1;
+        return a.expiryDate.localeCompare(b.expiryDate);
+      });
+
+      return expiryGroups;
+    };
 
     // Get available batches for each item, grouped by expiry date
     const itemsWithBatches = await Promise.all(
@@ -1403,72 +1660,28 @@ router.get('/invoices/:id/delivery-batches', requireRole('INVENTORY', 'MANAGER')
         const delivered = deliveredByItem[invoiceItem.itemId] || new Prisma.Decimal(0);
         const remaining = totalOrdered.sub(delivered);
 
-        // Get available batches for this item
-        const batches = await prisma.stockBatch.findMany({
-          where: {
-            inventoryId: invoice.inventoryId,
-            itemId: invoiceItem.itemId,
-            quantity: {
-              gt: 0,
-            },
-          },
-          orderBy: [
-            { receivedAt: 'asc' },
-          ],
-        });
+        // Get batches for main item
+        const expiryGroups = await getBatchesForItem(invoiceItem.itemId, invoice.inventoryId);
 
-        // Sort batches: expiry date (earliest first, nulls last), then received date
-        batches.sort((a, b) => {
-          if (a.expiryDate && b.expiryDate) {
-            const dateDiff = a.expiryDate.getTime() - b.expiryDate.getTime();
-            if (dateDiff !== 0) return dateDiff;
-          }
-          if (a.expiryDate && !b.expiryDate) return -1;
-          if (!a.expiryDate && b.expiryDate) return 1;
-          return a.receivedAt.getTime() - b.receivedAt.getTime();
-        });
-
-        // Group batches by expiry date
-        const batchesByExpiry: Record<string, any[]> = {};
-        for (const batch of batches) {
-          const expiryKey = batch.expiryDate
-            ? new Date(batch.expiryDate).toISOString().split('T')[0]
-            : 'no-expiry';
+        // Handle gift item (new system)
+        let giftItemInfo: any = null;
+        if (invoiceItem.giftItemId && invoiceItem.giftQuantity && invoiceItem.giftItem) {
+          const giftOrderedQty = new Prisma.Decimal(invoiceItem.giftQuantity);
+          const giftDelivered = giftDeliveredByItem[invoiceItem.giftItemId] || new Prisma.Decimal(0);
+          const giftRemaining = giftOrderedQty.sub(giftDelivered);
           
-          if (!batchesByExpiry[expiryKey]) {
-            batchesByExpiry[expiryKey] = [];
-          }
+          // Get batches for gift item
+          const giftExpiryGroups = await getBatchesForItem(invoiceItem.giftItemId, invoice.inventoryId);
           
-          batchesByExpiry[expiryKey].push({
-            id: batch.id,
-            quantity: batch.quantity.toString(),
-            expiryDate: batch.expiryDate ? new Date(batch.expiryDate).toISOString() : null,
-            receivedAt: new Date(batch.receivedAt).toISOString(),
-            notes: batch.notes,
-          });
-        }
-
-        // Convert to array format with expiry date info
-        const expiryGroups = Object.entries(batchesByExpiry).map(([expiryKey, batchList]) => {
-          const totalQty = batchList.reduce(
-            (sum, b) => sum.add(new Prisma.Decimal(b.quantity)),
-            new Prisma.Decimal(0)
-          );
-          
-          return {
-            expiryDate: expiryKey === 'no-expiry' ? null : expiryKey,
-            batches: batchList,
-            totalQuantity: totalQty.toString(),
+          giftItemInfo = {
+            giftItemId: invoiceItem.giftItemId,
+            giftItemName: invoiceItem.giftItem.name,
+            orderedQuantity: giftOrderedQty.toString(),
+            delivered: giftDelivered.toString(),
+            remaining: giftRemaining.toString(),
+            expiryGroups: giftExpiryGroups,
           };
-        });
-
-        // Sort expiry groups: earliest expiry first, no-expiry last
-        expiryGroups.sort((a, b) => {
-          if (!a.expiryDate && !b.expiryDate) return 0;
-          if (!a.expiryDate) return 1;
-          if (!b.expiryDate) return -1;
-          return a.expiryDate.localeCompare(b.expiryDate);
-        });
+        }
 
         return {
           itemId: invoiceItem.itemId,
@@ -1479,6 +1692,7 @@ router.get('/invoices/:id/delivery-batches', requireRole('INVENTORY', 'MANAGER')
           delivered: delivered.toString(),
           remaining: remaining.toString(),
           expiryGroups,
+          giftItem: giftItemInfo, // New gift system info
         };
       })
     );

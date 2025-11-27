@@ -57,8 +57,24 @@ const createOrderSchema = z.object({
   notes: z.string().optional(),
 });
 
-// Generate order number
+// Generate order number with retry to handle race conditions
 async function generateOrderNumber(): Promise<string> {
+  // Get the highest existing order number and increment
+  const lastOrder = await prisma.procOrder.findFirst({
+    orderBy: { orderNumber: 'desc' },
+    select: { orderNumber: true },
+  });
+  
+  if (lastOrder) {
+    // Extract number from format PO-000001
+    const match = lastOrder.orderNumber.match(/PO-(\d+)/);
+    if (match) {
+      const nextNum = parseInt(match[1], 10) + 1;
+      return `PO-${String(nextNum).padStart(6, '0')}`;
+    }
+  }
+  
+  // Fallback: count + 1 (first order or invalid format)
   const count = await prisma.procOrder.count();
   return `PO-${String(count + 1).padStart(6, '0')}`;
 }
@@ -679,8 +695,9 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
 
           // Handle gift item (new system - separate item) ONLY if this is not already a gift item batch
           if (!isGiftItem && orderItem && orderItem.giftItemId && orderItem.giftQuantity) {
-            // Check if gift item is already processed in aggregated batches
-            const giftBatchExists = Array.from(aggregatedBatches.values()).some((b) => b.itemId === orderItem.giftItemId && b.quantity > 0);
+            // Check if gift item is already processed in aggregated batches (regardless of quantity)
+            // This prevents duplicate entries if someone explicitly includes the gift item with any quantity
+            const giftBatchExists = Array.from(aggregatedBatches.values()).some((b) => b.itemId === orderItem.giftItemId);
             
             // Only process gift item if it's not in batches (legacy support)
             if (!giftBatchExists) {
@@ -1061,7 +1078,11 @@ router.post('/orders/:id/payments', requireRole('MANAGER'), checkBalanceOpen, cr
     };
 
     // Sales payments inflow (only confirmed invoices)
-    const salesPays = await prisma.salesPayment.findMany({ where: { invoice: { paymentConfirmationStatus: 'CONFIRMED' } } });
+    const confirmedInvoiceIds = (await prisma.salesInvoice.findMany({
+      where: { paymentConfirmationStatus: 'CONFIRMED' } as any,
+      select: { id: true },
+    })).map(i => i.id);
+    const salesPays = await prisma.salesPayment.findMany({ where: { invoiceId: { in: confirmedInvoiceIds } } });
     const salesIn: Record<'CASH'|'BANK'|'BANK_NILE', Prisma.Decimal> = {
       CASH: salesPays.filter(p => p.method === 'CASH').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
       BANK: salesPays.filter(p => p.method === 'BANK').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),

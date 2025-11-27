@@ -532,30 +532,95 @@ router.post('/transfers', requireRole('INVENTORY', 'MANAGER', 'SALES_GROCERY', '
         },
       });
 
-      // Decrease source inventory stock atomically, ensuring sufficient quantity at write time
-      const decrementResult = await tx.inventoryStock.updateMany({
+      // Get source batches sorted by FIFO (expiry date first, then received date)
+      const sourceBatches = await tx.stockBatch.findMany({
         where: {
           inventoryId: data.fromInventoryId,
           itemId: data.itemId,
-          quantity: {
-            gte: new Prisma.Decimal(data.quantity),
-          },
+          quantity: { gt: 0 },
         },
-        data: {
-          quantity: {
-            decrement: data.quantity,
-          },
-        },
+        orderBy: [
+          { receivedAt: 'asc' },
+        ],
       });
 
-      if (decrementResult.count === 0) {
-        // Not enough stock at the moment of transfer (race condition or invalid qty)
+      // Sort batches: expiry date (earliest first, nulls last), then received date
+      sourceBatches.sort((a, b) => {
+        if (a.expiryDate && b.expiryDate) {
+          const dateDiff = a.expiryDate.getTime() - b.expiryDate.getTime();
+          if (dateDiff !== 0) return dateDiff;
+        }
+        if (a.expiryDate && !b.expiryDate) return -1;
+        if (!a.expiryDate && b.expiryDate) return 1;
+        return a.receivedAt.getTime() - b.receivedAt.getTime();
+      });
+
+      // Calculate total available in batches
+      const totalAvailableInBatches = sourceBatches.reduce(
+        (sum, b) => sum.add(b.quantity),
+        new Prisma.Decimal(0)
+      );
+
+      const transferQty = new Prisma.Decimal(data.quantity);
+
+      // Check if we have enough in batches
+      if (totalAvailableInBatches.lt(transferQty)) {
         throw Object.assign(new Error('INSUFFICIENT_STOCK'), {
           code: 'INSUFFICIENT_STOCK',
         });
       }
 
-      // Increase destination inventory stock (create if doesn't exist)
+      // Consume from source batches using FIFO and create destination batches
+      let remainingQty = transferQty;
+      const transferredBatches: Array<{ expiryDate: Date | null; quantity: Prisma.Decimal; notes: string | null }> = [];
+
+      for (const batch of sourceBatches) {
+        if (remainingQty.lte(0)) break;
+
+        const batchQty = new Prisma.Decimal(batch.quantity);
+        if (batchQty.lte(0)) continue;
+
+        let consumeQty: Prisma.Decimal;
+        if (remainingQty.gte(batchQty)) {
+          // Consume entire batch
+          consumeQty = batchQty;
+          await tx.stockBatch.update({
+            where: { id: batch.id },
+            data: { quantity: 0 },
+          });
+        } else {
+          // Consume partial batch
+          consumeQty = remainingQty;
+          await tx.stockBatch.update({
+            where: { id: batch.id },
+            data: { quantity: batchQty.sub(remainingQty) },
+          });
+        }
+
+        // Track batch info for creating destination batches
+        transferredBatches.push({
+          expiryDate: batch.expiryDate,
+          quantity: consumeQty,
+          notes: batch.notes ? `نقل: ${batch.notes}` : 'نقل من مخزن آخر',
+        });
+
+        remainingQty = remainingQty.sub(consumeQty);
+      }
+
+      // Decrease source inventory stock
+      await tx.inventoryStock.update({
+        where: {
+          inventoryId_itemId: {
+            inventoryId: data.fromInventoryId,
+            itemId: data.itemId,
+          },
+        },
+        data: {
+          quantity: { decrement: transferQty },
+        },
+      });
+
+      // Ensure destination inventory stock exists
       const destStock = await tx.inventoryStock.findUnique({
         where: {
           inventoryId_itemId: {
@@ -574,9 +639,7 @@ router.post('/transfers', requireRole('INVENTORY', 'MANAGER', 'SALES_GROCERY', '
             },
           },
           data: {
-            quantity: {
-              increment: data.quantity,
-            },
+            quantity: { increment: transferQty },
           },
         });
       } else {
@@ -584,7 +647,20 @@ router.post('/transfers', requireRole('INVENTORY', 'MANAGER', 'SALES_GROCERY', '
           data: {
             inventoryId: data.toInventoryId,
             itemId: data.itemId,
-            quantity: new Prisma.Decimal(data.quantity),
+            quantity: transferQty,
+          },
+        });
+      }
+
+      // Create destination batches with same expiry dates (preserving FIFO info)
+      for (const batchInfo of transferredBatches) {
+        await tx.stockBatch.create({
+          data: {
+            inventoryId: data.toInventoryId,
+            itemId: data.itemId,
+            quantity: batchInfo.quantity,
+            expiryDate: batchInfo.expiryDate,
+            notes: batchInfo.notes,
           },
         });
       }
