@@ -101,11 +101,12 @@ async function generateOrderNumberWithRetry(maxRetries = 5): Promise<string> {
     }
   }
   
-  // Final fallback: use timestamp + random suffix and verify uniqueness
+  // Final fallback: use timestamp as numeric identifier to maintain regex compatibility
+  // The regex /PO-(\d+)/ expects digits only, so we use timestamp directly as numeric string
+  // Format: PO-{timestamp} where timestamp is all digits, ensuring uniqueness while remaining parseable
   for (let fallbackAttempt = 0; fallbackAttempt < 3; fallbackAttempt++) {
-    const timestamp = Date.now().toString(36).toUpperCase();
-    const randomSuffix = Math.random().toString(36).substring(2, 5).toUpperCase();
-    const fallbackNumber = `PO-${timestamp}${randomSuffix}`;
+    const timestamp = Date.now().toString(); // Full timestamp as numeric string
+    const fallbackNumber = `PO-${timestamp}`;
     
     const existing = await prisma.procOrder.findUnique({
       where: { orderNumber: fallbackNumber },
@@ -115,6 +116,8 @@ async function generateOrderNumberWithRetry(maxRetries = 5): Promise<string> {
     if (!existing) {
       return fallbackNumber;
     }
+    // Small delay to allow timestamp to change if collision occurs
+    await new Promise(resolve => setTimeout(resolve, 1));
   }
   
   // If all attempts fail, throw a meaningful error
