@@ -21,6 +21,7 @@
     "db:reset:force": "prisma migrate reset --force && tsx prisma/seed-all.ts",
     "test": "jest",
     "test:watch": "jest --watch",
+    "script:remove-wrong-entries": "tsx scripts/remove-wrong-entries.ts",
     "postinstall": "prisma generate"
   },
   "dependencies": {
