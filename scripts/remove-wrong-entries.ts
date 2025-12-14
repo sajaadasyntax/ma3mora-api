@@ -4,7 +4,7 @@ const prisma = new PrismaClient();
 
 /**
  * Script to remove wrongly entered entries:
- * 1. Expense: "الديون الصادرة (علينا)" with amount 3,944,000
+ * 1. Expense: "قيمة 68 جوالي الي راجع تعويض" with amount 3,944,000
  * 2. Supplier: "فواتير قديمة" and all its procurement orders
  */
 
@@ -12,24 +12,24 @@ async function removeWrongEntries() {
   console.log('🔍 Starting removal of wrongly entered entries...\n');
 
   try {
-    // ========== 1. Remove Expense: "الديون الصادرة (علينا)" ==========
-    console.log('📋 Step 1: Searching for expense "الديون الصادرة (علينا)"...');
+    // ========== 1. Remove Expense: "قيمة 68 جوالي الي راجع تعويض" ==========
+    console.log('📋 Step 1: Searching for expense "قيمة 68 جوالي الي راجع تعويض"...');
     
     const targetAmount = new Prisma.Decimal('3944000');
+    
+    // Search by amount first (more reliable)
     const expenses = await prisma.expense.findMany({
       where: {
-        isDebt: true,
-        description: {
-          contains: 'الديون الصادرة',
-        },
+        amount: targetAmount,
       },
     });
 
-    console.log(`   Found ${expenses.length} expense(s) with "الديون الصادرة" in description`);
+    console.log(`   Found ${expenses.length} expense(s) with amount ${targetAmount.toString()} SDG`);
 
-    // Find the exact match
+    // Find the exact match by description
     const targetExpense = expenses.find(
-      (e) => e.description.includes('علينا') && e.amount.equals(targetAmount)
+      (e) => e.description.includes('قيمة 68 جوالي الي راجع تعويض') || 
+             e.description.includes('جوالي الي راجع تعويض')
     );
 
     if (targetExpense) {
@@ -37,6 +37,8 @@ async function removeWrongEntries() {
       console.log(`      ID: ${targetExpense.id}`);
       console.log(`      Description: ${targetExpense.description}`);
       console.log(`      Amount: ${targetExpense.amount.toString()} SDG`);
+      console.log(`      Method: ${targetExpense.method}`);
+      console.log(`      isDebt: ${targetExpense.isDebt}`);
       console.log(`      Created at: ${targetExpense.createdAt}`);
 
       await prisma.expense.delete({
@@ -47,7 +49,7 @@ async function removeWrongEntries() {
     } else {
       console.log(`   ⚠️  Expense not found with exact criteria. Checking all matches...`);
       expenses.forEach((e) => {
-        console.log(`      - ${e.description} (${e.amount.toString()} SDG)`);
+        console.log(`      - ${e.description} (${e.amount.toString()} SDG, isDebt: ${e.isDebt})`);
       });
       console.log(`   ⚠️  No exact match found. Skipping expense deletion.\n`);
     }
@@ -181,7 +183,7 @@ async function removeWrongEntries() {
 
     console.log('✅ Script completed successfully!');
     console.log('\n📊 Summary:');
-    console.log('   - Removed expense: "الديون الصادرة (علينا)" (if found)');
+    console.log('   - Removed expense: "قيمة 68 جوالي الي راجع تعويض" (if found)');
     console.log('   - Removed supplier: "فواتير قديمة" and all related data (if found)');
     console.log('\n⚠️  Please verify the changes in your database.');
 
