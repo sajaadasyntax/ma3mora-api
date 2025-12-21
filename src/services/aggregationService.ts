@@ -367,8 +367,8 @@ export class AggregationService {
     };
     const createData: any = {
       date: dateOnly,
-      inventoryId: inventoryId ?? null,
-      section: section ?? null,
+      ...(inventoryId !== undefined && inventoryId !== null ? { inventoryId } : {}),
+      ...(section !== undefined && section !== null ? { section } : {}),
       ...updateData,
     };
     await prisma.dailyFinancialAggregate.upsert({
@@ -560,8 +560,8 @@ export class AggregationService {
       create: {
         year,
         month,
-        inventoryId: (inventoryId ?? null) as any,
-        section: (section ?? null) as any,
+        ...(inventoryId !== undefined && inventoryId !== null ? { inventoryId } : {}),
+        ...(section !== undefined && section !== null ? { section } : {}),
         ...monthlyTotals,
         netCash,
         netBank,
@@ -636,9 +636,9 @@ export class AggregationService {
       },
       create: {
         date: dateOnly,
-        inventoryId: (inventoryId ?? null) as any,
+        ...(inventoryId !== undefined && inventoryId !== null ? { inventoryId } : {}),
         itemId,
-        section: (section ?? null) as any,
+        ...(section !== undefined && section !== null ? { section } : {}),
         totalQuantity,
         totalGiftQty,
         totalAmount,
@@ -834,8 +834,8 @@ export class AggregationService {
       update: updates,
       create: {
         date: dateOnly,
-        inventoryId: (inventoryId ?? null) as any,
-        section: (section ?? null) as any,
+        ...(inventoryId !== undefined && inventoryId !== null ? { inventoryId } : {}),
+        ...(section !== undefined && section !== null ? { section } : {}),
         openingCash: updates.openingCash || new Prisma.Decimal(0),
         openingBank: updates.openingBank || new Prisma.Decimal(0),
         openingBankNile: updates.openingBankNile || new Prisma.Decimal(0),
