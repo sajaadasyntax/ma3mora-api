@@ -22,6 +22,7 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "script:remove-wrong-entries": "tsx scripts/remove-wrong-entries.ts",
+    "script:check-batch-transactions": "tsx scripts/check-batch-transactions.ts",
     "postinstall": "prisma generate"
   },
   "dependencies": {

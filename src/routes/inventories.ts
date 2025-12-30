@@ -513,6 +513,45 @@ router.post('/transfers', requireRole('INVENTORY', 'MANAGER', 'SALES_GROCERY', '
       });
     }
 
+    // Check if source stock quantity is sufficient
+    const transferQty = new Prisma.Decimal(data.quantity);
+    if (sourceStock.quantity.lt(transferQty)) {
+      return res.status(400).json({ 
+        error: 'الكمية المتاحة غير كافية',
+        available: sourceStock.quantity.toString(),
+      });
+    }
+
+    // Pre-check batches before transaction to ensure consistency
+    // This helps catch data inconsistencies early
+    const preCheckBatches = await prisma.stockBatch.findMany({
+      where: {
+        inventoryId: data.fromInventoryId,
+        itemId: data.itemId,
+        quantity: { gt: 0 },
+      },
+      select: { quantity: true },
+    });
+
+    const totalAvailableInBatchesPreCheck = preCheckBatches.reduce(
+      (sum, b) => sum.add(b.quantity),
+      new Prisma.Decimal(0)
+    );
+
+    // Use the minimum of stock quantity and batch totals for validation
+    // This ensures we validate against what we can actually transfer
+    const availableForTransfer = Prisma.Decimal.min(
+      sourceStock.quantity,
+      totalAvailableInBatchesPreCheck
+    );
+
+    if (availableForTransfer.lt(transferQty)) {
+      return res.status(400).json({ 
+        error: 'الكمية المتاحة غير كافية',
+        available: availableForTransfer.toString(),
+      });
+    }
+
     // Use a transaction to ensure atomicity
     const result = await prisma.$transaction(async (tx) => {
       // Create the transfer record
@@ -560,8 +599,6 @@ router.post('/transfers', requireRole('INVENTORY', 'MANAGER', 'SALES_GROCERY', '
         (sum, b) => sum.add(b.quantity),
         new Prisma.Decimal(0)
       );
-
-      const transferQty = new Prisma.Decimal(data.quantity);
 
       // Check if we have enough in batches
       if (totalAvailableInBatches.lt(transferQty)) {
