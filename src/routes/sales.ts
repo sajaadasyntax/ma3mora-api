@@ -990,6 +990,10 @@ router.post('/invoices/:id/deliver', requireRole('INVENTORY', 'MANAGER'), create
         throw new Error('الفاتورة مسلمة بالكامل مسبقًا');
       }
 
+      // Track consumed batches for batch tracking records
+      const consumedBatches: Map<string, Array<{ batchId: string; quantity: Prisma.Decimal }>> = new Map();
+      const consumedGiftBatches: Map<string, Array<{ batchId: string; quantity: Prisma.Decimal }>> = new Map();
+
       // Deduct stock using FIFO (First In First Out) based on expiry dates for remaining quantities only
       for (const item of invoice.items) {
         // Handle main item
@@ -1074,6 +1078,7 @@ router.post('/invoices/:id/deliver', requireRole('INVENTORY', 'MANAGER'), create
         });
 
         let remainingQty = remainingToDeliver;
+        const itemConsumedBatches: Array<{ batchId: string; quantity: Prisma.Decimal }> = [];
 
         // Consume from batches using FIFO
         for (const batch of batches) {
@@ -1082,8 +1087,10 @@ router.post('/invoices/:id/deliver', requireRole('INVENTORY', 'MANAGER'), create
           const batchQty = new Prisma.Decimal(batch.quantity);
           if (batchQty.lte(0)) continue;
 
+          let consumedQty: Prisma.Decimal;
           if (remainingQty.gte(batchQty)) {
             // Consume entire batch
+            consumedQty = batchQty;
             await tx.stockBatch.update({
               where: { id: batch.id },
               data: { quantity: 0 },
@@ -1091,12 +1098,24 @@ router.post('/invoices/:id/deliver', requireRole('INVENTORY', 'MANAGER'), create
             remainingQty = remainingQty.sub(batchQty);
           } else {
             // Consume partial batch
+            consumedQty = remainingQty;
             await tx.stockBatch.update({
               where: { id: batch.id },
               data: { quantity: batchQty.sub(remainingQty) },
             });
             remainingQty = new Prisma.Decimal(0);
           }
+
+          // Track consumed batch for later batch tracking record creation
+          itemConsumedBatches.push({
+            batchId: batch.id,
+            quantity: consumedQty,
+          });
+        }
+
+        // Store consumed batches for this item
+        if (itemConsumedBatches.length > 0) {
+          consumedBatches.set(item.itemId, itemConsumedBatches);
         }
 
         // Update total stock quantity for remaining only
@@ -1141,6 +1160,7 @@ router.post('/invoices/:id/deliver', requireRole('INVENTORY', 'MANAGER'), create
           });
 
           let remainingGiftQty = remainingGiftToDeliver;
+          const giftConsumedBatches: Array<{ batchId: string; quantity: Prisma.Decimal }> = [];
 
           // Consume from batches using FIFO
           for (const batch of giftBatches) {
@@ -1149,19 +1169,33 @@ router.post('/invoices/:id/deliver', requireRole('INVENTORY', 'MANAGER'), create
             const batchQty = new Prisma.Decimal(batch.quantity);
             if (batchQty.lte(0)) continue;
 
+            let consumedQty: Prisma.Decimal;
             if (remainingGiftQty.gte(batchQty)) {
+              consumedQty = batchQty;
               await tx.stockBatch.update({
                 where: { id: batch.id },
                 data: { quantity: 0 },
               });
               remainingGiftQty = remainingGiftQty.sub(batchQty);
             } else {
+              consumedQty = remainingGiftQty;
               await tx.stockBatch.update({
                 where: { id: batch.id },
                 data: { quantity: batchQty.sub(remainingGiftQty) },
               });
               remainingGiftQty = new Prisma.Decimal(0);
             }
+
+            // Track consumed gift batch
+            giftConsumedBatches.push({
+              batchId: batch.id,
+              quantity: consumedQty,
+            });
+          }
+
+          // Store consumed gift batches
+          if (giftConsumedBatches.length > 0) {
+            consumedGiftBatches.set(item.giftItemId, giftConsumedBatches);
           }
 
           // Update total stock quantity for gift item
@@ -1230,7 +1264,7 @@ router.post('/invoices/:id/deliver', requireRole('INVENTORY', 'MANAGER'), create
         // Skip if nothing remaining to deliver
         if (remainingMain.lte(0) && remainingOldGift.lte(0) && remainingGiftQty.lte(0)) continue;
         
-        await tx.inventoryDeliveryItem.create({
+        const deliveryItem = await tx.inventoryDeliveryItem.create({
           data: {
             deliveryId: delivery.id,
             itemId: item.itemId,
@@ -1240,6 +1274,57 @@ router.post('/invoices/:id/deliver', requireRole('INVENTORY', 'MANAGER'), create
             giftQuantity: remainingGiftQty.gt(0) ? remainingGiftQty : null,
           },
         });
+
+        // Create batch tracking records for main item
+        const mainItemConsumedBatches = consumedBatches.get(item.itemId);
+        if (mainItemConsumedBatches && mainItemConsumedBatches.length > 0) {
+          for (const consumedBatch of mainItemConsumedBatches) {
+            await tx.inventoryDeliveryBatch.create({
+              data: {
+                deliveryItemId: deliveryItem.id,
+                batchId: consumedBatch.batchId,
+                quantity: consumedBatch.quantity,
+              },
+            });
+          }
+        }
+
+        // Create batch tracking records for gift item (new system)
+        if (item.giftItemId && remainingGiftQty.gt(0)) {
+          const giftItemConsumedBatches = consumedGiftBatches.get(item.giftItemId);
+          if (giftItemConsumedBatches && giftItemConsumedBatches.length > 0) {
+            // Find or create delivery item for gift item
+            let giftDeliveryItem = await tx.inventoryDeliveryItem.findFirst({
+              where: {
+                deliveryId: delivery.id,
+                itemId: item.giftItemId,
+              },
+            });
+
+            if (!giftDeliveryItem) {
+              giftDeliveryItem = await tx.inventoryDeliveryItem.create({
+                data: {
+                  deliveryId: delivery.id,
+                  itemId: item.giftItemId,
+                  quantity: new Prisma.Decimal(0),
+                  giftQty: new Prisma.Decimal(0),
+                  giftItemId: null,
+                  giftQuantity: remainingGiftQty,
+                },
+              });
+            }
+
+            for (const consumedBatch of giftItemConsumedBatches) {
+              await tx.inventoryDeliveryBatch.create({
+                data: {
+                  deliveryItemId: giftDeliveryItem.id,
+                  batchId: consumedBatch.batchId,
+                  quantity: consumedBatch.quantity,
+                },
+              });
+            }
+          }
+        }
         
         // Track for stock movement update
         deliveredInThisDelivery.push({

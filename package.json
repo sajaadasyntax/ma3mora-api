@@ -23,6 +23,10 @@
     "test:watch": "jest --watch",
     "script:remove-wrong-entries": "tsx scripts/remove-wrong-entries.ts",
     "script:check-batch-transactions": "tsx scripts/check-batch-transactions.ts",
+    "script:repair-stock-batch-sync": "tsx scripts/repair-stock-batch-sync.ts",
+    "script:repair-stock-batch-sync:apply": "tsx scripts/repair-stock-batch-sync.ts --apply",
+    "script:recalculate-aggregates": "tsx scripts/recalculate-financial-aggregates.ts",
+    "script:recalculate-aggregates:apply": "tsx scripts/recalculate-financial-aggregates.ts --apply",
     "postinstall": "prisma generate"
   },
   "dependencies": {
