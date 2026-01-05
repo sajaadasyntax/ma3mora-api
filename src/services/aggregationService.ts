@@ -556,7 +556,8 @@ export class AggregationService {
         netBank,
         netBankNile,
         netTotal: netCash.add(netBank).add(netBankNile),
-      },
+      },   
+
       create: {
         year,
         month,

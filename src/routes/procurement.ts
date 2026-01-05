@@ -670,8 +670,14 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
           }
         }
         
-        // Process aggregated batches
+        // Process aggregated batches - skip 0-quantity batches
         for (const batch of aggregatedBatches.values()) {
+          // Skip batches with 0 or negative quantity
+          if (batch.quantity <= 0) {
+            console.log(`Skipping batch with 0 quantity for item ${batch.itemId}`);
+            continue;
+          }
+
           // Verify this item exists in the order (either as main item or gift item)
           const orderItem = order.items.find((oi) => oi.itemId === batch.itemId);
           const giftOrderItem = !orderItem ? order.items.find((oi) => oi.giftItemId === batch.itemId) : null;
