@@ -488,32 +488,34 @@ class ProcurementOrderDuplicateRemover {
       return;
     }
 
-    // Apply changes in transaction
+    // Apply changes - do deletions first, then recalculate
     try {
+      const deletedMovementDates: Array<{ inventoryId: string; itemId: string; date: Date }> = [];
+      
+      // First, collect movement info before deletion
+      for (const action of deleteActions) {
+        if (action.type === 'DUPLICATE_STOCK_MOVEMENT' && action.movementId) {
+          const movement = await prisma.stockMovement.findUnique({
+            where: { id: action.movementId },
+          });
+          if (movement) {
+            deletedMovementDates.push({
+              inventoryId: movement.inventoryId,
+              itemId: movement.itemId,
+              date: movement.movementDate,
+            });
+          }
+        }
+      }
+
+      // Now do deletions in transaction
       await prisma.$transaction(async (tx) => {
-        // Process deletions first
-        const deletedMovementDates: Array<{ inventoryId: string; itemId: string; date: Date }> = [];
-        
         for (const action of deleteActions) {
           if (action.type === 'DUPLICATE_STOCK_MOVEMENT' && action.movementId) {
             console.log(`Deleting stock movement: ${action.movementId} (${action.itemName})`);
-            
-            // Get movement before deleting to know what to recalculate
-            const movement = await tx.stockMovement.findUnique({
+            await tx.stockMovement.delete({
               where: { id: action.movementId },
             });
-
-            if (movement) {
-              deletedMovementDates.push({
-                inventoryId: movement.inventoryId,
-                itemId: movement.itemId,
-                date: movement.movementDate,
-              });
-
-              await tx.stockMovement.delete({
-                where: { id: action.movementId },
-              });
-            }
           } else if (action.type === 'DUPLICATE_BATCH' && action.batchId) {
             console.log(`Deleting batch: ${action.batchId} (${action.itemName})`);
             
@@ -627,66 +629,66 @@ class ProcurementOrderDuplicateRemover {
           }
         }
 
-        // Recalculate closing balances for all days after deleted movements
-        if (deletedMovementDates.length > 0) {
-          console.log('\n🔄 Recalculating closing balances for future days...');
-          
-          for (const deleted of deletedMovementDates) {
-            // Get the movement for the day before deletion (or the day of deletion if it's the first)
-            const dayBefore = new Date(deleted.date);
-            dayBefore.setDate(dayBefore.getDate() - 1);
-            
-            const previousMovement = await tx.stockMovement.findFirst({
-              where: {
-                inventoryId: deleted.inventoryId,
-                itemId: deleted.itemId,
-                movementDate: { lt: deleted.date },
-              },
-              orderBy: { movementDate: 'desc' },
-            });
-
-            // Get the first movement after deletion
-            const nextDay = new Date(deleted.date);
-            nextDay.setDate(nextDay.getDate() + 1);
-            
-            const futureMovements = await tx.stockMovement.findMany({
-              where: {
-                inventoryId: deleted.inventoryId,
-                itemId: deleted.itemId,
-                movementDate: { gte: nextDay },
-              },
-              orderBy: { movementDate: 'asc' },
-            });
-
-            // Calculate starting opening balance
-            let currentOpening = previousMovement 
-              ? previousMovement.closingBalance 
-              : new Prisma.Decimal(0);
-
-            // Recalculate all future movements
-            for (const movement of futureMovements) {
-              const newClosingBalance = currentOpening
-                .add(movement.incoming)
-                .add(movement.incomingGifts)
-                .sub(movement.outgoing)
-                .sub(movement.pendingOutgoing)
-                .sub(movement.outgoingGifts);
-
-              await tx.stockMovement.update({
-                where: { id: movement.id },
-                data: {
-                  openingBalance: currentOpening,
-                  closingBalance: newClosingBalance,
-                },
-              });
-
-              currentOpening = newClosingBalance;
-            }
-
-            console.log(`   ✅ Recalculated ${futureMovements.length} future movements for ${deleted.itemId}`);
-          }
-        }
+      }, {
+        timeout: 30000, // 30 second timeout
       });
+
+      // Recalculate closing balances after deletion (outside transaction to avoid timeout)
+      if (deletedMovementDates.length > 0) {
+        console.log('\n🔄 Recalculating closing balances for future days...');
+        
+        for (const deleted of deletedMovementDates) {
+          // Get the movement for the day before deletion
+          const previousMovement = await prisma.stockMovement.findFirst({
+            where: {
+              inventoryId: deleted.inventoryId,
+              itemId: deleted.itemId,
+              movementDate: { lt: deleted.date },
+            },
+            orderBy: { movementDate: 'desc' },
+          });
+
+          // Get the first movement after deletion
+          const nextDay = new Date(deleted.date);
+          nextDay.setDate(nextDay.getDate() + 1);
+          
+          const futureMovements = await prisma.stockMovement.findMany({
+            where: {
+              inventoryId: deleted.inventoryId,
+              itemId: deleted.itemId,
+              movementDate: { gte: nextDay },
+            },
+            orderBy: { movementDate: 'asc' },
+          });
+
+          // Calculate starting opening balance
+          let currentOpening = previousMovement 
+            ? previousMovement.closingBalance 
+            : new Prisma.Decimal(0);
+
+          // Recalculate all future movements
+          for (const movement of futureMovements) {
+            const newClosingBalance = currentOpening
+              .add(movement.incoming)
+              .add(movement.incomingGifts)
+              .sub(movement.outgoing)
+              .sub(movement.pendingOutgoing)
+              .sub(movement.outgoingGifts);
+
+            await prisma.stockMovement.update({
+              where: { id: movement.id },
+              data: {
+                openingBalance: currentOpening,
+                closingBalance: newClosingBalance,
+              },
+            });
+
+            currentOpening = newClosingBalance;
+          }
+
+          console.log(`   ✅ Recalculated ${futureMovements.length} future movements for ${deleted.itemId}`);
+        }
+      }
 
       console.log('\n✅ Fixes applied successfully!\n');
     } catch (error) {
