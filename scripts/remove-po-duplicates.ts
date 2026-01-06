@@ -3,12 +3,13 @@ import { PrismaClient, Prisma } from '@prisma/client';
 const prisma = new PrismaClient();
 
 interface DuplicateIssue {
-  type: 'DUPLICATE_BATCH' | 'DUPLICATE_RECEIPT';
+  type: 'DUPLICATE_BATCH' | 'DUPLICATE_RECEIPT' | 'DUPLICATE_STOCK_MOVEMENT';
   description: string;
   itemId: string;
   itemName: string;
   receiptId?: string;
   batchId?: string;
+  movementId?: string;
   quantity: Prisma.Decimal;
   action: 'DELETE' | 'UPDATE';
 }
@@ -68,12 +69,121 @@ class ProcurementOrderDuplicateRemover {
     }
 
     console.log(`Found order: ${order.orderNumber} (${order.id})\n`);
+    console.log(`Inventory: ${order.inventoryId}`);
     console.log(`Total receipts: ${order.receipts.length}`);
     
     // Show receipt dates
     order.receipts.forEach((receipt, idx) => {
       console.log(`  Receipt ${idx + 1}: ${receipt.id} - ${receipt.receivedAt.toISOString().split('T')[0]} - ${receipt.batches.length} batches`);
     });
+    console.log('');
+
+    // Check for batches that might exist but aren't linked to receipts
+    console.log('🔍 Checking for batches not linked to receipts...\n');
+    const orderItems = order.items.map(item => item.itemId);
+    const allBatchesForOrder = await prisma.stockBatch.findMany({
+      where: {
+        inventoryId: order.inventoryId,
+        itemId: { in: orderItems },
+        receivedAt: {
+          gte: order.receipts[0]?.receivedAt || new Date('2025-01-01'),
+          lte: order.receipts[order.receipts.length - 1]?.receivedAt || new Date(),
+        },
+      },
+      include: {
+        item: true,
+        receipt: true,
+      },
+      orderBy: {
+        receivedAt: 'asc',
+      },
+    });
+
+    console.log(`Found ${allBatchesForOrder.length} batches for order items in date range\n`);
+    if (allBatchesForOrder.length > 0) {
+      allBatchesForOrder.forEach((batch, idx) => {
+        console.log(`  Batch ${idx + 1}: ${batch.item.name} - Qty: ${batch.quantity.toString()} - Date: ${batch.receivedAt.toISOString().split('T')[0]} - Receipt: ${batch.receiptId || 'NONE'}`);
+      });
+      console.log('');
+    }
+
+    // Check for duplicate stock movements
+    console.log('🔍 Checking for duplicate stock movements...\n');
+    const stockMovements = await prisma.stockMovement.findMany({
+      where: {
+        inventoryId: order.inventoryId,
+        itemId: { in: orderItems },
+        movementDate: {
+          gte: order.receipts[0]?.receivedAt || new Date('2025-01-01'),
+          lte: order.receipts[order.receipts.length - 1]?.receivedAt || new Date(),
+        },
+      },
+      include: {
+        item: true,
+      },
+      orderBy: {
+        movementDate: 'asc',
+      },
+    });
+
+    console.log(`Found ${stockMovements.length} stock movement records\n`);
+    
+    // Group by itemId + date to find duplicates
+    const movementGroups = new Map<string, typeof stockMovements>();
+    for (const movement of stockMovements) {
+      const key = `${movement.itemId}|${movement.movementDate.toISOString().split('T')[0]}`;
+      if (!movementGroups.has(key)) {
+        movementGroups.set(key, []);
+      }
+      movementGroups.get(key)!.push(movement);
+    }
+
+    // Find duplicate stock movements (same item + same date)
+    for (const [key, movements] of movementGroups.entries()) {
+      if (movements.length > 1) {
+        const [itemId, dateKey] = key.split('|');
+        const itemName = movements[0].item.name;
+        const totalIncoming = movements.reduce(
+          (sum, m) => sum.add(m.incoming),
+          new Prisma.Decimal(0)
+        );
+
+        console.log(`⚠️  Found ${movements.length} duplicate stock movements for ${itemName}`);
+        console.log(`   Date: ${dateKey}`);
+        console.log(`   Total incoming: ${totalIncoming.toString()}`);
+        movements.forEach((m, idx) => {
+          console.log(`     ${idx + 1}. ID: ${m.id} - Incoming: ${m.incoming.toString()} - Opening: ${m.openingBalance.toString()} - Closing: ${m.closingBalance.toString()}`);
+        });
+
+        // Keep the first one, mark others for deletion
+        for (let i = 1; i < movements.length; i++) {
+          this.issues.push({
+            type: 'DUPLICATE_STOCK_MOVEMENT',
+            description: `Duplicate stock movement #${i + 1} for ${itemName} on ${dateKey}`,
+            itemId: itemId,
+            itemName: itemName,
+            receiptId: undefined,
+            batchId: undefined,
+            movementId: movements[i].id,
+            quantity: movements[i].incoming,
+            action: 'DELETE',
+          });
+        }
+
+        // Update first movement with total incoming
+        this.issues.push({
+          type: 'DUPLICATE_STOCK_MOVEMENT',
+          description: `Update first stock movement with total incoming for ${itemName}`,
+          itemId: itemId,
+          itemName: itemName,
+          receiptId: undefined,
+          batchId: undefined,
+          movementId: movements[0].id,
+          quantity: totalIncoming,
+          action: 'UPDATE',
+        });
+      }
+    }
     console.log('');
 
     // Collect ALL batches from ALL receipts
@@ -286,6 +396,7 @@ class ProcurementOrderDuplicateRemover {
         console.log(`   Quantity: ${action.quantity.toString()}`);
         if (action.receiptId) console.log(`   Receipt ID: ${action.receiptId}`);
         if (action.batchId) console.log(`   Batch ID: ${action.batchId}`);
+        if (action.movementId) console.log(`   Movement ID: ${action.movementId}`);
       });
 
       console.log('\n📋 UPDATE ACTIONS:');
@@ -296,6 +407,7 @@ class ProcurementOrderDuplicateRemover {
         console.log(`   New Quantity: ${action.quantity.toString()}`);
         if (action.receiptId) console.log(`   Receipt ID: ${action.receiptId}`);
         if (action.batchId) console.log(`   Batch ID: ${action.batchId}`);
+        if (action.movementId) console.log(`   Movement ID: ${action.movementId}`);
       });
 
       console.log('\n⚠️  DRY RUN MODE - No changes were made');
@@ -308,7 +420,12 @@ class ProcurementOrderDuplicateRemover {
       await prisma.$transaction(async (tx) => {
         // Process deletions first
         for (const action of deleteActions) {
-          if (action.type === 'DUPLICATE_BATCH' && action.batchId) {
+          if (action.type === 'DUPLICATE_STOCK_MOVEMENT' && action.movementId) {
+            console.log(`Deleting stock movement: ${action.movementId} (${action.itemName})`);
+            await tx.stockMovement.delete({
+              where: { id: action.movementId },
+            });
+          } else if (action.type === 'DUPLICATE_BATCH' && action.batchId) {
             console.log(`Deleting batch: ${action.batchId} (${action.itemName})`);
             
             // Get batch to check current stock
@@ -341,7 +458,34 @@ class ProcurementOrderDuplicateRemover {
 
         // Process updates
         for (const action of updateActions) {
-          if (action.type === 'DUPLICATE_BATCH' && action.batchId) {
+          if (action.type === 'DUPLICATE_STOCK_MOVEMENT' && action.movementId) {
+            console.log(`Updating stock movement: ${action.movementId} to incoming ${action.quantity.toString()}`);
+            
+            const movement = await tx.stockMovement.findUnique({
+              where: { id: action.movementId },
+            });
+
+            if (movement) {
+              // Update incoming quantity
+              const newClosingBalance = movement.openingBalance
+                .add(action.quantity)
+                .sub(movement.outgoing)
+                .sub(movement.pendingOutgoing)
+                .add(movement.incomingGifts)
+                .sub(movement.outgoingGifts);
+
+              await tx.stockMovement.update({
+                where: { id: action.movementId },
+                data: {
+                  incoming: action.quantity,
+                  closingBalance: newClosingBalance,
+                },
+              });
+
+              // TODO: Propagate closing balance changes to future days
+              // This would require calling stockMovementService.propagateClosingBalanceToFutureDays()
+            }
+          } else if (action.type === 'DUPLICATE_BATCH' && action.batchId) {
             console.log(`Updating batch: ${action.batchId} to quantity ${action.quantity.toString()}`);
             
             // Get batch to calculate stock adjustment
