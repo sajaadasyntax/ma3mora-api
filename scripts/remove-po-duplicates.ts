@@ -128,7 +128,16 @@ class ProcurementOrderDuplicateRemover {
 
     console.log(`Found ${stockMovements.length} stock movement records\n`);
     
-    // Group by itemId + date to find duplicates
+    // Show all stock movements found
+    if (stockMovements.length > 0) {
+      console.log('Stock movements found:');
+      stockMovements.forEach((movement, idx) => {
+        console.log(`  ${idx + 1}. ${movement.item.name} - Date: ${movement.movementDate.toISOString().split('T')[0]} - Incoming: ${movement.incoming.toString()} - Opening: ${movement.openingBalance.toString()} - Closing: ${movement.closingBalance.toString()}`);
+      });
+      console.log('');
+    }
+    
+    // Group by itemId + date to find duplicates (same item, same date)
     const movementGroups = new Map<string, typeof stockMovements>();
     for (const movement of stockMovements) {
       const key = `${movement.itemId}|${movement.movementDate.toISOString().split('T')[0]}`;
@@ -137,6 +146,70 @@ class ProcurementOrderDuplicateRemover {
       }
       movementGroups.get(key)!.push(movement);
     }
+
+    // Also check for duplicate incoming quantities for same item across different dates
+    // This catches cases where the same order was received multiple times on different dates
+    const itemIncomingGroups = new Map<string, typeof stockMovements>();
+    for (const movement of stockMovements) {
+      if (movement.incoming.gt(0)) {
+        const key = movement.itemId;
+        if (!itemIncomingGroups.has(key)) {
+          itemIncomingGroups.set(key, []);
+        }
+        itemIncomingGroups.get(key)!.push(movement);
+      }
+    }
+
+    console.log('Checking for duplicate incoming quantities (same item, different dates)...\n');
+    for (const [itemId, movements] of itemIncomingGroups.entries()) {
+      if (movements.length > 1) {
+        const itemName = movements[0].item.name;
+        const incomingAmounts = movements.map(m => ({
+          date: m.movementDate.toISOString().split('T')[0],
+          amount: m.incoming.toString(),
+          id: m.id,
+        }));
+
+        // Check if there are multiple movements with incoming > 0 for this item
+        // This suggests duplicate receipts
+        console.log(`⚠️  Item ${itemName} has incoming quantities on ${movements.length} different dates:`);
+        incomingAmounts.forEach((amt, idx) => {
+          console.log(`   ${idx + 1}. Date: ${amt.date} - Incoming: ${amt.amount} - Movement ID: ${amt.id}`);
+        });
+
+        // If the order was received on specific dates (27 Nov and 1 Dec), 
+        // and we see incoming on both dates, one might be a duplicate
+        const receiptDates = order.receipts.map(r => r.receivedAt.toISOString().split('T')[0]);
+        const movementsOnReceiptDates = movements.filter(m => 
+          receiptDates.includes(m.movementDate.toISOString().split('T')[0])
+        );
+
+        if (movementsOnReceiptDates.length > 1) {
+          console.log(`   ⚠️  Found ${movementsOnReceiptDates.length} movements on receipt dates - possible duplicates!`);
+          
+          // Keep the first receipt date, mark others for review
+          movementsOnReceiptDates.sort((a, b) => 
+            a.movementDate.getTime() - b.movementDate.getTime()
+          );
+
+          for (let i = 1; i < movementsOnReceiptDates.length; i++) {
+            this.issues.push({
+              type: 'DUPLICATE_STOCK_MOVEMENT',
+              description: `Possible duplicate stock movement for ${itemName} on ${movementsOnReceiptDates[i].movementDate.toISOString().split('T')[0]} (incoming: ${movementsOnReceiptDates[i].incoming.toString()})`,
+              itemId: itemId,
+              itemName: itemName,
+              receiptId: undefined,
+              batchId: undefined,
+              movementId: movementsOnReceiptDates[i].id,
+              quantity: movementsOnReceiptDates[i].incoming,
+              action: 'DELETE',
+            });
+          }
+        }
+        console.log('');
+      }
+    }
+    console.log('');
 
     // Find duplicate stock movements (same item + same date)
     for (const [key, movements] of movementGroups.entries()) {
