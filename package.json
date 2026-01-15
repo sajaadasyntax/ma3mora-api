@@ -30,6 +30,7 @@
     "script:remove-invoice-duplicates": "tsx scripts/remove-invoice-duplicates.ts",
     "script:remove-po-duplicates": "tsx scripts/remove-po-duplicates.ts",
     "script:diagnose-stock": "tsx scripts/diagnose-stock-movements.ts",
+    "script:investigate-stock": "tsx scripts/investigate-stock-movement.ts",
     "postinstall": "prisma generate"
   },
   "dependencies": {
