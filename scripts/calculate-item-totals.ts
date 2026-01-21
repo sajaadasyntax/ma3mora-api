@@ -20,9 +20,11 @@ interface InventoryReceipts {
 class ItemTotalCalculator {
   private itemName: string;
   private itemId?: string;
+  private allowPartialMatch: boolean;
 
-  constructor(itemName: string) {
+  constructor(itemName: string, allowPartialMatch: boolean = false) {
     this.itemName = itemName;
+    this.allowPartialMatch = allowPartialMatch;
   }
 
   /**
@@ -48,19 +50,74 @@ class ItemTotalCalculator {
       });
     }
 
-    if (!item) {
-      console.error(`❌ Item not found: ${this.itemName}`);
-      console.log('\nAvailable items with similar names:');
-      const similarItems = await prisma.item.findMany({
+    // If still not found and partial match is allowed, try finding items that contain the search term
+    if (!item && this.allowPartialMatch) {
+      const items = await prisma.item.findMany({
         where: {
           name: {
-            contains: this.itemName.substring(0, Math.min(3, this.itemName.length)),
+            contains: this.itemName,
             mode: 'insensitive',
           },
         },
-        take: 10,
       });
-      similarItems.forEach(i => console.log(`  - ${i.name} (${i.id})`));
+      
+      if (items.length === 1) {
+        item = items[0];
+        console.log(`⚠️  Using partial match: Found "${item.name}"`);
+      } else if (items.length > 1) {
+        console.log(`⚠️  Multiple items found containing "${this.itemName}":`);
+        items.forEach((i, idx) => console.log(`  ${idx + 1}. ${i.name} (${i.id})`));
+        throw new Error(`Multiple items found. Please specify the exact item name.`);
+      }
+    }
+
+    if (!item) {
+      console.error(`❌ Item not found: "${this.itemName}"`);
+      console.log('\nSearching for similar items...\n');
+      
+      // Try multiple search strategies
+      const searchStrategies = [
+        // Exact contains match
+        { term: this.itemName, desc: 'containing exact text' },
+        // First 3 characters
+        { term: this.itemName.substring(0, Math.min(3, this.itemName.length)), desc: 'starting with first 3 characters' },
+        // First 2 characters  
+        { term: this.itemName.substring(0, Math.min(2, this.itemName.length)), desc: 'starting with first 2 characters' },
+        // Remove first character (in case of prefix like ال)
+        { term: this.itemName.length > 2 ? this.itemName.substring(1) : '', desc: 'without first character' },
+      ].filter(s => s.term.length > 0);
+
+      const allSimilarItems = new Map<string, { name: string; id: string; matchedBy: string }>();
+      
+      for (const strategy of searchStrategies) {
+        const similarItems = await prisma.item.findMany({
+          where: {
+            name: {
+              contains: strategy.term,
+              mode: 'insensitive',
+            },
+          },
+          take: 30,
+        });
+        similarItems.forEach(i => {
+          if (!allSimilarItems.has(i.id)) {
+            allSimilarItems.set(i.id, { name: i.name, id: i.id, matchedBy: strategy.desc });
+          }
+        });
+      }
+
+      if (allSimilarItems.size > 0) {
+        console.log(`Found ${allSimilarItems.size} items with similar names:`);
+        Array.from(allSimilarItems.values()).forEach(i => {
+          console.log(`  - "${i.name}" (${i.id})`);
+        });
+        console.log('\n💡 Tip: Copy the exact item name from the list above and try again.');
+      } else {
+        console.log('No similar items found.');
+        console.log('\n💡 Try searching for items manually:');
+        console.log('   Run: tsx scripts/list-items.ts');
+      }
+      
       throw new Error(`Item "${this.itemName}" not found`);
     }
 
@@ -276,16 +333,18 @@ async function main() {
   const args = process.argv.slice(2);
   
   if (args.length === 0) {
-    console.error('Usage: tsx scripts/calculate-item-totals.ts <item-name>');
+    console.error('Usage: tsx scripts/calculate-item-totals.ts <item-name> [--partial]');
     console.error('Example: tsx scripts/calculate-item-totals.ts "الأول"');
     console.error('Example: tsx scripts/calculate-item-totals.ts "معكرونة"');
+    console.error('Example: tsx scripts/calculate-item-totals.ts "الأول" --partial');
     await prisma.$disconnect();
     return;
   }
 
   const itemName = args[0];
+  const allowPartialMatch = args.includes('--partial');
 
-  const calculator = new ItemTotalCalculator(itemName);
+  const calculator = new ItemTotalCalculator(itemName, allowPartialMatch);
 
   try {
     await calculator.generateReport();
