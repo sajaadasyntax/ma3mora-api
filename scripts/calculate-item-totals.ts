@@ -29,14 +29,24 @@ class ItemTotalCalculator {
    * Find the item by name
    */
   async findItem(): Promise<void> {
-    const item = await prisma.item.findFirst({
+    // Try exact match first
+    let item = await prisma.item.findFirst({
       where: {
-        name: {
-          contains: this.itemName,
-          mode: 'insensitive',
-        },
+        name: this.itemName,
       },
     });
+
+    // If not found, try case-insensitive contains search
+    if (!item) {
+      item = await prisma.item.findFirst({
+        where: {
+          name: {
+            contains: this.itemName,
+            mode: 'insensitive',
+          },
+        },
+      });
+    }
 
     if (!item) {
       console.error(`❌ Item not found: ${this.itemName}`);
