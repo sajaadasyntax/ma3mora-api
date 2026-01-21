@@ -29,6 +29,7 @@
     "script:recalculate-aggregates:apply": "tsx scripts/recalculate-financial-aggregates.ts --apply",
     "script:remove-invoice-duplicates": "tsx scripts/remove-invoice-duplicates.ts",
     "script:remove-po-duplicates": "tsx scripts/remove-po-duplicates.ts",
+    "script:calculate-item-totals": "tsx scripts/calculate-item-totals.ts",
     "script:diagnose-stock": "tsx scripts/diagnose-stock-movements.ts",
     "script:investigate-stock": "tsx scripts/investigate-stock-movement.ts",
     "script:fix-january-stock": "tsx scripts/fix-january-stock-movement.ts",
