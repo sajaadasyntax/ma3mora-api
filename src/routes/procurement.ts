@@ -480,7 +480,7 @@ const batchItemSchema = z.object({
 const cancelOrderSchema = z.object({
   reason: z.string().optional(),
   notes: z.string().optional(),
-  refundMethod: z.enum(['CASH', 'BANK', 'BANK_NILE']).optional(),
+  refundMethod: z.enum(['CASH', 'BANKAK', 'BANK_NILE', 'DEBT', 'OTHERS']).optional(),
   refundAmount: z.number().optional(),
   refundNotes: z.string().optional(),
 }).refine((data) => {
@@ -586,16 +586,23 @@ router.post('/orders/:id/cancel', requireRole('MANAGER'), createAuditLog('ProcOr
   }
 });
 
+const extraItemSchema = z.object({
+  itemId: z.string(),
+  quantity: z.number().positive(),
+  isGiftCompensation: z.literal(true),
+});
+
 const receiveOrderSchema = z.object({
   notes: z.string().optional(),
   partial: z.boolean().optional(),
   batches: z.array(batchItemSchema).optional(), // Optional batches with expiry dates
+  extraItems: z.array(extraItemSchema).optional(), // Extra gift/compensation items added during GRN
 });
 
 router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAuditLog('InventoryReceipt'), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
-    const { notes, partial, batches } = receiveOrderSchema.parse(req.body);
+    const { notes, partial, batches, extraItems } = receiveOrderSchema.parse(req.body);
 
     const order = await prisma.procOrder.findUnique({
       where: { id },
@@ -882,6 +889,65 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
         }
       }
 
+      // Process extra gift/compensation items
+      if (extraItems && extraItems.length > 0) {
+        for (const extra of extraItems) {
+          // Create ProcOrderItem with isGiftCompensation=true
+          await tx.procOrderItem.create({
+            data: {
+              orderId: id,
+              itemId: extra.itemId,
+              quantity: extra.quantity,
+              unitCost: 0,
+              lineTotal: 0,
+              isGiftCompensation: true,
+            },
+          });
+
+          // Ensure stock record exists
+          const extraStock = await tx.inventoryStock.findUnique({
+            where: {
+              inventoryId_itemId: {
+                inventoryId: order.inventoryId,
+                itemId: extra.itemId,
+              },
+            },
+          });
+
+          if (!extraStock) {
+            throw new Error(`المخزون غير موجود للصنف ${extra.itemId}`);
+          }
+
+          const extraQty = new Prisma.Decimal(extra.quantity);
+
+          // Create stock batch for extra gift/compensation item
+          await tx.stockBatch.create({
+            data: {
+              inventoryId: order.inventoryId,
+              itemId: extra.itemId,
+              quantity: extraQty,
+              receiptId: receipt.id,
+              notes: 'هدية/تعويض',
+            },
+          });
+
+          // Update stock quantity
+          await tx.inventoryStock.update({
+            where: {
+              inventoryId_itemId: {
+                inventoryId: order.inventoryId,
+                itemId: extra.itemId,
+              },
+            },
+            data: {
+              quantity: {
+                increment: extraQty,
+              },
+            },
+          });
+        }
+      }
+
       // Calculate received quantities from all receipts (including the one just created)
       const receivedByItem: Record<string, Prisma.Decimal> = {};
       const allReceipts = await tx.inventoryReceipt.findMany({
@@ -988,6 +1054,44 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
       // Don't fail the receipt if stock movement update fails
     }
 
+    // Update StockMovement records for extra gift/compensation items
+    if (extraItems && extraItems.length > 0) {
+      try {
+        const { stockMovementService } = await import('../services/stockMovementService');
+        const extraReceiptDate = new Date();
+
+        for (const extra of extraItems) {
+          await stockMovementService.updateStockMovement(
+            result.order.inventoryId,
+            extra.itemId,
+            extraReceiptDate,
+            {
+              incomingGifts: extra.quantity,
+            }
+          );
+
+          // Set movementType to INBOUND_GIFT on the stock movement record
+          const movementDate = new Date(extraReceiptDate);
+          movementDate.setHours(0, 0, 0, 0);
+          await prisma.stockMovement.update({
+            where: {
+              inventoryId_itemId_movementDate: {
+                inventoryId: result.order.inventoryId,
+                itemId: extra.itemId,
+                movementDate,
+              },
+            },
+            data: {
+              movementType: 'INBOUND_GIFT',
+            },
+          });
+        }
+      } catch (error) {
+        console.error('Failed to update stock movements for extra items:', error);
+        // Don't fail the receipt if stock movement update fails
+      }
+    }
+
     res.json(result);
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -1000,13 +1104,13 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
 
 const paymentSchema = z.object({
   amount: z.number().positive(),
-  method: z.enum(['CASH', 'BANK', 'BANK_NILE', 'COMMISSION']),
+  method: z.enum(['CASH', 'BANKAK', 'BANK_NILE', 'COMMISSION', 'DEBT', 'OTHERS']),
   notes: z.string().optional(),
   receiptUrl: z.string().optional(),
   receiptNumber: z.string().optional(),
 }).refine((data) => {
-  // COMMISSION doesn't need receipt number (already paid by supplier as gift)
-  if (data.method !== 'CASH' && data.method !== 'COMMISSION' && !data.receiptNumber) {
+  // COMMISSION, DEBT and OTHERS don't need receipt number
+  if (data.method !== 'CASH' && data.method !== 'COMMISSION' && data.method !== 'DEBT' && data.method !== 'OTHERS' && !data.receiptNumber) {
     return false;
   }
   return true;
@@ -1122,9 +1226,9 @@ router.post('/orders/:id/payments', requireRole('MANAGER'), checkBalanceOpen, cr
     // Ensure sufficient balance for selected method before paying
     // Opening balances (open cashbox only)
     const openingBalances = await prisma.openingBalance.findMany({ where: { scope: 'CASHBOX', isClosed: false } });
-    const openingByMethod: Record<'CASH'|'BANK'|'BANK_NILE', Prisma.Decimal> = {
+    const openingByMethod: Record<'CASH'|'BANKAK'|'BANK_NILE', Prisma.Decimal> = {
       CASH: openingBalances.filter((b: any) => b.paymentMethod === 'CASH').reduce((s, b) => s.add(b.amount), new Prisma.Decimal(0)),
-      BANK: openingBalances.filter((b: any) => b.paymentMethod === 'BANK').reduce((s, b) => s.add(b.amount), new Prisma.Decimal(0)),
+      BANKAK: openingBalances.filter((b: any) => b.paymentMethod === 'BANKAK').reduce((s, b) => s.add(b.amount), new Prisma.Decimal(0)),
       BANK_NILE: openingBalances.filter((b: any) => b.paymentMethod === 'BANK_NILE').reduce((s, b) => s.add(b.amount), new Prisma.Decimal(0)),
     };
 
@@ -1134,71 +1238,71 @@ router.post('/orders/:id/payments', requireRole('MANAGER'), checkBalanceOpen, cr
       select: { id: true },
     })).map(i => i.id);
     const salesPays = await prisma.salesPayment.findMany({ where: { invoiceId: { in: confirmedInvoiceIds } } });
-    const salesIn: Record<'CASH'|'BANK'|'BANK_NILE', Prisma.Decimal> = {
+    const salesIn: Record<'CASH'|'BANKAK'|'BANK_NILE', Prisma.Decimal> = {
       CASH: salesPays.filter(p => p.method === 'CASH').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
-      BANK: salesPays.filter(p => p.method === 'BANK').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
+      BANKAK: salesPays.filter(p => p.method === 'BANKAK').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
       BANK_NILE: salesPays.filter(p => p.method === 'BANK_NILE').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
     };
 
     // Existing procurement payments out (only confirmed orders)
     const procPays = await prisma.procOrderPayment.findMany({ where: { order: { paymentConfirmed: true } } });
   // Commission payments are already paid by suppliers as gift, so they don't subtract from liquid assets
-  const procOut: Record<'CASH'|'BANK'|'BANK_NILE', Prisma.Decimal> = {
+  const procOut: Record<'CASH'|'BANKAK'|'BANK_NILE', Prisma.Decimal> = {
     CASH: procPays.filter(p => p.method === 'CASH').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
-    BANK: procPays.filter(p => p.method === 'BANK').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
+    BANKAK: procPays.filter(p => p.method === 'BANKAK').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
     BANK_NILE: procPays.filter(p => p.method === 'BANK_NILE').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
     // COMMISSION payments are excluded - they don't subtract from liquid assets
   };
 
     // Expenses out - exclude debts from balance calculation
     const expenses = await prisma.expense.findMany();
-    const expOut: Record<'CASH'|'BANK'|'BANK_NILE', Prisma.Decimal> = {
+    const expOut: Record<'CASH'|'BANKAK'|'BANK_NILE', Prisma.Decimal> = {
       CASH: expenses.filter(e => e.method === 'CASH' && !e.isDebt).reduce((s, e) => s.add(e.amount), new Prisma.Decimal(0)),
-      BANK: expenses.filter(e => e.method === 'BANK' && !e.isDebt).reduce((s, e) => s.add(e.amount), new Prisma.Decimal(0)),
+      BANKAK: expenses.filter(e => e.method === 'BANKAK' && !e.isDebt).reduce((s, e) => s.add(e.amount), new Prisma.Decimal(0)),
       BANK_NILE: expenses.filter(e => e.method === 'BANK_NILE' && !e.isDebt).reduce((s, e) => s.add(e.amount), new Prisma.Decimal(0)),
     };
 
     // Salaries & advances out
     const paidSalaries = await prisma.salary.findMany({ where: { paidAt: { not: null } } });
     const paidAdvances = await prisma.advance.findMany({ where: { paidAt: { not: null } } });
-    const salOut: Record<'CASH'|'BANK'|'BANK_NILE', Prisma.Decimal> = {
+    const salOut: Record<'CASH'|'BANKAK'|'BANK_NILE', Prisma.Decimal> = {
       CASH: paidSalaries.filter((s: any) => s.paymentMethod === 'CASH').reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0)),
-      BANK: paidSalaries.filter((s: any) => s.paymentMethod === 'BANK').reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0)),
+      BANKAK: paidSalaries.filter((s: any) => s.paymentMethod === 'BANKAK').reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0)),
       BANK_NILE: paidSalaries.filter((s: any) => s.paymentMethod === 'BANK_NILE').reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0)),
     };
-    const advOut: Record<'CASH'|'BANK'|'BANK_NILE', Prisma.Decimal> = {
+    const advOut: Record<'CASH'|'BANKAK'|'BANK_NILE', Prisma.Decimal> = {
       CASH: paidAdvances.filter((a: any) => a.paymentMethod === 'CASH').reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0)),
-      BANK: paidAdvances.filter((a: any) => a.paymentMethod === 'BANK').reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0)),
+      BANKAK: paidAdvances.filter((a: any) => a.paymentMethod === 'BANKAK').reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0)),
       BANK_NILE: paidAdvances.filter((a: any) => a.paymentMethod === 'BANK_NILE').reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0)),
     };
 
     // Income in - exclude debts from balance calculation
     const income = await prisma.income.findMany();
-    const incomeIn: Record<'CASH'|'BANK'|'BANK_NILE', Prisma.Decimal> = {
+    const incomeIn: Record<'CASH'|'BANKAK'|'BANK_NILE', Prisma.Decimal> = {
       CASH: income.filter(i => i.method === 'CASH' && !i.isDebt).reduce((s, i) => s.add(i.amount), new Prisma.Decimal(0)),
-      BANK: income.filter(i => i.method === 'BANK' && !i.isDebt).reduce((s, i) => s.add(i.amount), new Prisma.Decimal(0)),
+      BANKAK: income.filter(i => i.method === 'BANKAK' && !i.isDebt).reduce((s, i) => s.add(i.amount), new Prisma.Decimal(0)),
       BANK_NILE: income.filter(i => i.method === 'BANK_NILE' && !i.isDebt).reduce((s, i) => s.add(i.amount), new Prisma.Decimal(0)),
     };
 
     // Cash exchanges impact
     const exchanges = await prisma.cashExchange.findMany();
-    const exImpact: Record<'CASH'|'BANK'|'BANK_NILE', Prisma.Decimal> = { CASH: new Prisma.Decimal(0), BANK: new Prisma.Decimal(0), BANK_NILE: new Prisma.Decimal(0) };
+    const exImpact: Record<'CASH'|'BANKAK'|'BANK_NILE', Prisma.Decimal> = { CASH: new Prisma.Decimal(0), BANKAK: new Prisma.Decimal(0), BANK_NILE: new Prisma.Decimal(0) };
     exchanges.forEach((e) => {
-      const fromMethod = e.fromMethod as 'CASH'|'BANK'|'BANK_NILE';
-      const toMethod = e.toMethod as 'CASH'|'BANK'|'BANK_NILE';
+      const fromMethod = e.fromMethod as 'CASH'|'BANKAK'|'BANK_NILE';
+      const toMethod = e.toMethod as 'CASH'|'BANKAK'|'BANK_NILE';
       exImpact[fromMethod] = exImpact[fromMethod].sub(e.amount);
       exImpact[toMethod] = exImpact[toMethod].add(e.amount);
     });
 
-    const available: Record<'CASH'|'BANK'|'BANK_NILE', Prisma.Decimal> = {
+    const available: Record<'CASH'|'BANKAK'|'BANK_NILE', Prisma.Decimal> = {
       CASH: openingByMethod.CASH.add(salesIn.CASH).add(incomeIn.CASH).add(exImpact.CASH).sub(expOut.CASH).sub(salOut.CASH).sub(advOut.CASH).sub(procOut.CASH),
-      BANK: openingByMethod.BANK.add(salesIn.BANK).add(incomeIn.BANK).add(exImpact.BANK).sub(expOut.BANK).sub(salOut.BANK).sub(advOut.BANK).sub(procOut.BANK),
+      BANKAK: openingByMethod.BANKAK.add(salesIn.BANKAK).add(incomeIn.BANKAK).add(exImpact.BANKAK).sub(expOut.BANKAK).sub(salOut.BANKAK).sub(advOut.BANKAK).sub(procOut.BANKAK),
       BANK_NILE: openingByMethod.BANK_NILE.add(salesIn.BANK_NILE).add(incomeIn.BANK_NILE).add(exImpact.BANK_NILE).sub(expOut.BANK_NILE).sub(salOut.BANK_NILE).sub(advOut.BANK_NILE).sub(procOut.BANK_NILE),
     };
 
-    // Commission payments don't need balance check - already paid by supplier as gift
-    if (paymentData.method !== 'COMMISSION') {
-      const method = paymentData.method as 'CASH'|'BANK'|'BANK_NILE';
+    // COMMISSION, DEBT, and OTHERS don't need balance check - not liquid asset methods
+    if (paymentData.method !== 'COMMISSION' && paymentData.method !== 'DEBT' && paymentData.method !== 'OTHERS') {
+      const method = paymentData.method as 'CASH'|'BANKAK'|'BANK_NILE';
       if (available[method].lessThan(paymentData.amount)) {
         return res.status(400).json({ error: 'الرصيد غير كافٍ لطريقة الدفع المحددة' });
       }
@@ -1236,7 +1340,7 @@ router.post('/orders/:id/payments', requireRole('MANAGER'), checkBalanceOpen, cr
         const paymentAmount = new Prisma.Decimal(paymentData.amount);
         const procurementPaidByMethod = {
           CASH: paymentData.method === 'CASH' ? paymentAmount : new Prisma.Decimal(0),
-          BANK: paymentData.method === 'BANK' ? paymentAmount : new Prisma.Decimal(0),
+          BANKAK: paymentData.method === 'BANKAK' ? paymentAmount : new Prisma.Decimal(0),
           BANK_NILE: paymentData.method === 'BANK_NILE' ? paymentAmount : new Prisma.Decimal(0),
         };
 
@@ -1246,7 +1350,7 @@ router.post('/orders/:id/payments', requireRole('MANAGER'), checkBalanceOpen, cr
             procurementPaid: paymentAmount,
             procurementDebt: paymentAmount.neg(), // Reduce debt
             procurementCash: procurementPaidByMethod.CASH,
-            procurementBank: procurementPaidByMethod.BANK,
+            procurementBank: procurementPaidByMethod.BANKAK,
             procurementBankNile: procurementPaidByMethod.BANK_NILE,
           },
           order.inventoryId,
@@ -1260,7 +1364,7 @@ router.post('/orders/:id/payments', requireRole('MANAGER'), checkBalanceOpen, cr
           {
             totalPaid: paymentAmount,
             purchasesCash: procurementPaidByMethod.CASH,
-            purchasesBank: procurementPaidByMethod.BANK,
+            purchasesBank: procurementPaidByMethod.BANKAK,
             purchasesBankNile: procurementPaidByMethod.BANK_NILE,
           }
         );
@@ -1698,6 +1802,169 @@ router.post('/orders/:id/assign-delivered', requireRole('INVENTORY', 'MANAGER'),
     res.json(updated);
   } catch (error) {
     console.error('Assign delivered error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
+// PO vs. GRN Variance Report
+router.get('/reports/po-vs-grn', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (req: AuthRequest, res) => {
+  try {
+    const { dateFrom, dateTo, inventoryId, section } = req.query;
+
+    if (!dateFrom || !dateTo) {
+      return res.status(400).json({ error: 'dateFrom و dateTo مطلوبان' });
+    }
+
+    const where: any = {
+      status: { in: ['RECEIVED', 'PARTIAL'] },
+      createdAt: {
+        gte: new Date(dateFrom as string),
+        lte: new Date(dateTo as string),
+      },
+    };
+    if (inventoryId) where.inventoryId = inventoryId;
+    if (section) where.section = section;
+
+    const orders = await prisma.procOrder.findMany({
+      where,
+      include: {
+        supplier: true,
+        inventory: true,
+        items: {
+          include: { item: true },
+        },
+        receipts: {
+          include: { batches: true },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const rows: any[] = [];
+    let grandTotalOrdered = 0;
+    let grandTotalReceived = 0;
+    let grandTotalGiftComp = 0;
+
+    for (const order of orders) {
+      // Aggregate received quantities per item from all receipts
+      const receivedByItem: Record<string, number> = {};
+      for (const receipt of order.receipts) {
+        for (const batch of receipt.batches) {
+          receivedByItem[batch.itemId] = (receivedByItem[batch.itemId] || 0) + parseFloat(batch.quantity.toString());
+        }
+      }
+
+      for (const item of order.items) {
+        const ordered = parseFloat(item.quantity.toString());
+        const isGift = (item as any).isGiftCompensation === true;
+        const received = receivedByItem[item.itemId] || 0;
+        const variance = isGift ? received : received - ordered;
+        const giftCompQty = isGift ? received : 0;
+
+        rows.push({
+          orderId: order.id,
+          orderNumber: order.orderNumber,
+          supplierName: order.supplier.name,
+          inventoryName: order.inventory.name,
+          section: order.section,
+          orderDate: order.createdAt,
+          status: order.status,
+          itemId: item.itemId,
+          itemName: item.item.name,
+          orderedQty: isGift ? 0 : ordered,
+          receivedQty: received,
+          variance,
+          giftCompensationQty: giftCompQty,
+          isGiftCompensation: isGift,
+          unitCost: parseFloat(item.unitCost.toString()),
+          lineTotal: parseFloat(item.lineTotal.toString()),
+        });
+
+        if (!isGift) {
+          grandTotalOrdered += ordered;
+        }
+        grandTotalReceived += received;
+        if (isGift) {
+          grandTotalGiftComp += received;
+        }
+      }
+    }
+
+    res.json({
+      rows,
+      grandTotal: {
+        totalOrdered: grandTotalOrdered,
+        totalReceived: grandTotalReceived,
+        totalVariance: grandTotalReceived - grandTotalOrdered,
+        totalGiftCompensation: grandTotalGiftComp,
+        orderCount: orders.length,
+      },
+    });
+  } catch (error) {
+    console.error('PO vs GRN report error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
+// Purchases by Category Report
+router.get('/reports/by-category', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (req: AuthRequest, res) => {
+  try {
+    const { dateFrom, dateTo } = req.query;
+
+    if (!dateFrom || !dateTo) {
+      return res.status(400).json({ error: 'dateFrom و dateTo مطلوبان' });
+    }
+
+    const where: any = {
+      status: { not: 'CANCELLED' },
+      createdAt: {
+        gte: new Date(dateFrom as string),
+        lte: new Date(dateTo as string),
+      },
+    };
+
+    const orders = await prisma.procOrder.findMany({
+      where,
+      include: {
+        items: {
+          include: { item: true },
+        },
+      },
+    });
+
+    const categoryMap: Record<string, { totalAmount: number; itemCount: number; orderCount: number }> = {};
+
+    for (const order of orders) {
+      const cat = order.section; // GROCERY or BAKERY
+      if (!categoryMap[cat]) {
+        categoryMap[cat] = { totalAmount: 0, itemCount: 0, orderCount: 0 };
+      }
+      categoryMap[cat].orderCount += 1;
+      categoryMap[cat].totalAmount += parseFloat(order.total.toString());
+
+      for (const item of order.items) {
+        if (!(item as any).isGiftCompensation) {
+          categoryMap[cat].itemCount += 1;
+        }
+      }
+    }
+
+    const rows = Object.entries(categoryMap).map(([category, data]) => ({
+      category,
+      totalAmount: data.totalAmount,
+      itemCount: data.itemCount,
+      orderCount: data.orderCount,
+    }));
+
+    const grandTotal = {
+      totalAmount: rows.reduce((sum, r) => sum + r.totalAmount, 0),
+      totalItemCount: rows.reduce((sum, r) => sum + r.itemCount, 0),
+      totalOrderCount: rows.reduce((sum, r) => sum + r.orderCount, 0),
+    };
+
+    res.json({ rows, grandTotal });
+  } catch (error) {
+    console.error('Purchases by category report error:', error);
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
 });

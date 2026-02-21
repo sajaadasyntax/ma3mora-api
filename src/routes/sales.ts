@@ -64,8 +64,8 @@ const createInvoiceSchema = z.object({
   inventoryId: z.string(),
   section: z.enum(['GROCERY', 'BAKERY']),
   customerId: z.string().optional(),
-  pricingTier: z.enum(['WHOLESALE', 'RETAIL', 'AGENT', 'AGENT_WHOLESALE', 'AGENT_RETAIL', 'OFFER_1', 'OFFER_2']).optional(), // Used when no customer selected
-  paymentMethod: z.enum(['CASH', 'BANK', 'BANK_NILE']).default('CASH'),
+  pricingTier: z.enum(['WHOLESALE', 'RETAIL', 'AGENT', 'AGENT_WHOLESALE', 'AGENT_RETAIL', 'OFFER_1', 'OFFER_2', 'BAKERY_CUSTOMER']).optional(), // Used when no customer selected
+  paymentMethod: z.enum(['CASH', 'BANKAK', 'BANK_NILE', 'COMMISSION', 'DEBT', 'OTHERS']).default('CASH'),
   discount: z.number().min(0).default(0),
   items: z.array(invoiceItemSchema).min(1),
   notes: z.string().optional(),
@@ -73,13 +73,13 @@ const createInvoiceSchema = z.object({
 
 const paymentSchema = z.object({
   amount: z.number().positive(),
-  method: z.enum(['CASH', 'BANK', 'BANK_NILE']),
+  method: z.enum(['CASH', 'BANKAK', 'BANK_NILE', 'COMMISSION', 'DEBT', 'OTHERS']),
   notes: z.string().optional(),
   receiptUrl: z.string().optional(),
   receiptNumber: z.string().optional(),
 }).refine((data) => {
-  // If method is BANK or BANK_NILE, receiptNumber is required
-  if (data.method !== 'CASH' && !data.receiptNumber) {
+  // If method is BANKAK or BANK_NILE, receiptNumber is required
+  if ((data.method === 'BANKAK' || data.method === 'BANK_NILE') && !data.receiptNumber) {
     return false;
   }
   return true;
@@ -210,7 +210,7 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GRO
 
     // Get customer to determine pricing tier (default to RETAIL if no customer)
     let customer = null;
-    let pricingTier: 'WHOLESALE' | 'RETAIL' | 'AGENT' | 'AGENT_WHOLESALE' | 'AGENT_RETAIL' | 'OFFER_1' | 'OFFER_2' = data.pricingTier || 'RETAIL';
+    let pricingTier: 'WHOLESALE' | 'RETAIL' | 'AGENT' | 'AGENT_WHOLESALE' | 'AGENT_RETAIL' | 'OFFER_1' | 'OFFER_2' | 'BAKERY_CUSTOMER' = data.pricingTier || 'RETAIL';
     
     const isAgentUser = req.user?.role === 'AGENT_GROCERY' || req.user?.role === 'AGENT_BAKERY';
     
@@ -510,7 +510,7 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GRO
       const invoiceDate = invoice.createdAt;
       const salesByMethod = {
         CASH: data.paymentMethod === 'CASH' ? total : new Prisma.Decimal(0),
-        BANK: data.paymentMethod === 'BANK' ? total : new Prisma.Decimal(0),
+        BANKAK: data.paymentMethod === 'BANKAK' ? total : new Prisma.Decimal(0),
         BANK_NILE: data.paymentMethod === 'BANK_NILE' ? total : new Prisma.Decimal(0),
       };
 
@@ -521,7 +521,7 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GRO
           salesDebt: total, // No payment yet
           salesCount: 1,
           salesCash: salesByMethod.CASH,
-          salesBank: salesByMethod.BANK,
+          salesBank: salesByMethod.BANKAK,
           salesBankNile: salesByMethod.BANK_NILE,
         },
         data.inventoryId,
@@ -553,7 +553,7 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GRO
             totalSales: total,
             invoiceCount: 1,
             salesCash: salesByMethod.CASH,
-            salesBank: salesByMethod.BANK,
+            salesBank: salesByMethod.BANKAK,
             salesBankNile: salesByMethod.BANK_NILE,
           }
         );
@@ -763,7 +763,7 @@ router.post('/invoices/:id/payments', requireRole('ACCOUNTANT', 'SALES_GROCERY',
       const paymentAmount = new Prisma.Decimal(paymentData.amount);
       const salesReceivedByMethod = {
         CASH: paymentData.method === 'CASH' ? paymentAmount : new Prisma.Decimal(0),
-        BANK: paymentData.method === 'BANK' ? paymentAmount : new Prisma.Decimal(0),
+        BANKAK: paymentData.method === 'BANKAK' ? paymentAmount : new Prisma.Decimal(0),
         BANK_NILE: paymentData.method === 'BANK_NILE' ? paymentAmount : new Prisma.Decimal(0),
       };
 
@@ -773,7 +773,7 @@ router.post('/invoices/:id/payments', requireRole('ACCOUNTANT', 'SALES_GROCERY',
           salesReceived: paymentAmount,
           salesDebt: paymentAmount.neg(), // Reduce debt
           salesCash: salesReceivedByMethod.CASH,
-          salesBank: salesReceivedByMethod.BANK,
+          salesBank: salesReceivedByMethod.BANKAK,
           salesBankNile: salesReceivedByMethod.BANK_NILE,
         },
         invoice.inventoryId,
@@ -788,7 +788,7 @@ router.post('/invoices/:id/payments', requireRole('ACCOUNTANT', 'SALES_GROCERY',
           {
             totalPaid: paymentAmount,
             salesCash: salesReceivedByMethod.CASH,
-            salesBank: salesReceivedByMethod.BANK,
+            salesBank: salesReceivedByMethod.BANKAK,
             salesBankNile: salesReceivedByMethod.BANK_NILE,
           }
         );
@@ -2989,6 +2989,176 @@ router.get('/reports/daily-by-item', requireRole('SALES_GROCERY', 'SALES_BAKERY'
     });
   } catch (error) {
     console.error('Daily sales by item report error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
+// Daily Sales Summary with payment method breakdown
+router.get('/reports/daily-summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (req: AuthRequest, res) => {
+  try {
+    const { date, inventoryId, section } = req.query;
+
+    if (!date) {
+      return res.status(400).json({ error: 'التاريخ مطلوب' });
+    }
+
+    const targetDate = new Date(date as string);
+    const startOfDay = new Date(targetDate);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(targetDate);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    // Build where clause
+    const where: any = {
+      createdAt: {
+        gte: startOfDay,
+        lte: endOfDay,
+      },
+      paymentConfirmationStatus: { not: 'REJECTED' },
+    };
+
+    if (inventoryId) {
+      where.inventoryId = inventoryId as string;
+    }
+
+    if (section) {
+      where.section = section;
+    }
+
+    // Get all invoices for the day with items and payments
+    const invoices = await prisma.salesInvoice.findMany({
+      where,
+      include: {
+        items: {
+          include: {
+            item: true,
+          },
+        },
+        payments: true,
+      },
+    });
+
+    // Build per-item summary with payment method breakdown
+    const itemsMap: Record<string, {
+      itemId: string;
+      itemName: string;
+      totalQuantity: Prisma.Decimal;
+      totalAmount: Prisma.Decimal;
+      totalCash: Prisma.Decimal;
+      totalBankak: Prisma.Decimal;
+      totalBankNile: Prisma.Decimal;
+      totalDebt: Prisma.Decimal;
+      totalOthers: Prisma.Decimal;
+    }> = {};
+
+    for (const invoice of invoices) {
+      // Calculate proportional payment method split for this invoice
+      const invoiceTotal = new Prisma.Decimal(invoice.total);
+
+      // Sum payments by method
+      const paymentsByMethod: Record<string, Prisma.Decimal> = {
+        CASH: new Prisma.Decimal(0),
+        BANKAK: new Prisma.Decimal(0),
+        BANK_NILE: new Prisma.Decimal(0),
+        DEBT: new Prisma.Decimal(0),
+        OTHERS: new Prisma.Decimal(0),
+      };
+
+      let totalPaid = new Prisma.Decimal(0);
+      for (const payment of invoice.payments) {
+        const method = payment.method;
+        const amount = new Prisma.Decimal(payment.amount);
+        // Map COMMISSION to OTHERS for summary purposes
+        const mappedMethod = method === 'COMMISSION' ? 'OTHERS' : method;
+        if (paymentsByMethod[mappedMethod] !== undefined) {
+          paymentsByMethod[mappedMethod] = paymentsByMethod[mappedMethod].add(amount);
+        } else {
+          paymentsByMethod['OTHERS'] = paymentsByMethod['OTHERS'].add(amount);
+        }
+        totalPaid = totalPaid.add(amount);
+      }
+
+      // If there are unpaid amounts, count them as DEBT
+      if (totalPaid.lessThan(invoiceTotal)) {
+        const unpaid = invoiceTotal.sub(totalPaid);
+        paymentsByMethod['DEBT'] = paymentsByMethod['DEBT'].add(unpaid);
+        totalPaid = invoiceTotal; // Treat entire invoice total as accounted for
+      }
+
+      // Calculate proportions (relative to invoiceTotal)
+      const proportions: Record<string, Prisma.Decimal> = {};
+      if (invoiceTotal.greaterThan(0)) {
+        for (const method of Object.keys(paymentsByMethod)) {
+          proportions[method] = paymentsByMethod[method].div(invoiceTotal);
+        }
+      }
+
+      // Distribute each item's amount according to payment proportions
+      for (const invoiceItem of invoice.items) {
+        const itemId = invoiceItem.itemId;
+        const lineTotal = new Prisma.Decimal(invoiceItem.lineTotal);
+
+        if (!itemsMap[itemId]) {
+          itemsMap[itemId] = {
+            itemId,
+            itemName: invoiceItem.item.name,
+            totalQuantity: new Prisma.Decimal(0),
+            totalAmount: new Prisma.Decimal(0),
+            totalCash: new Prisma.Decimal(0),
+            totalBankak: new Prisma.Decimal(0),
+            totalBankNile: new Prisma.Decimal(0),
+            totalDebt: new Prisma.Decimal(0),
+            totalOthers: new Prisma.Decimal(0),
+          };
+        }
+
+        itemsMap[itemId].totalQuantity = itemsMap[itemId].totalQuantity.add(invoiceItem.quantity);
+        itemsMap[itemId].totalAmount = itemsMap[itemId].totalAmount.add(lineTotal);
+
+        if (invoiceTotal.greaterThan(0)) {
+          itemsMap[itemId].totalCash = itemsMap[itemId].totalCash.add(lineTotal.mul(proportions['CASH'] || 0));
+          itemsMap[itemId].totalBankak = itemsMap[itemId].totalBankak.add(lineTotal.mul(proportions['BANKAK'] || 0));
+          itemsMap[itemId].totalBankNile = itemsMap[itemId].totalBankNile.add(lineTotal.mul(proportions['BANK_NILE'] || 0));
+          itemsMap[itemId].totalDebt = itemsMap[itemId].totalDebt.add(lineTotal.mul(proportions['DEBT'] || 0));
+          itemsMap[itemId].totalOthers = itemsMap[itemId].totalOthers.add(lineTotal.mul(proportions['OTHERS'] || 0));
+        }
+      }
+    }
+
+    // Convert to array and format
+    const items = Object.values(itemsMap).map(item => ({
+      itemId: item.itemId,
+      itemName: item.itemName,
+      totalQuantity: item.totalQuantity.toFixed(2),
+      totalAmount: item.totalAmount.toFixed(2),
+      totalCash: item.totalCash.toFixed(2),
+      totalBankak: item.totalBankak.toFixed(2),
+      totalBankNile: item.totalBankNile.toFixed(2),
+      totalDebt: item.totalDebt.toFixed(2),
+      totalOthers: item.totalOthers.toFixed(2),
+    }));
+
+    // Sort by total amount descending
+    items.sort((a, b) => parseFloat(b.totalAmount) - parseFloat(a.totalAmount));
+
+    // Calculate grand totals
+    const grandTotal = {
+      totalQuantity: items.reduce((sum, item) => sum + parseFloat(item.totalQuantity), 0).toFixed(2),
+      totalAmount: items.reduce((sum, item) => sum + parseFloat(item.totalAmount), 0).toFixed(2),
+      totalCash: items.reduce((sum, item) => sum + parseFloat(item.totalCash), 0).toFixed(2),
+      totalBankak: items.reduce((sum, item) => sum + parseFloat(item.totalBankak), 0).toFixed(2),
+      totalBankNile: items.reduce((sum, item) => sum + parseFloat(item.totalBankNile), 0).toFixed(2),
+      totalDebt: items.reduce((sum, item) => sum + parseFloat(item.totalDebt), 0).toFixed(2),
+      totalOthers: items.reduce((sum, item) => sum + parseFloat(item.totalOthers), 0).toFixed(2),
+    };
+
+    res.json({
+      date: targetDate.toISOString().split('T')[0],
+      items,
+      grandTotal,
+    });
+  } catch (error) {
+    console.error('Daily sales summary error:', error);
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
 });

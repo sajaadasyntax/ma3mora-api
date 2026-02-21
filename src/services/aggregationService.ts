@@ -10,6 +10,8 @@ export interface DailyAggregateUpdate {
   salesCash?: Prisma.Decimal;
   salesBank?: Prisma.Decimal;
   salesBankNile?: Prisma.Decimal;
+  salesDebtMethod?: Prisma.Decimal;
+  salesOthers?: Prisma.Decimal;
   procurementTotal?: Prisma.Decimal;
   procurementPaid?: Prisma.Decimal;
   procurementDebt?: Prisma.Decimal;
@@ -18,29 +20,49 @@ export interface DailyAggregateUpdate {
   procurementCash?: Prisma.Decimal;
   procurementBank?: Prisma.Decimal;
   procurementBankNile?: Prisma.Decimal;
+  procurementDebtMethod?: Prisma.Decimal;
+  procurementOthers?: Prisma.Decimal;
   expensesTotal?: Prisma.Decimal;
   expensesCount?: number;
   expensesCash?: Prisma.Decimal;
   expensesBank?: Prisma.Decimal;
   expensesBankNile?: Prisma.Decimal;
+  expensesDebtMethod?: Prisma.Decimal;
+  expensesOthers?: Prisma.Decimal;
   incomeTotal?: Prisma.Decimal;
   incomeCount?: number;
   incomeCash?: Prisma.Decimal;
   incomeBank?: Prisma.Decimal;
   incomeBankNile?: Prisma.Decimal;
+  incomeDebtMethod?: Prisma.Decimal;
+  incomeOthers?: Prisma.Decimal;
   salariesTotal?: Prisma.Decimal;
   salariesCount?: number;
   salariesCash?: Prisma.Decimal;
   salariesBank?: Prisma.Decimal;
   salariesBankNile?: Prisma.Decimal;
+  salariesDebtMethod?: Prisma.Decimal;
+  salariesOthers?: Prisma.Decimal;
   advancesTotal?: Prisma.Decimal;
   advancesCount?: number;
   advancesCash?: Prisma.Decimal;
   advancesBank?: Prisma.Decimal;
   advancesBankNile?: Prisma.Decimal;
+  advancesDebtMethod?: Prisma.Decimal;
+  advancesOthers?: Prisma.Decimal;
   cashExchangesCash?: Prisma.Decimal;
   cashExchangesBank?: Prisma.Decimal;
   cashExchangesBankNile?: Prisma.Decimal;
+  cashExchangesDebtMethod?: Prisma.Decimal;
+  cashExchangesOthers?: Prisma.Decimal;
+  treasuryInflow?: Prisma.Decimal;
+  treasuryOutflow?: Prisma.Decimal;
+  customerPaymentsTotal?: Prisma.Decimal;
+  customerPaymentsCount?: number;
+  salesReturnsTotal?: Prisma.Decimal;
+  salesReturnsCount?: number;
+  netDebt?: Prisma.Decimal;
+  netOthers?: Prisma.Decimal;
 }
 
 export class AggregationService {
@@ -63,7 +85,7 @@ export class AggregationService {
       inventoryId: inventoryId ?? null,
       section: section ?? null,
     };
-    const existing = await prisma.dailyFinancialAggregate.findUnique({
+    const existing: any = await prisma.dailyFinancialAggregate.findUnique({
       where: {
         date_inventoryId_section: whereClause,
       },
@@ -106,6 +128,16 @@ export class AggregationService {
         ? existing.salesBankNile.add(updates.salesBankNile)
         : updates.salesBankNile;
     }
+    if (updates.salesDebtMethod !== undefined) {
+      updateData.salesDebtMethod = existing
+        ? existing.salesDebtMethod.add(updates.salesDebtMethod)
+        : updates.salesDebtMethod;
+    }
+    if (updates.salesOthers !== undefined) {
+      updateData.salesOthers = existing
+        ? existing.salesOthers.add(updates.salesOthers)
+        : updates.salesOthers;
+    }
 
     // Procurement fields
     if (updates.procurementTotal !== undefined) {
@@ -146,6 +178,16 @@ export class AggregationService {
         ? existing.procurementBankNile.add(updates.procurementBankNile)
         : updates.procurementBankNile;
     }
+    if (updates.procurementDebtMethod !== undefined) {
+      updateData.procurementDebtMethod = existing
+        ? existing.procurementDebtMethod.add(updates.procurementDebtMethod)
+        : updates.procurementDebtMethod;
+    }
+    if (updates.procurementOthers !== undefined) {
+      updateData.procurementOthers = existing
+        ? existing.procurementOthers.add(updates.procurementOthers)
+        : updates.procurementOthers;
+    }
 
     // Expenses fields
     if (updates.expensesTotal !== undefined) {
@@ -170,6 +212,16 @@ export class AggregationService {
       updateData.expensesBankNile = existing
         ? existing.expensesBankNile.add(updates.expensesBankNile)
         : updates.expensesBankNile;
+    }
+    if (updates.expensesDebtMethod !== undefined) {
+      updateData.expensesDebtMethod = existing
+        ? existing.expensesDebtMethod.add(updates.expensesDebtMethod)
+        : updates.expensesDebtMethod;
+    }
+    if (updates.expensesOthers !== undefined) {
+      updateData.expensesOthers = existing
+        ? existing.expensesOthers.add(updates.expensesOthers)
+        : updates.expensesOthers;
     }
     
     // Income fields (opposite of expenses - money coming IN)
@@ -196,6 +248,16 @@ export class AggregationService {
         ? existing.incomeBankNile.add(updates.incomeBankNile)
         : updates.incomeBankNile;
     }
+    if (updates.incomeDebtMethod !== undefined) {
+      updateData.incomeDebtMethod = existing
+        ? existing.incomeDebtMethod.add(updates.incomeDebtMethod)
+        : updates.incomeDebtMethod;
+    }
+    if (updates.incomeOthers !== undefined) {
+      updateData.incomeOthers = existing
+        ? existing.incomeOthers.add(updates.incomeOthers)
+        : updates.incomeOthers;
+    }
     
     // Salaries fields
     if (updates.salariesTotal !== undefined) {
@@ -220,6 +282,16 @@ export class AggregationService {
       updateData.salariesBankNile = existing
         ? existing.salariesBankNile.add(updates.salariesBankNile)
         : updates.salariesBankNile;
+    }
+    if (updates.salariesDebtMethod !== undefined) {
+      updateData.salariesDebtMethod = existing
+        ? existing.salariesDebtMethod.add(updates.salariesDebtMethod)
+        : updates.salariesDebtMethod;
+    }
+    if (updates.salariesOthers !== undefined) {
+      updateData.salariesOthers = existing
+        ? existing.salariesOthers.add(updates.salariesOthers)
+        : updates.salariesOthers;
     }
 
     // Advances fields
@@ -246,6 +318,16 @@ export class AggregationService {
         ? existing.advancesBankNile.add(updates.advancesBankNile)
         : updates.advancesBankNile;
     }
+    if (updates.advancesDebtMethod !== undefined) {
+      updateData.advancesDebtMethod = existing
+        ? existing.advancesDebtMethod.add(updates.advancesDebtMethod)
+        : updates.advancesDebtMethod;
+    }
+    if (updates.advancesOthers !== undefined) {
+      updateData.advancesOthers = existing
+        ? existing.advancesOthers.add(updates.advancesOthers)
+        : updates.advancesOthers;
+    }
 
     // Cash exchanges
     if (updates.cashExchangesCash !== undefined) {
@@ -262,6 +344,48 @@ export class AggregationService {
       updateData.cashExchangesBankNile = existing
         ? existing.cashExchangesBankNile.add(updates.cashExchangesBankNile)
         : updates.cashExchangesBankNile;
+    }
+    if (updates.cashExchangesDebtMethod !== undefined) {
+      updateData.cashExchangesDebtMethod = existing
+        ? existing.cashExchangesDebtMethod.add(updates.cashExchangesDebtMethod)
+        : updates.cashExchangesDebtMethod;
+    }
+    if (updates.cashExchangesOthers !== undefined) {
+      updateData.cashExchangesOthers = existing
+        ? existing.cashExchangesOthers.add(updates.cashExchangesOthers)
+        : updates.cashExchangesOthers;
+    }
+
+    // Treasury fields
+    if (updates.treasuryInflow !== undefined) {
+      updateData.treasuryInflow = existing
+        ? existing.treasuryInflow.add(updates.treasuryInflow)
+        : updates.treasuryInflow;
+    }
+    if (updates.treasuryOutflow !== undefined) {
+      updateData.treasuryOutflow = existing
+        ? existing.treasuryOutflow.add(updates.treasuryOutflow)
+        : updates.treasuryOutflow;
+    }
+
+    // Customer payments fields
+    if (updates.customerPaymentsTotal !== undefined) {
+      updateData.customerPaymentsTotal = existing
+        ? existing.customerPaymentsTotal.add(updates.customerPaymentsTotal)
+        : updates.customerPaymentsTotal;
+    }
+    if (updates.customerPaymentsCount !== undefined) {
+      updateData.customerPaymentsCount = (existing?.customerPaymentsCount || 0) + updates.customerPaymentsCount;
+    }
+
+    // Sales returns fields
+    if (updates.salesReturnsTotal !== undefined) {
+      updateData.salesReturnsTotal = existing
+        ? existing.salesReturnsTotal.add(updates.salesReturnsTotal)
+        : updates.salesReturnsTotal;
+    }
+    if (updates.salesReturnsCount !== undefined) {
+      updateData.salesReturnsCount = (existing?.salesReturnsCount || 0) + updates.salesReturnsCount;
     }
 
     // Calculate net balances
@@ -295,6 +419,21 @@ export class AggregationService {
     const cashExchangesBankAmount = updateData.cashExchangesBank || existing?.cashExchangesBank || new Prisma.Decimal(0);
     const cashExchangesBankNileAmount = updateData.cashExchangesBankNile || existing?.cashExchangesBankNile || new Prisma.Decimal(0);
 
+    const salesDebtMethodAmount = updateData.salesDebtMethod || existing?.salesDebtMethod || new Prisma.Decimal(0);
+    const salesOthersAmount = updateData.salesOthers || existing?.salesOthers || new Prisma.Decimal(0);
+    const procurementDebtMethodAmount = updateData.procurementDebtMethod || existing?.procurementDebtMethod || new Prisma.Decimal(0);
+    const procurementOthersAmount = updateData.procurementOthers || existing?.procurementOthers || new Prisma.Decimal(0);
+    const expensesDebtMethodAmount = updateData.expensesDebtMethod || existing?.expensesDebtMethod || new Prisma.Decimal(0);
+    const expensesOthersAmount = updateData.expensesOthers || existing?.expensesOthers || new Prisma.Decimal(0);
+    const incomeDebtMethodAmount = updateData.incomeDebtMethod || existing?.incomeDebtMethod || new Prisma.Decimal(0);
+    const incomeOthersAmount = updateData.incomeOthers || existing?.incomeOthers || new Prisma.Decimal(0);
+    const salariesDebtMethodAmount = updateData.salariesDebtMethod || existing?.salariesDebtMethod || new Prisma.Decimal(0);
+    const salariesOthersAmount = updateData.salariesOthers || existing?.salariesOthers || new Prisma.Decimal(0);
+    const advancesDebtMethodAmount = updateData.advancesDebtMethod || existing?.advancesDebtMethod || new Prisma.Decimal(0);
+    const advancesOthersAmount = updateData.advancesOthers || existing?.advancesOthers || new Prisma.Decimal(0);
+    const cashExchangesDebtMethodAmount = updateData.cashExchangesDebtMethod || existing?.cashExchangesDebtMethod || new Prisma.Decimal(0);
+    const cashExchangesOthersAmount = updateData.cashExchangesOthers || existing?.cashExchangesOthers || new Prisma.Decimal(0);
+
     // Get opening balances for net calculation
     const openingBalances = await prisma.openingBalance.findMany({
       where: {
@@ -307,7 +446,7 @@ export class AggregationService {
       .filter(b => (b as any).paymentMethod === 'CASH')
       .reduce((sum, b) => sum.add(b.amount), new Prisma.Decimal(0));
     const openingBank = openingBalances
-      .filter(b => (b as any).paymentMethod === 'BANK')
+      .filter(b => (b as any).paymentMethod === 'BANKAK')
       .reduce((sum, b) => sum.add(b.amount), new Prisma.Decimal(0));
     const openingBankNile = openingBalances
       .filter(b => (b as any).paymentMethod === 'BANK_NILE')
@@ -343,10 +482,28 @@ export class AggregationService {
       .sub(advancesBankNileAmount)
       .add(cashExchangesBankNileAmount);
 
+    const netDebt = salesDebtMethodAmount
+      .add(incomeDebtMethodAmount)
+      .sub(procurementDebtMethodAmount)
+      .sub(expensesDebtMethodAmount)
+      .sub(salariesDebtMethodAmount)
+      .sub(advancesDebtMethodAmount)
+      .add(cashExchangesDebtMethodAmount);
+
+    const netOthers = salesOthersAmount
+      .add(incomeOthersAmount)
+      .sub(procurementOthersAmount)
+      .sub(expensesOthersAmount)
+      .sub(salariesOthersAmount)
+      .sub(advancesOthersAmount)
+      .add(cashExchangesOthersAmount);
+
     updateData.netCash = netCash;
     updateData.netBank = netBank;
     updateData.netBankNile = netBankNile;
-    updateData.netTotal = netCash.add(netBank).add(netBankNile);
+    updateData.netDebt = netDebt;
+    updateData.netOthers = netOthers;
+    updateData.netTotal = netCash.add(netBank).add(netBankNile).add(netDebt).add(netOthers);
 
     // Recalculate sales debt if needed
     if (updateData.salesTotal && updateData.salesReceived) {
@@ -423,12 +580,12 @@ export class AggregationService {
       inventoryId: (inventoryId ?? null) as any,
       section: (section ?? null) as any,
     };
-    const dailyAggregates = await prisma.dailyFinancialAggregate.findMany({
+    const dailyAggregates: any[] = await prisma.dailyFinancialAggregate.findMany({
       where: dailyAggregatesWhere,
     });
 
     // Sum all daily aggregates
-    const monthlyTotals = dailyAggregates.reduce((acc, daily) => ({
+    const monthlyTotals = dailyAggregates.reduce((acc: any, daily: any) => ({
       salesTotal: acc.salesTotal.add(daily.salesTotal),
       salesReceived: acc.salesReceived.add(daily.salesReceived),
       salesDebt: acc.salesDebt.add(daily.salesDebt),
@@ -436,6 +593,8 @@ export class AggregationService {
       salesCash: acc.salesCash.add(daily.salesCash),
       salesBank: acc.salesBank.add(daily.salesBank),
       salesBankNile: acc.salesBankNile.add(daily.salesBankNile),
+      salesDebtMethod: acc.salesDebtMethod.add(daily.salesDebtMethod),
+      salesOthers: acc.salesOthers.add(daily.salesOthers),
       procurementTotal: acc.procurementTotal.add(daily.procurementTotal),
       procurementPaid: acc.procurementPaid.add(daily.procurementPaid),
       procurementDebt: acc.procurementDebt.add(daily.procurementDebt),
@@ -444,24 +603,47 @@ export class AggregationService {
       procurementCash: acc.procurementCash.add(daily.procurementCash),
       procurementBank: acc.procurementBank.add(daily.procurementBank),
       procurementBankNile: acc.procurementBankNile.add(daily.procurementBankNile),
+      procurementDebtMethod: acc.procurementDebtMethod.add(daily.procurementDebtMethod),
+      procurementOthers: acc.procurementOthers.add(daily.procurementOthers),
       expensesTotal: acc.expensesTotal.add(daily.expensesTotal),
       expensesCount: acc.expensesCount + daily.expensesCount,
       expensesCash: acc.expensesCash.add(daily.expensesCash),
       expensesBank: acc.expensesBank.add(daily.expensesBank),
       expensesBankNile: acc.expensesBankNile.add(daily.expensesBankNile),
+      expensesDebtMethod: acc.expensesDebtMethod.add(daily.expensesDebtMethod),
+      expensesOthers: acc.expensesOthers.add(daily.expensesOthers),
+      incomeTotal: acc.incomeTotal.add(daily.incomeTotal),
+      incomeCount: acc.incomeCount + daily.incomeCount,
+      incomeCash: acc.incomeCash.add(daily.incomeCash),
+      incomeBank: acc.incomeBank.add(daily.incomeBank),
+      incomeBankNile: acc.incomeBankNile.add(daily.incomeBankNile),
+      incomeDebtMethod: acc.incomeDebtMethod.add(daily.incomeDebtMethod),
+      incomeOthers: acc.incomeOthers.add(daily.incomeOthers),
       salariesTotal: acc.salariesTotal.add(daily.salariesTotal),
       salariesCount: acc.salariesCount + daily.salariesCount,
       salariesCash: acc.salariesCash.add(daily.salariesCash),
       salariesBank: acc.salariesBank.add(daily.salariesBank),
       salariesBankNile: acc.salariesBankNile.add(daily.salariesBankNile),
+      salariesDebtMethod: acc.salariesDebtMethod.add(daily.salariesDebtMethod),
+      salariesOthers: acc.salariesOthers.add(daily.salariesOthers),
       advancesTotal: acc.advancesTotal.add(daily.advancesTotal),
       advancesCount: acc.advancesCount + daily.advancesCount,
       advancesCash: acc.advancesCash.add(daily.advancesCash),
       advancesBank: acc.advancesBank.add(daily.advancesBank),
       advancesBankNile: acc.advancesBankNile.add(daily.advancesBankNile),
+      advancesDebtMethod: acc.advancesDebtMethod.add(daily.advancesDebtMethod),
+      advancesOthers: acc.advancesOthers.add(daily.advancesOthers),
       cashExchangesCash: acc.cashExchangesCash.add(daily.cashExchangesCash),
       cashExchangesBank: acc.cashExchangesBank.add(daily.cashExchangesBank),
       cashExchangesBankNile: acc.cashExchangesBankNile.add(daily.cashExchangesBankNile),
+      cashExchangesDebtMethod: acc.cashExchangesDebtMethod.add(daily.cashExchangesDebtMethod),
+      cashExchangesOthers: acc.cashExchangesOthers.add(daily.cashExchangesOthers),
+      treasuryInflow: acc.treasuryInflow.add(daily.treasuryInflow),
+      treasuryOutflow: acc.treasuryOutflow.add(daily.treasuryOutflow),
+      customerPaymentsTotal: acc.customerPaymentsTotal.add(daily.customerPaymentsTotal),
+      customerPaymentsCount: acc.customerPaymentsCount + daily.customerPaymentsCount,
+      salesReturnsTotal: acc.salesReturnsTotal.add(daily.salesReturnsTotal),
+      salesReturnsCount: acc.salesReturnsCount + daily.salesReturnsCount,
     }), {
       salesTotal: new Prisma.Decimal(0),
       salesReceived: new Prisma.Decimal(0),
@@ -470,6 +652,8 @@ export class AggregationService {
       salesCash: new Prisma.Decimal(0),
       salesBank: new Prisma.Decimal(0),
       salesBankNile: new Prisma.Decimal(0),
+      salesDebtMethod: new Prisma.Decimal(0),
+      salesOthers: new Prisma.Decimal(0),
       procurementTotal: new Prisma.Decimal(0),
       procurementPaid: new Prisma.Decimal(0),
       procurementDebt: new Prisma.Decimal(0),
@@ -478,24 +662,47 @@ export class AggregationService {
       procurementCash: new Prisma.Decimal(0),
       procurementBank: new Prisma.Decimal(0),
       procurementBankNile: new Prisma.Decimal(0),
+      procurementDebtMethod: new Prisma.Decimal(0),
+      procurementOthers: new Prisma.Decimal(0),
       expensesTotal: new Prisma.Decimal(0),
       expensesCount: 0,
       expensesCash: new Prisma.Decimal(0),
       expensesBank: new Prisma.Decimal(0),
       expensesBankNile: new Prisma.Decimal(0),
+      expensesDebtMethod: new Prisma.Decimal(0),
+      expensesOthers: new Prisma.Decimal(0),
+      incomeTotal: new Prisma.Decimal(0),
+      incomeCount: 0,
+      incomeCash: new Prisma.Decimal(0),
+      incomeBank: new Prisma.Decimal(0),
+      incomeBankNile: new Prisma.Decimal(0),
+      incomeDebtMethod: new Prisma.Decimal(0),
+      incomeOthers: new Prisma.Decimal(0),
       salariesTotal: new Prisma.Decimal(0),
       salariesCount: 0,
       salariesCash: new Prisma.Decimal(0),
       salariesBank: new Prisma.Decimal(0),
       salariesBankNile: new Prisma.Decimal(0),
+      salariesDebtMethod: new Prisma.Decimal(0),
+      salariesOthers: new Prisma.Decimal(0),
       advancesTotal: new Prisma.Decimal(0),
       advancesCount: 0,
       advancesCash: new Prisma.Decimal(0),
       advancesBank: new Prisma.Decimal(0),
       advancesBankNile: new Prisma.Decimal(0),
+      advancesDebtMethod: new Prisma.Decimal(0),
+      advancesOthers: new Prisma.Decimal(0),
       cashExchangesCash: new Prisma.Decimal(0),
       cashExchangesBank: new Prisma.Decimal(0),
       cashExchangesBankNile: new Prisma.Decimal(0),
+      cashExchangesDebtMethod: new Prisma.Decimal(0),
+      cashExchangesOthers: new Prisma.Decimal(0),
+      treasuryInflow: new Prisma.Decimal(0),
+      treasuryOutflow: new Prisma.Decimal(0),
+      customerPaymentsTotal: new Prisma.Decimal(0),
+      customerPaymentsCount: 0,
+      salesReturnsTotal: new Prisma.Decimal(0),
+      salesReturnsCount: 0,
     });
 
     // Calculate net balances
@@ -510,7 +717,7 @@ export class AggregationService {
       .filter(b => (b as any).paymentMethod === 'CASH')
       .reduce((sum, b) => sum.add(b.amount), new Prisma.Decimal(0));
     const openingBank = openingBalances
-      .filter(b => (b as any).paymentMethod === 'BANK')
+      .filter(b => (b as any).paymentMethod === 'BANKAK')
       .reduce((sum, b) => sum.add(b.amount), new Prisma.Decimal(0));
     const openingBankNile = openingBalances
       .filter(b => (b as any).paymentMethod === 'BANK_NILE')
@@ -518,6 +725,7 @@ export class AggregationService {
 
     const netCash = openingCash
       .add(monthlyTotals.salesCash)
+      .add(monthlyTotals.incomeCash)
       .sub(monthlyTotals.procurementCash)
       .sub(monthlyTotals.expensesCash)
       .sub(monthlyTotals.salariesCash)
@@ -526,6 +734,7 @@ export class AggregationService {
 
     const netBank = openingBank
       .add(monthlyTotals.salesBank)
+      .add(monthlyTotals.incomeBank)
       .sub(monthlyTotals.procurementBank)
       .sub(monthlyTotals.expensesBank)
       .sub(monthlyTotals.salariesBank)
@@ -534,11 +743,28 @@ export class AggregationService {
 
     const netBankNile = openingBankNile
       .add(monthlyTotals.salesBankNile)
+      .add(monthlyTotals.incomeBankNile)
       .sub(monthlyTotals.procurementBankNile)
       .sub(monthlyTotals.expensesBankNile)
       .sub(monthlyTotals.salariesBankNile)
       .sub(monthlyTotals.advancesBankNile)
       .add(monthlyTotals.cashExchangesBankNile);
+
+    const netDebt = monthlyTotals.salesDebtMethod
+      .add(monthlyTotals.incomeDebtMethod)
+      .sub(monthlyTotals.procurementDebtMethod)
+      .sub(monthlyTotals.expensesDebtMethod)
+      .sub(monthlyTotals.salariesDebtMethod)
+      .sub(monthlyTotals.advancesDebtMethod)
+      .add(monthlyTotals.cashExchangesDebtMethod);
+
+    const netOthers = monthlyTotals.salesOthers
+      .add(monthlyTotals.incomeOthers)
+      .sub(monthlyTotals.procurementOthers)
+      .sub(monthlyTotals.expensesOthers)
+      .sub(monthlyTotals.salariesOthers)
+      .sub(monthlyTotals.advancesOthers)
+      .add(monthlyTotals.cashExchangesOthers);
 
     const monthlyUpsertWhereClause: any = {
       year,
@@ -555,7 +781,9 @@ export class AggregationService {
         netCash,
         netBank,
         netBankNile,
-        netTotal: netCash.add(netBank).add(netBankNile),
+        netDebt,
+        netOthers,
+        netTotal: netCash.add(netBank).add(netBankNile).add(netDebt).add(netOthers),
       },   
 
       create: {
@@ -567,7 +795,9 @@ export class AggregationService {
         netCash,
         netBank,
         netBankNile,
-        netTotal: netCash.add(netBank).add(netBankNile),
+        netDebt,
+        netOthers,
+        netTotal: netCash.add(netBank).add(netBankNile).add(netDebt).add(netOthers),
       },
     });
   }
@@ -958,6 +1188,39 @@ export class AggregationService {
         },
       },
     });
+    const incomes = await prisma.income.findMany({ where });
+    const customerPayments: any[] = await (prisma as any).customerPayment.findMany({
+      where: {
+        createdAt: {
+          gte: dateOnly,
+          lte: dateEnd,
+        },
+      },
+    });
+    const treasuryTransactions: any[] = await (prisma as any).treasuryTransaction.findMany({
+      where: {
+        createdAt: {
+          gte: dateOnly,
+          lte: dateEnd,
+        },
+      },
+    });
+    const bankakTransactions: any[] = await (prisma as any).bankakTransaction.findMany({
+      where: {
+        createdAt: {
+          gte: dateOnly,
+          lte: dateEnd,
+        },
+      },
+    });
+    const salesReturns: any[] = await (prisma as any).salesReturn.findMany({
+      where: {
+        createdAt: {
+          gte: dateOnly,
+          lte: dateEnd,
+        },
+      },
+    });
 
     // Calculate totals
     const salesTotal = invoices.reduce((sum, inv) => sum.add(inv.total), new Prisma.Decimal(0));
@@ -966,8 +1229,10 @@ export class AggregationService {
     
     const salesByMethod = {
       CASH: invoices.filter(inv => inv.paymentMethod === 'CASH').reduce((sum, inv) => sum.add(inv.total), new Prisma.Decimal(0)),
-      BANK: invoices.filter(inv => inv.paymentMethod === 'BANK').reduce((sum, inv) => sum.add(inv.total), new Prisma.Decimal(0)),
+      BANKAK: invoices.filter(inv => (inv.paymentMethod as string) === 'BANKAK').reduce((sum, inv) => sum.add(inv.total), new Prisma.Decimal(0)),
       BANK_NILE: invoices.filter(inv => inv.paymentMethod === 'BANK_NILE').reduce((sum, inv) => sum.add(inv.total), new Prisma.Decimal(0)),
+      DEBT: invoices.filter(inv => (inv.paymentMethod as string) === 'DEBT').reduce((sum, inv) => sum.add(inv.total), new Prisma.Decimal(0)),
+      OTHERS: invoices.filter(inv => (inv.paymentMethod as string) === 'OTHERS').reduce((sum, inv) => sum.add(inv.total), new Prisma.Decimal(0)),
     };
 
     const procurementTotal = orders
@@ -977,27 +1242,64 @@ export class AggregationService {
     const procurementCancelled = orders
       .filter(o => o.status === 'CANCELLED')
       .reduce((sum, o) => sum.add(o.total), new Prisma.Decimal(0));
+    const procurementByMethod = {
+      CASH: orders.filter(o => (o as any).paymentMethod === 'CASH').reduce((sum, o) => sum.add(o.paidAmount), new Prisma.Decimal(0)),
+      BANKAK: orders.filter(o => (o as any).paymentMethod === 'BANKAK').reduce((sum, o) => sum.add(o.paidAmount), new Prisma.Decimal(0)),
+      BANK_NILE: orders.filter(o => (o as any).paymentMethod === 'BANK_NILE').reduce((sum, o) => sum.add(o.paidAmount), new Prisma.Decimal(0)),
+      DEBT: orders.filter(o => (o as any).paymentMethod === 'DEBT').reduce((sum, o) => sum.add(o.paidAmount), new Prisma.Decimal(0)),
+      OTHERS: orders.filter(o => (o as any).paymentMethod === 'OTHERS').reduce((sum, o) => sum.add(o.paidAmount), new Prisma.Decimal(0)),
+    };
 
     const expensesTotal = expenses.reduce((sum, e) => sum.add(e.amount), new Prisma.Decimal(0));
     const expensesByMethod = {
       CASH: expenses.filter(e => e.method === 'CASH').reduce((sum, e) => sum.add(e.amount), new Prisma.Decimal(0)),
-      BANK: expenses.filter(e => e.method === 'BANK').reduce((sum, e) => sum.add(e.amount), new Prisma.Decimal(0)),
+      BANKAK: expenses.filter(e => (e.method as string) === 'BANKAK').reduce((sum, e) => sum.add(e.amount), new Prisma.Decimal(0)),
       BANK_NILE: expenses.filter(e => e.method === 'BANK_NILE').reduce((sum, e) => sum.add(e.amount), new Prisma.Decimal(0)),
+      DEBT: expenses.filter(e => (e.method as string) === 'DEBT').reduce((sum, e) => sum.add(e.amount), new Prisma.Decimal(0)),
+      OTHERS: expenses.filter(e => (e.method as string) === 'OTHERS').reduce((sum, e) => sum.add(e.amount), new Prisma.Decimal(0)),
     };
 
     const salariesTotal = salaries.reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0));
     const salariesByMethod = {
       CASH: salaries.filter(s => s.paymentMethod === 'CASH').reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0)),
-      BANK: salaries.filter(s => s.paymentMethod === 'BANK').reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0)),
+      BANKAK: salaries.filter(s => (s.paymentMethod as string) === 'BANKAK').reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0)),
       BANK_NILE: salaries.filter(s => s.paymentMethod === 'BANK_NILE').reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0)),
+      DEBT: salaries.filter(s => (s.paymentMethod as string) === 'DEBT').reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0)),
+      OTHERS: salaries.filter(s => (s.paymentMethod as string) === 'OTHERS').reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0)),
     };
 
     const advancesTotal = advances.reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0));
     const advancesByMethod = {
       CASH: advances.filter(a => a.paymentMethod === 'CASH').reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0)),
-      BANK: advances.filter(a => a.paymentMethod === 'BANK').reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0)),
+      BANKAK: advances.filter(a => (a.paymentMethod as string) === 'BANKAK').reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0)),
       BANK_NILE: advances.filter(a => a.paymentMethod === 'BANK_NILE').reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0)),
+      DEBT: advances.filter(a => (a.paymentMethod as string) === 'DEBT').reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0)),
+      OTHERS: advances.filter(a => (a.paymentMethod as string) === 'OTHERS').reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0)),
     };
+
+    // Income calculations
+    const incomeTotalAmount = incomes.reduce((sum, i) => sum.add(i.amount), new Prisma.Decimal(0));
+    const incomeByMethod = {
+      CASH: incomes.filter(i => (i as any).method === 'CASH').reduce((sum, i) => sum.add(i.amount), new Prisma.Decimal(0)),
+      BANKAK: incomes.filter(i => (i as any).method === 'BANKAK').reduce((sum, i) => sum.add(i.amount), new Prisma.Decimal(0)),
+      BANK_NILE: incomes.filter(i => (i as any).method === 'BANK_NILE').reduce((sum, i) => sum.add(i.amount), new Prisma.Decimal(0)),
+      DEBT: incomes.filter(i => (i as any).method === 'DEBT').reduce((sum, i) => sum.add(i.amount), new Prisma.Decimal(0)),
+      OTHERS: incomes.filter(i => (i as any).method === 'OTHERS').reduce((sum, i) => sum.add(i.amount), new Prisma.Decimal(0)),
+    };
+
+    // Customer payments calculations
+    const customerPaymentsTotalAmount = customerPayments.reduce((sum, cp) => sum.add(cp.amount), new Prisma.Decimal(0));
+
+    // Treasury transactions calculations
+    const treasuryInflowAmount = treasuryTransactions
+      .filter(t => (t as any).type === 'INFLOW')
+      .reduce((sum, t) => sum.add(t.amount), new Prisma.Decimal(0));
+    const treasuryOutflowAmount = treasuryTransactions
+      .filter(t => (t as any).type === 'OUTFLOW')
+      .reduce((sum, t) => sum.add(t.amount), new Prisma.Decimal(0));
+
+    // Sales returns calculations
+    const salesReturnsTotalAmount = salesReturns.reduce((sum, sr) => sum.add(sr.amount), new Prisma.Decimal(0));
 
     // Update aggregate - use absolute values instead of increments for recalculation
     // First, get existing aggregate to clear it
@@ -1030,28 +1332,54 @@ export class AggregationService {
       salesDebt,
       salesCount: invoices.length,
       salesCash: salesByMethod.CASH,
-      salesBank: salesByMethod.BANK,
+      salesBank: salesByMethod.BANKAK,
       salesBankNile: salesByMethod.BANK_NILE,
+      salesDebtMethod: salesByMethod.DEBT,
+      salesOthers: salesByMethod.OTHERS,
       procurementTotal,
       procurementPaid,
       procurementDebt: procurementTotal.sub(procurementPaid),
       procurementCount: orders.filter(o => o.status !== 'CANCELLED').length,
       procurementCancelled,
+      procurementCash: procurementByMethod.CASH,
+      procurementBank: procurementByMethod.BANKAK,
+      procurementBankNile: procurementByMethod.BANK_NILE,
+      procurementDebtMethod: procurementByMethod.DEBT,
+      procurementOthers: procurementByMethod.OTHERS,
       expensesTotal,
       expensesCount: expenses.length,
       expensesCash: expensesByMethod.CASH,
-      expensesBank: expensesByMethod.BANK,
+      expensesBank: expensesByMethod.BANKAK,
       expensesBankNile: expensesByMethod.BANK_NILE,
+      expensesDebtMethod: expensesByMethod.DEBT,
+      expensesOthers: expensesByMethod.OTHERS,
+      incomeTotal: incomeTotalAmount,
+      incomeCount: incomes.length,
+      incomeCash: incomeByMethod.CASH,
+      incomeBank: incomeByMethod.BANKAK,
+      incomeBankNile: incomeByMethod.BANK_NILE,
+      incomeDebtMethod: incomeByMethod.DEBT,
+      incomeOthers: incomeByMethod.OTHERS,
       salariesTotal,
       salariesCount: salaries.length,
       salariesCash: salariesByMethod.CASH,
-      salariesBank: salariesByMethod.BANK,
+      salariesBank: salariesByMethod.BANKAK,
       salariesBankNile: salariesByMethod.BANK_NILE,
+      salariesDebtMethod: salariesByMethod.DEBT,
+      salariesOthers: salariesByMethod.OTHERS,
       advancesTotal,
       advancesCount: advances.length,
       advancesCash: advancesByMethod.CASH,
-      advancesBank: advancesByMethod.BANK,
+      advancesBank: advancesByMethod.BANKAK,
       advancesBankNile: advancesByMethod.BANK_NILE,
+      advancesDebtMethod: advancesByMethod.DEBT,
+      advancesOthers: advancesByMethod.OTHERS,
+      treasuryInflow: treasuryInflowAmount,
+      treasuryOutflow: treasuryOutflowAmount,
+      customerPaymentsTotal: customerPaymentsTotalAmount,
+      customerPaymentsCount: customerPayments.length,
+      salesReturnsTotal: salesReturnsTotalAmount,
+      salesReturnsCount: salesReturns.length,
     }, inventoryId, section);
   }
 }

@@ -32,13 +32,16 @@ enum CustomerType {
   AGENT_RETAIL
   OFFER_1
   OFFER_2
+  BAKERY_CUSTOMER
 }
 
 enum PaymentMethod {
   CASH
-  BANK
+  BANKAK
   BANK_NILE
   COMMISSION
+  DEBT
+  OTHERS
 }
 
 enum PaymentStatus {
@@ -72,6 +75,54 @@ enum BalanceScope {
   SUPPLIER
 }
 
+// New enums for the enhanced system
+
+enum MovementType {
+  INBOUND
+  INBOUND_GIFT
+  OUTBOUND
+  OUTBOUND_GIFT
+}
+
+enum WarehouseType {
+  MAIN
+  ROAD
+  SIDE
+}
+
+enum JournalEntryType {
+  SALE
+  PURCHASE
+  EXPENSE
+  INCOME
+  SALARY
+  ADVANCE
+  CASH_EXCHANGE
+  RETURN
+  TREASURY
+  OTHER
+}
+
+enum TransactionDirection {
+  DEBIT
+  CREDIT
+}
+
+enum TreasuryType {
+  CASH_IN
+  CASH_OUT
+}
+
+enum BankakDirection {
+  IN
+  OUT
+}
+
+enum LoanEntityType {
+  PERSONAL
+  BUSINESS
+}
+
 model User {
   id           String   @id @default(cuid())
   username     String   @unique
@@ -100,14 +151,22 @@ model User {
   cashExchanges          CashExchange[]
   refundedOrders         ProcOrder[]         @relation("OrderRefunder")
   itemOffers             ItemOffer[]
+  customerPayments       CustomerPayment[]
+  treasuryTransactions   TreasuryTransaction[]
+  bankakTransactions     BankakTransaction[]
+  salesDeposits          SalesDeposit[]
+  recoveredLoans         RecoveredLoan[]
+  salesReturns           SalesReturn[]
+  journalEntries         JournalEntry[]
 
   @@map("users")
 }
 
 model Inventory {
-  id     String  @id @default(cuid())
-  name   String  @unique
-  isMain Boolean @default(false)
+  id            String        @id @default(cuid())
+  name          String        @unique
+  isMain        Boolean       @default(false)
+  warehouseType WarehouseType @default(MAIN)
 
   accesses          UserInventoryAccess[]
   stocks            InventoryStock[]
@@ -160,6 +219,7 @@ model Item {
   giftProcItems     ProcOrderItem[] @relation("GiftProcItem")
   giftDeliveryItems InventoryDeliveryItem[] @relation("GiftDeliveryItem")
   dailyItemSalesAggregates DailyItemSalesAggregate[]
+  salesReturnItems  SalesReturnItem[]
 
   @@map("items")
 }
@@ -254,23 +314,21 @@ model InventoryTransfer {
 
 // Stock Movement Daily Report Model
 // Tracks daily stock movements for inventory items
-// Fields: openingBalance (stock at start of day), incoming (from procurement), 
-// outgoing (sold and delivered), pendingOutgoing (sold but not delivered),
-// incomingGifts (gifts received), outgoingGifts (gifts given), closingBalance (stock at end of day)
 model StockMovement {
-  id            String   @id @default(cuid())
+  id            String        @id @default(cuid())
   inventoryId   String
   itemId        String
-  movementDate  DateTime @db.Date
-  openingBalance Decimal @db.Decimal(15, 2)  // Opening stock balance at start of day
-  incoming      Decimal  @default(0) @db.Decimal(15, 2)  // Stock received from procurement
-  outgoing      Decimal  @default(0) @db.Decimal(15, 2)  // Stock sold and delivered
-  pendingOutgoing Decimal @default(0) @db.Decimal(15, 2)  // Stock sold but not yet delivered
-  incomingGifts Decimal  @default(0) @db.Decimal(15, 2)  // Gifts received (from procurement)
-  outgoingGifts Decimal  @default(0) @db.Decimal(15, 2)  // Gifts given (from sales)
-  closingBalance Decimal @db.Decimal(15, 2)  // Closing stock balance at end of day
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  movementDate  DateTime      @db.Date
+  movementType  MovementType? // New: nullable for backward compat
+  openingBalance Decimal      @db.Decimal(15, 2)
+  incoming      Decimal       @default(0) @db.Decimal(15, 2)
+  outgoing      Decimal       @default(0) @db.Decimal(15, 2)
+  pendingOutgoing Decimal     @default(0) @db.Decimal(15, 2)
+  incomingGifts Decimal       @default(0) @db.Decimal(15, 2)
+  outgoingGifts Decimal       @default(0) @db.Decimal(15, 2)
+  closingBalance Decimal      @db.Decimal(15, 2)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
 
   inventory Inventory @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
   item      Item      @relation(fields: [itemId], references: [id], onDelete: Cascade)
@@ -286,15 +344,19 @@ model Customer {
   name      String
   type      CustomerType
   division  Section
-  isAgentCustomer Boolean  @default(false)  // true for agent users' customers, false for regular sales users
+  isAgentCustomer Boolean  @default(false)
   phone     String?
   address   String?
   createdAt DateTime     @default(now())
   updatedAt DateTime     @updatedAt
 
-  salesInvoices  SalesInvoice[]
-  openingBalance OpeningBalance[]
+  salesInvoices        SalesInvoice[]
+  openingBalance       OpeningBalance[]
   cumulativeAggregates CustomerCumulativeAggregate[]
+  customerPayments     CustomerPayment[]
+  treasuryTransactions TreasuryTransaction[]
+  bankakTransactions   BankakTransaction[]
+  salesDeposits        SalesDeposit[]
 
   @@index([isAgentCustomer])
   @@map("customers")
@@ -322,7 +384,7 @@ model SalesInvoice {
   section            Section
   salesUserId        String
   customerId         String?
-  paymentMethod      PaymentMethod
+  paymentMethod      PaymentMethod  // Kept for backward compat; primary source is SalesPayment records
   paymentStatus            PaymentStatus            @default(CREDIT)
   deliveryStatus           DeliveryStatus           @default(NOT_DELIVERED)
   paymentConfirmationStatus PaymentConfirmationStatus @default(PENDING)
@@ -344,6 +406,7 @@ model SalesInvoice {
   items      SalesInvoiceItem[]
   payments   SalesPayment[]
   deliveries InventoryDelivery[]
+  salesReturns SalesReturn[]
 
   @@map("sales_invoices")
 }
@@ -463,15 +526,16 @@ model ProcOrder {
 }
 
 model ProcOrderItem {
-  id           String  @id @default(cuid())
-  orderId      String
-  itemId       String
-  quantity     Decimal @db.Decimal(15, 2)
-  giftQty      Decimal @default(0) @db.Decimal(15, 2)  // Deprecated: kept for backward compatibility
-  giftItemId   String?  // The item being given as gift (separate from the ordered item)
-  giftQuantity Decimal? @db.Decimal(15, 2)  // Quantity of the gift item
-  unitCost     Decimal @db.Decimal(15, 2)
-  lineTotal    Decimal @db.Decimal(15, 2)
+  id                 String  @id @default(cuid())
+  orderId            String
+  itemId             String
+  quantity           Decimal @db.Decimal(15, 2)
+  giftQty            Decimal @default(0) @db.Decimal(15, 2)  // Deprecated: kept for backward compatibility
+  giftItemId         String?  // The item being given as gift (separate from the ordered item)
+  giftQuantity       Decimal? @db.Decimal(15, 2)  // Quantity of the gift item
+  unitCost           Decimal @db.Decimal(15, 2)
+  lineTotal          Decimal @db.Decimal(15, 2)
+  isGiftCompensation Boolean @default(false) // New: flag extra/gift items during GRN
 
   order    ProcOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
   item     Item      @relation(fields: [itemId], references: [id])
@@ -526,20 +590,23 @@ model InventoryReceipt {
 }
 
 model Expense {
-  id          String        @id @default(cuid())
-  inventoryId String?
-  section     Section?
-  amount      Decimal       @db.Decimal(15, 2)
-  method      PaymentMethod
-  description String
-  isDebt      Boolean       @default(false)
-  createdBy   String
-  createdAt   DateTime      @default(now())
+  id            String        @id @default(cuid())
+  inventoryId   String?
+  section       Section?
+  amount        Decimal       @db.Decimal(15, 2)
+  method        PaymentMethod
+  description   String
+  isDebt        Boolean       @default(false)
+  expenseHeadId String?       // New: link to expense category hierarchy
+  createdBy     String
+  createdAt     DateTime      @default(now())
 
-  inventory Inventory? @relation(fields: [inventoryId], references: [id])
-  creator   User       @relation(fields: [createdBy], references: [id])
+  inventory   Inventory?   @relation(fields: [inventoryId], references: [id])
+  creator     User         @relation(fields: [createdBy], references: [id])
+  expenseHead ExpenseHead? @relation(fields: [expenseHeadId], references: [id])
 
   @@index([isDebt])
+  @@index([expenseHeadId])
   @@map("expenses")
 }
 
@@ -566,7 +633,7 @@ model OpeningBalance {
   scope         BalanceScope
   refId         String?
   amount        Decimal       @db.Decimal(15, 2)
-  paymentMethod PaymentMethod @default(CASH)  // Track which payment method this balance is for (CASH, BANK, BANK_NILE)
+  paymentMethod PaymentMethod @default(CASH)
   openedAt      DateTime      @default(now())
   closedAt      DateTime?
   isClosed      Boolean       @default(false)
@@ -607,23 +674,28 @@ model Employee {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  salaries Salary[]
-  advances Advance[]
+  salaries     Salary[]
+  advances     Advance[]
+  loanBalances EmployeeLoanBalance[]
 
   @@map("employees")
 }
 
 model Salary {
-  id            String        @id @default(cuid())
-  employeeId    String
-  amount        Decimal       @db.Decimal(15, 2)
-  month         Int
-  year          Int
-  paymentMethod PaymentMethod @default(CASH)
-  paidAt        DateTime?
-  notes         String?
-  createdBy     String
-  createdAt     DateTime      @default(now())
+  id                String        @id @default(cuid())
+  employeeId        String
+  amount            Decimal       @db.Decimal(15, 2)
+  month             Int
+  year              Int
+  paymentMethod     PaymentMethod @default(CASH)
+  paidAt            DateTime?
+  deductions        Decimal       @default(0) @db.Decimal(15, 2) // New: total deductions from advances
+  netAmount         Decimal       @default(0) @db.Decimal(15, 2) // New: amount - deductions
+  openingLoanBalance Decimal      @default(0) @db.Decimal(15, 2) // New: loan balance at start of month
+  closingLoanBalance Decimal      @default(0) @db.Decimal(15, 2) // New: loan balance after salary payment
+  notes             String?
+  createdBy         String
+  createdAt         DateTime      @default(now())
 
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   creator  User     @relation(fields: [createdBy], references: [id])
@@ -633,15 +705,17 @@ model Salary {
 }
 
 model Advance {
-  id            String        @id @default(cuid())
-  employeeId    String
-  amount        Decimal       @db.Decimal(15, 2)
-  reason        String
-  paymentMethod PaymentMethod @default(CASH)
-  paidAt        DateTime?
-  notes         String?
-  createdBy     String
-  createdAt     DateTime      @default(now())
+  id               String        @id @default(cuid())
+  employeeId       String
+  amount           Decimal       @db.Decimal(15, 2)
+  reason           String
+  paymentMethod    PaymentMethod @default(CASH)
+  paidAt           DateTime?
+  remainingBalance Decimal       @default(0) @db.Decimal(15, 2) // New: tracks unpaid portion
+  isFullyPaid      Boolean       @default(false) // New: true when fully deducted from salary
+  notes            String?
+  createdBy        String
+  createdAt        DateTime      @default(now())
 
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   creator  User     @relation(fields: [createdBy], references: [id])
@@ -665,6 +739,201 @@ model CashExchange {
   @@map("cash_exchanges")
 }
 
+// ========== NEW MODELS ==========
+
+// Expense Group -> Expense Head hierarchy for categorized expense tracking
+model ExpenseGroup {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+
+  heads ExpenseHead[]
+
+  @@map("expense_groups")
+}
+
+model ExpenseHead {
+  id        String   @id @default(cuid())
+  groupId   String
+  name      String
+  createdAt DateTime @default(now())
+
+  group    ExpenseGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  expenses Expense[]
+
+  @@unique([groupId, name])
+  @@map("expense_heads")
+}
+
+// Account-based customer payments (not linked to specific invoices)
+model CustomerPayment {
+  id              String        @id @default(cuid())
+  customerId      String
+  amount          Decimal       @db.Decimal(15, 2)
+  method          PaymentMethod
+  referenceNumber String?
+  receiptUrl      String?
+  notes           String?
+  recordedBy      String
+  createdAt       DateTime      @default(now())
+
+  customer       Customer @relation(fields: [customerId], references: [id])
+  recordedByUser User     @relation(fields: [recordedBy], references: [id])
+
+  @@index([customerId])
+  @@index([createdAt])
+  @@map("customer_payments")
+}
+
+// Treasury (Cash Office) transactions
+model TreasuryTransaction {
+  id              String        @id @default(cuid())
+  type            TreasuryType
+  amount          Decimal       @db.Decimal(15, 2)
+  method          PaymentMethod
+  customerId      String?       // Optional: link to customer for debits
+  description     String
+  referenceNumber String?
+  createdBy       String
+  createdAt       DateTime      @default(now())
+
+  customer  Customer? @relation(fields: [customerId], references: [id])
+  creator   User      @relation(fields: [createdBy], references: [id])
+
+  @@index([customerId])
+  @@index([createdAt])
+  @@map("treasury_transactions")
+}
+
+// Bankak (Digital Bank) transactions with reference tracking
+model BankakTransaction {
+  id              String         @id @default(cuid())
+  amount          Decimal        @db.Decimal(15, 2)
+  direction       BankakDirection
+  referenceNumber String?
+  customerId      String?        // Optional: link to customer
+  description     String
+  createdBy       String
+  createdAt       DateTime       @default(now())
+
+  customer  Customer? @relation(fields: [customerId], references: [id])
+  creator   User      @relation(fields: [createdBy], references: [id])
+
+  @@index([referenceNumber])
+  @@index([customerId])
+  @@index([createdAt])
+  @@map("bankak_transactions")
+}
+
+// Sales Deposits (advance payments from customers)
+model SalesDeposit {
+  id          String        @id @default(cuid())
+  customerId  String
+  amount      Decimal       @db.Decimal(15, 2)
+  method      PaymentMethod
+  description String?
+  createdBy   String
+  createdAt   DateTime      @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id])
+  creator  User     @relation(fields: [createdBy], references: [id])
+
+  @@index([customerId])
+  @@index([createdAt])
+  @@map("sales_deposits")
+}
+
+// Recovered Loans (personal/business loans repaid to company)
+model RecoveredLoan {
+  id          String         @id @default(cuid())
+  entityName  String
+  entityType  LoanEntityType
+  amount      Decimal        @db.Decimal(15, 2)
+  method      PaymentMethod
+  description String?
+  createdBy   String
+  createdAt   DateTime       @default(now())
+
+  creator User @relation(fields: [createdBy], references: [id])
+
+  @@index([createdAt])
+  @@map("recovered_loans")
+}
+
+// Sales Returns
+model SalesReturn {
+  id         String   @id @default(cuid())
+  invoiceId  String
+  reason     String
+  returnedBy String
+  returnedAt DateTime @default(now())
+  notes      String?
+
+  invoice       SalesInvoice   @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  returnedByUser User          @relation(fields: [returnedBy], references: [id])
+  items          SalesReturnItem[]
+
+  @@index([invoiceId])
+  @@index([returnedAt])
+  @@map("sales_returns")
+}
+
+model SalesReturnItem {
+  id        String  @id @default(cuid())
+  returnId  String
+  itemId    String
+  quantity  Decimal @db.Decimal(15, 2)
+  unitPrice Decimal @db.Decimal(15, 2)
+  lineTotal Decimal @db.Decimal(15, 2)
+
+  salesReturn SalesReturn @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  item        Item        @relation(fields: [itemId], references: [id])
+
+  @@map("sales_return_items")
+}
+
+// Master Journal - records every transaction for daily session summaries
+model JournalEntry {
+  id            String              @id @default(cuid())
+  date          DateTime            @db.Date
+  entryType     JournalEntryType
+  referenceId   String              // ID of the source record (invoice, order, expense, etc.)
+  referenceType String              // Table/entity name of the source
+  direction     TransactionDirection
+  amount        Decimal             @db.Decimal(15, 2)
+  method        PaymentMethod?
+  description   String
+  createdBy     String
+  createdAt     DateTime            @default(now())
+
+  creator User @relation(fields: [createdBy], references: [id])
+
+  @@index([date])
+  @@index([entryType, date])
+  @@index([referenceId, referenceType])
+  @@map("journal_entries")
+}
+
+// Employee Loan Balance tracking (monthly carry-over)
+model EmployeeLoanBalance {
+  id             String  @id @default(cuid())
+  employeeId     String
+  month          Int
+  year           Int
+  openingBalance Decimal @default(0) @db.Decimal(15, 2)
+  advancesTaken  Decimal @default(0) @db.Decimal(15, 2)
+  deductions     Decimal @default(0) @db.Decimal(15, 2)
+  closingBalance Decimal @default(0) @db.Decimal(15, 2)
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, month, year])
+  @@index([employeeId])
+  @@map("employee_loan_balances")
+}
+
+// ========== AGGREGATE MODELS ==========
+
 // Daily Financial Aggregates - Cumulative daily totals for all financial transactions
 model DailyFinancialAggregate {
   id              String   @id @default(cuid())
@@ -680,8 +949,10 @@ model DailyFinancialAggregate {
   
   // Sales by payment method
   salesCash       Decimal  @default(0) @db.Decimal(15, 2)
-  salesBank       Decimal  @default(0) @db.Decimal(15, 2)
+  salesBank       Decimal  @default(0) @db.Decimal(15, 2) // Tracks BANKAK (renamed from BANK)
   salesBankNile   Decimal  @default(0) @db.Decimal(15, 2)
+  salesDebtMethod Decimal  @default(0) @db.Decimal(15, 2) // New: DEBT payment method
+  salesOthers     Decimal  @default(0) @db.Decimal(15, 2) // New: OTHERS payment method
   
   // Procurement aggregates
   procurementTotal      Decimal  @default(0) @db.Decimal(15, 2)
@@ -692,8 +963,10 @@ model DailyFinancialAggregate {
   
   // Procurement by payment method
   procurementCash        Decimal  @default(0) @db.Decimal(15, 2)
-  procurementBank        Decimal  @default(0) @db.Decimal(15, 2)
+  procurementBank        Decimal  @default(0) @db.Decimal(15, 2) // Tracks BANKAK
   procurementBankNile    Decimal  @default(0) @db.Decimal(15, 2)
+  procurementDebtMethod  Decimal  @default(0) @db.Decimal(15, 2) // New
+  procurementOthers      Decimal  @default(0) @db.Decimal(15, 2) // New
   
   // Expenses aggregates
   expensesTotal   Decimal  @default(0) @db.Decimal(15, 2)
@@ -701,41 +974,65 @@ model DailyFinancialAggregate {
   
   // Expenses by payment method
   expensesCash       Decimal  @default(0) @db.Decimal(15, 2)
-  expensesBank       Decimal  @default(0) @db.Decimal(15, 2)
+  expensesBank       Decimal  @default(0) @db.Decimal(15, 2) // Tracks BANKAK
   expensesBankNile   Decimal  @default(0) @db.Decimal(15, 2)
+  expensesDebtMethod Decimal  @default(0) @db.Decimal(15, 2) // New
+  expensesOthers     Decimal  @default(0) @db.Decimal(15, 2) // New
   
-  // Income aggregates (opposite of expenses)
+  // Income aggregates
   incomeTotal     Decimal  @default(0) @db.Decimal(15, 2)
   incomeCount     Int      @default(0)
   
   // Income by payment method
   incomeCash      Decimal  @default(0) @db.Decimal(15, 2)
-  incomeBank      Decimal  @default(0) @db.Decimal(15, 2)
+  incomeBank      Decimal  @default(0) @db.Decimal(15, 2) // Tracks BANKAK
   incomeBankNile  Decimal  @default(0) @db.Decimal(15, 2)
+  incomeDebtMethod Decimal @default(0) @db.Decimal(15, 2) // New
+  incomeOthers    Decimal  @default(0) @db.Decimal(15, 2) // New
   
   // Salaries aggregates
   salariesTotal     Decimal  @default(0) @db.Decimal(15, 2)
   salariesCount     Int      @default(0)
   salariesCash      Decimal  @default(0) @db.Decimal(15, 2)
-  salariesBank      Decimal  @default(0) @db.Decimal(15, 2)
+  salariesBank      Decimal  @default(0) @db.Decimal(15, 2) // Tracks BANKAK
   salariesBankNile  Decimal  @default(0) @db.Decimal(15, 2)
+  salariesDebtMethod Decimal @default(0) @db.Decimal(15, 2) // New
+  salariesOthers    Decimal  @default(0) @db.Decimal(15, 2) // New
   
   // Advances aggregates
   advancesTotal     Decimal  @default(0) @db.Decimal(15, 2)
   advancesCount     Int      @default(0)
   advancesCash      Decimal  @default(0) @db.Decimal(15, 2)
-  advancesBank      Decimal  @default(0) @db.Decimal(15, 2)
+  advancesBank      Decimal  @default(0) @db.Decimal(15, 2) // Tracks BANKAK
   advancesBankNile  Decimal  @default(0) @db.Decimal(15, 2)
+  advancesDebtMethod Decimal @default(0) @db.Decimal(15, 2) // New
+  advancesOthers    Decimal  @default(0) @db.Decimal(15, 2) // New
   
   // Cash exchanges (net impact)
   cashExchangesCash       Decimal  @default(0) @db.Decimal(15, 2)
-  cashExchangesBank       Decimal  @default(0) @db.Decimal(15, 2)
+  cashExchangesBank       Decimal  @default(0) @db.Decimal(15, 2) // Tracks BANKAK
   cashExchangesBankNile   Decimal  @default(0) @db.Decimal(15, 2)
+  cashExchangesDebtMethod Decimal  @default(0) @db.Decimal(15, 2) // New
+  cashExchangesOthers     Decimal  @default(0) @db.Decimal(15, 2) // New
+
+  // Treasury aggregates (New)
+  treasuryInflow   Decimal  @default(0) @db.Decimal(15, 2)
+  treasuryOutflow  Decimal  @default(0) @db.Decimal(15, 2)
+  
+  // Customer account payments (New)
+  customerPaymentsTotal Decimal @default(0) @db.Decimal(15, 2)
+  customerPaymentsCount Int     @default(0)
+
+  // Sales returns (New)
+  salesReturnsTotal Decimal @default(0) @db.Decimal(15, 2)
+  salesReturnsCount Int     @default(0)
   
   // Net calculations (calculated fields, updated on aggregate changes)
   netCash         Decimal  @default(0) @db.Decimal(15, 2)
-  netBank         Decimal  @default(0) @db.Decimal(15, 2)
+  netBank         Decimal  @default(0) @db.Decimal(15, 2) // Tracks BANKAK
   netBankNile     Decimal  @default(0) @db.Decimal(15, 2)
+  netDebt         Decimal  @default(0) @db.Decimal(15, 2) // New
+  netOthers       Decimal  @default(0) @db.Decimal(15, 2) // New
   netTotal        Decimal  @default(0) @db.Decimal(15, 2)
   
   createdAt       DateTime @default(now())
@@ -764,8 +1061,10 @@ model MonthlyFinancialAggregate {
   salesDebt       Decimal  @default(0) @db.Decimal(15, 2)
   salesCount      Int      @default(0)
   salesCash       Decimal  @default(0) @db.Decimal(15, 2)
-  salesBank       Decimal  @default(0) @db.Decimal(15, 2)
+  salesBank       Decimal  @default(0) @db.Decimal(15, 2) // Tracks BANKAK
   salesBankNile   Decimal  @default(0) @db.Decimal(15, 2)
+  salesDebtMethod Decimal  @default(0) @db.Decimal(15, 2) // New
+  salesOthers     Decimal  @default(0) @db.Decimal(15, 2) // New
   
   procurementTotal      Decimal  @default(0) @db.Decimal(15, 2)
   procurementPaid        Decimal  @default(0) @db.Decimal(15, 2)
@@ -773,34 +1072,67 @@ model MonthlyFinancialAggregate {
   procurementCount       Int      @default(0)
   procurementCancelled   Decimal  @default(0) @db.Decimal(15, 2)
   procurementCash        Decimal  @default(0) @db.Decimal(15, 2)
-  procurementBank        Decimal  @default(0) @db.Decimal(15, 2)
+  procurementBank        Decimal  @default(0) @db.Decimal(15, 2) // Tracks BANKAK
   procurementBankNile    Decimal  @default(0) @db.Decimal(15, 2)
+  procurementDebtMethod  Decimal  @default(0) @db.Decimal(15, 2) // New
+  procurementOthers      Decimal  @default(0) @db.Decimal(15, 2) // New
   
   expensesTotal   Decimal  @default(0) @db.Decimal(15, 2)
   expensesCount   Int      @default(0)
   expensesCash    Decimal  @default(0) @db.Decimal(15, 2)
-  expensesBank    Decimal  @default(0) @db.Decimal(15, 2)
+  expensesBank    Decimal  @default(0) @db.Decimal(15, 2) // Tracks BANKAK
   expensesBankNile Decimal @default(0) @db.Decimal(15, 2)
+  expensesDebtMethod Decimal @default(0) @db.Decimal(15, 2) // New
+  expensesOthers  Decimal  @default(0) @db.Decimal(15, 2) // New
+
+  // Income aggregates (was missing from monthly, now added)
+  incomeTotal     Decimal  @default(0) @db.Decimal(15, 2)
+  incomeCount     Int      @default(0)
+  incomeCash      Decimal  @default(0) @db.Decimal(15, 2)
+  incomeBank      Decimal  @default(0) @db.Decimal(15, 2) // Tracks BANKAK
+  incomeBankNile  Decimal  @default(0) @db.Decimal(15, 2)
+  incomeDebtMethod Decimal @default(0) @db.Decimal(15, 2) // New
+  incomeOthers    Decimal  @default(0) @db.Decimal(15, 2) // New
   
   salariesTotal     Decimal  @default(0) @db.Decimal(15, 2)
   salariesCount     Int      @default(0)
   salariesCash      Decimal  @default(0) @db.Decimal(15, 2)
-  salariesBank      Decimal  @default(0) @db.Decimal(15, 2)
+  salariesBank      Decimal  @default(0) @db.Decimal(15, 2) // Tracks BANKAK
   salariesBankNile  Decimal  @default(0) @db.Decimal(15, 2)
+  salariesDebtMethod Decimal @default(0) @db.Decimal(15, 2) // New
+  salariesOthers    Decimal  @default(0) @db.Decimal(15, 2) // New
   
   advancesTotal     Decimal  @default(0) @db.Decimal(15, 2)
   advancesCount     Int      @default(0)
   advancesCash      Decimal  @default(0) @db.Decimal(15, 2)
-  advancesBank      Decimal  @default(0) @db.Decimal(15, 2)
+  advancesBank      Decimal  @default(0) @db.Decimal(15, 2) // Tracks BANKAK
   advancesBankNile  Decimal  @default(0) @db.Decimal(15, 2)
+  advancesDebtMethod Decimal @default(0) @db.Decimal(15, 2) // New
+  advancesOthers    Decimal  @default(0) @db.Decimal(15, 2) // New
   
   cashExchangesCash       Decimal  @default(0) @db.Decimal(15, 2)
-  cashExchangesBank       Decimal  @default(0) @db.Decimal(15, 2)
+  cashExchangesBank       Decimal  @default(0) @db.Decimal(15, 2) // Tracks BANKAK
   cashExchangesBankNile   Decimal  @default(0) @db.Decimal(15, 2)
+  cashExchangesDebtMethod Decimal  @default(0) @db.Decimal(15, 2) // New
+  cashExchangesOthers     Decimal  @default(0) @db.Decimal(15, 2) // New
+
+  // Treasury aggregates (New)
+  treasuryInflow   Decimal  @default(0) @db.Decimal(15, 2)
+  treasuryOutflow  Decimal  @default(0) @db.Decimal(15, 2)
+
+  // Customer account payments (New)
+  customerPaymentsTotal Decimal @default(0) @db.Decimal(15, 2)
+  customerPaymentsCount Int     @default(0)
+
+  // Sales returns (New)
+  salesReturnsTotal Decimal @default(0) @db.Decimal(15, 2)
+  salesReturnsCount Int     @default(0)
   
   netCash         Decimal  @default(0) @db.Decimal(15, 2)
-  netBank         Decimal  @default(0) @db.Decimal(15, 2)
+  netBank         Decimal  @default(0) @db.Decimal(15, 2) // Tracks BANKAK
   netBankNile     Decimal  @default(0) @db.Decimal(15, 2)
+  netDebt         Decimal  @default(0) @db.Decimal(15, 2) // New
+  netOthers       Decimal  @default(0) @db.Decimal(15, 2) // New
   netTotal        Decimal  @default(0) @db.Decimal(15, 2)
   
   createdAt       DateTime @default(now())
@@ -830,6 +1162,13 @@ model DailyItemSalesAggregate {
   // Revenue aggregates
   totalAmount     Decimal  @default(0) @db.Decimal(15, 2)
   averageUnitPrice Decimal @default(0) @db.Decimal(15, 2)
+  
+  // Revenue by payment method (New)
+  totalCash       Decimal  @default(0) @db.Decimal(15, 2)
+  totalBankak     Decimal  @default(0) @db.Decimal(15, 2)
+  totalBankNile   Decimal  @default(0) @db.Decimal(15, 2)
+  totalDebt       Decimal  @default(0) @db.Decimal(15, 2)
+  totalOthers     Decimal  @default(0) @db.Decimal(15, 2)
   
   // Count
   invoiceCount    Int      @default(0)
@@ -862,8 +1201,13 @@ model CustomerCumulativeAggregate {
   
   // By payment method
   salesCash       Decimal  @default(0) @db.Decimal(15, 2)
-  salesBank       Decimal  @default(0) @db.Decimal(15, 2)
+  salesBank       Decimal  @default(0) @db.Decimal(15, 2) // Tracks BANKAK
   salesBankNile   Decimal  @default(0) @db.Decimal(15, 2)
+  salesDebtMethod Decimal  @default(0) @db.Decimal(15, 2) // New
+  salesOthers     Decimal  @default(0) @db.Decimal(15, 2) // New
+  
+  // Account payments (New)
+  totalAccountPayments Decimal @default(0) @db.Decimal(15, 2)
   
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
@@ -890,8 +1234,10 @@ model SupplierCumulativeAggregate {
   
   // By payment method
   purchasesCash   Decimal  @default(0) @db.Decimal(15, 2)
-  purchasesBank   Decimal  @default(0) @db.Decimal(15, 2)
+  purchasesBank   Decimal  @default(0) @db.Decimal(15, 2) // Tracks BANKAK
   purchasesBankNile Decimal @default(0) @db.Decimal(15, 2)
+  purchasesDebtMethod Decimal @default(0) @db.Decimal(15, 2) // New
+  purchasesOthers Decimal  @default(0) @db.Decimal(15, 2) // New
   
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
@@ -913,12 +1259,12 @@ model CumulativeBalanceSnapshot {
   
   // Opening balances (cumulative from previous day)
   openingCash     Decimal  @default(0) @db.Decimal(15, 2)
-  openingBank     Decimal  @default(0) @db.Decimal(15, 2)
+  openingBank     Decimal  @default(0) @db.Decimal(15, 2) // Tracks BANKAK
   openingBankNile Decimal  @default(0) @db.Decimal(15, 2)
   
   // Closing balances (calculated)
   closingCash     Decimal  @default(0) @db.Decimal(15, 2)
-  closingBank     Decimal  @default(0) @db.Decimal(15, 2)
+  closingBank     Decimal  @default(0) @db.Decimal(15, 2) // Tracks BANKAK
   closingBankNile Decimal  @default(0) @db.Decimal(15, 2)
   
   // Receivables/Payables
@@ -935,4 +1281,3 @@ model CumulativeBalanceSnapshot {
   @@index([date])
   @@map("cumulative_balance_snapshots")
 }
-

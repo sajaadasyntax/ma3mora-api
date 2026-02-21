@@ -14,6 +14,12 @@ import employeesRoutes from './routes/employees';
 import uploadsRoutes from './routes/uploads';
 import usersRoutes from './routes/users';
 import offersRoutes from './routes/offers';
+import expenseGroupsRoutes from './routes/expenseGroups';
+import customerPaymentsRoutes from './routes/customerPayments';
+import treasuryRoutes from './routes/treasury';
+import bankakRoutes from './routes/bankak';
+import otherIncomeRoutes from './routes/otherIncome';
+import returnsRoutes from './routes/returns';
 import path from 'path';
 
 const app = express();
@@ -43,6 +49,12 @@ app.use('/api/employees', employeesRoutes);
 app.use('/api/uploads', uploadsRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/offers', offersRoutes);
+app.use('/api/expense-groups', expenseGroupsRoutes);
+app.use('/api/customer-payments', customerPaymentsRoutes);
+app.use('/api/treasury', treasuryRoutes);
+app.use('/api/bankak', bankakRoutes);
+app.use('/api/other-income', otherIncomeRoutes);
+app.use('/api/returns', returnsRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

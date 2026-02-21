@@ -753,27 +753,45 @@ router.get('/transfers/:id', requireRole('INVENTORY', 'MANAGER', 'ACCOUNTANT', '
 // Calculates: openingBalance, incoming, outgoing, pendingOutgoing, incomingGifts, outgoingGifts, closingBalance
 router.get('/stock-movements', requireRole('INVENTORY', 'SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GROCERY', 'AGENT_BAKERY', 'MANAGER'), async (req: AuthRequest, res) => {
   try {
-    const { inventoryId, itemId, date, startDate, endDate, section } = req.query;
+    const { inventoryId, itemId, date, startDate, endDate, dateFrom, dateTo, section, reportType } = req.query;
     
     if (!inventoryId) {
       return res.status(400).json({ error: 'المخزن مطلوب' });
     }
 
-    // Support single date or date range
+    // Support reportType: 'daily' (default), 'weekly', 'custom'
     let targetStartDate: Date, targetEndDate: Date;
     
-    if (date) {
-      // Single date
-      targetStartDate = new Date(date as string);
-      targetEndDate = new Date(date as string);
-    } else if (startDate) {
-      // Date range
-      targetStartDate = new Date(startDate as string);
-      targetEndDate = endDate ? new Date(endDate as string) : new Date(startDate as string);
+    if (reportType === 'weekly') {
+      // Weekly: calculate Saturday–Friday week from given date
+      const givenDate = new Date((date || dateFrom || new Date().toISOString().split('T')[0]) as string);
+      const dayOfWeek = givenDate.getDay(); // 0=Sun … 6=Sat
+      const diff = (dayOfWeek + 1) % 7; // Days since Saturday (Arabic week start)
+      targetStartDate = new Date(givenDate);
+      targetStartDate.setDate(givenDate.getDate() - diff);
+      targetEndDate = new Date(targetStartDate);
+      targetEndDate.setDate(targetStartDate.getDate() + 6); // Friday
+    } else if (reportType === 'custom') {
+      // Custom: use dateFrom/dateTo (or startDate/endDate for backward compat)
+      targetStartDate = new Date((dateFrom || startDate) as string);
+      targetEndDate = new Date((dateTo || endDate || dateFrom || startDate) as string);
     } else {
-      // Default to today
-      targetStartDate = new Date();
-      targetEndDate = new Date();
+      // 'daily' (default) — preserve existing behavior
+      if (date) {
+        // Single date
+        targetStartDate = new Date(date as string);
+        targetEndDate = new Date(date as string);
+      } else if (startDate || dateFrom) {
+        // Date range
+        const start = (startDate || dateFrom) as string;
+        const end = (endDate || dateTo) as string;
+        targetStartDate = new Date(start);
+        targetEndDate = end ? new Date(end) : new Date(start);
+      } else {
+        // Default to today
+        targetStartDate = new Date();
+        targetEndDate = new Date();
+      }
     }
     
     targetStartDate.setHours(0, 0, 0, 0);
@@ -928,14 +946,197 @@ router.get('/stock-movements', requireRole('INVENTORY', 'SALES_GROCERY', 'SALES_
       })
     );
 
+    // Calculate grandTotal across all items and dates
+    const grandTotal = {
+      totalOpeningBalance: 0,
+      totalIncoming: 0,
+      totalOutgoing: 0,
+      totalPendingOutgoing: 0,
+      totalIncomingGifts: 0,
+      totalOutgoingGifts: 0,
+      totalClosingBalance: 0,
+    };
+
+    for (const item of movementsReport) {
+      for (const m of item.movements) {
+        grandTotal.totalOpeningBalance += parseFloat(m.openingBalance);
+        grandTotal.totalIncoming += parseFloat(m.incoming);
+        grandTotal.totalOutgoing += parseFloat(m.outgoing);
+        grandTotal.totalPendingOutgoing += parseFloat(m.pendingOutgoing);
+        grandTotal.totalIncomingGifts += parseFloat(m.incomingGifts);
+        grandTotal.totalOutgoingGifts += parseFloat(m.outgoingGifts);
+        grandTotal.totalClosingBalance += parseFloat(m.closingBalance);
+      }
+    }
+
     res.json({
       inventoryId: inventoryId as string,
+      reportType: (reportType as string) || 'daily',
       startDate: targetStartDate.toISOString().split('T')[0],
       endDate: targetEndDate.toISOString().split('T')[0],
       items: movementsReport,
+      grandTotal,
     });
   } catch (error) {
     console.error('Stock movements report error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
+// === Module 1: Warehouse Management Endpoints ===
+
+// Create new inventory
+const createInventorySchema = z.object({
+  name: z.string().min(1, 'اسم المخزن مطلوب'),
+  isMain: z.boolean().optional().default(false),
+  warehouseType: z.enum(['MAIN', 'ROAD', 'SIDE']).optional().default('MAIN'),
+});
+
+router.post('/', requireRole('MANAGER'), createAuditLog('Inventory'), async (req: AuthRequest, res) => {
+  try {
+    const data = createInventorySchema.parse(req.body);
+
+    const inventory = await prisma.inventory.create({
+      data: {
+        name: data.name,
+        isMain: data.isMain,
+        warehouseType: data.warehouseType,
+      },
+    });
+
+    res.status(201).json(inventory);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: 'بيانات غير صالحة', details: error.errors });
+    }
+    console.error('Create inventory error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
+// Gift-specific movement report
+router.get('/gift-report', requireRole('INVENTORY', 'MANAGER', 'ACCOUNTANT', 'AUDITOR'), async (req: AuthRequest, res) => {
+  try {
+    const { inventoryId, dateFrom, dateTo } = req.query;
+
+    if (!inventoryId) {
+      return res.status(400).json({ error: 'المخزن مطلوب' });
+    }
+
+    const where: any = {
+      inventoryId: inventoryId as string,
+    };
+
+    if (dateFrom || dateTo) {
+      where.movementDate = {};
+      if (dateFrom) {
+        const from = new Date(dateFrom as string);
+        from.setHours(0, 0, 0, 0);
+        where.movementDate.gte = from;
+      }
+      if (dateTo) {
+        const to = new Date(dateTo as string);
+        to.setHours(23, 59, 59, 999);
+        where.movementDate.lte = to;
+      }
+    }
+
+    const movements = await prisma.stockMovement.findMany({
+      where,
+      include: {
+        item: { select: { id: true, name: true } },
+      },
+      orderBy: { movementDate: 'asc' },
+    });
+
+    // Group by item
+    const groupedByItem: Record<string, { itemId: string; itemName: string; totalIncomingGifts: number; totalOutgoingGifts: number }> = {};
+
+    for (const m of movements) {
+      if (!groupedByItem[m.itemId]) {
+        groupedByItem[m.itemId] = {
+          itemId: m.itemId,
+          itemName: m.item.name,
+          totalIncomingGifts: 0,
+          totalOutgoingGifts: 0,
+        };
+      }
+      groupedByItem[m.itemId].totalIncomingGifts += parseFloat(m.incomingGifts.toString());
+      groupedByItem[m.itemId].totalOutgoingGifts += parseFloat(m.outgoingGifts.toString());
+    }
+
+    const items = Object.values(groupedByItem);
+
+    const grandTotal = {
+      totalIncomingGifts: items.reduce((sum, i) => sum + i.totalIncomingGifts, 0),
+      totalOutgoingGifts: items.reduce((sum, i) => sum + i.totalOutgoingGifts, 0),
+    };
+
+    res.json({ items, grandTotal });
+  } catch (error) {
+    console.error('Gift report error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
+// Warehouse balance report
+router.get('/:id/balance-report', requireRole('INVENTORY', 'MANAGER', 'ACCOUNTANT', 'AUDITOR'), async (req: AuthRequest, res) => {
+  try {
+    const { id } = req.params;
+    const { date } = req.query;
+
+    const targetDate = date ? new Date(date as string) : new Date();
+    const dateStart = new Date(targetDate);
+    dateStart.setHours(0, 0, 0, 0);
+    const dateEnd = new Date(targetDate);
+    dateEnd.setHours(23, 59, 59, 999);
+
+    // Get movements for this inventory on the specified date
+    const movements = await prisma.stockMovement.findMany({
+      where: {
+        inventoryId: id,
+        movementDate: {
+          gte: dateStart,
+          lte: dateEnd,
+        },
+      },
+      include: {
+        item: { select: { id: true, name: true, section: true } },
+      },
+      orderBy: { item: { name: 'asc' } },
+    });
+
+    const items = movements.map((m) => ({
+      itemId: m.itemId,
+      itemName: m.item.name,
+      section: m.item.section,
+      openingBalance: m.openingBalance.toString(),
+      incoming: m.incoming.toString(),
+      incomingGifts: m.incomingGifts.toString(),
+      outgoing: m.outgoing.toString(),
+      pendingOutgoing: m.pendingOutgoing.toString(),
+      outgoingGifts: m.outgoingGifts.toString(),
+      closingBalance: m.closingBalance.toString(),
+    }));
+
+    const grandTotal = {
+      totalOpeningBalance: movements.reduce((sum, m) => sum + parseFloat(m.openingBalance.toString()), 0),
+      totalIncoming: movements.reduce((sum, m) => sum + parseFloat(m.incoming.toString()), 0),
+      totalIncomingGifts: movements.reduce((sum, m) => sum + parseFloat(m.incomingGifts.toString()), 0),
+      totalOutgoing: movements.reduce((sum, m) => sum + parseFloat(m.outgoing.toString()), 0),
+      totalPendingOutgoing: movements.reduce((sum, m) => sum + parseFloat(m.pendingOutgoing.toString()), 0),
+      totalOutgoingGifts: movements.reduce((sum, m) => sum + parseFloat(m.outgoingGifts.toString()), 0),
+      totalClosingBalance: movements.reduce((sum, m) => sum + parseFloat(m.closingBalance.toString()), 0),
+    };
+
+    res.json({
+      inventoryId: id,
+      date: targetDate.toISOString().split('T')[0],
+      items,
+      grandTotal,
+    });
+  } catch (error) {
+    console.error('Balance report error:', error);
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
 });
