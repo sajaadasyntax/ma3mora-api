@@ -1213,12 +1213,16 @@ export class AggregationService {
         },
       },
     });
+    // SalesReturn model uses returnedAt as the date field, not createdAt
     const salesReturns: any[] = await (prisma as any).salesReturn.findMany({
       where: {
-        createdAt: {
+        returnedAt: {
           gte: dateOnly,
           lte: dateEnd,
         },
+      },
+      include: {
+        items: true,
       },
     });
 
@@ -1298,8 +1302,14 @@ export class AggregationService {
       .filter(t => (t as any).type === 'OUTFLOW')
       .reduce((sum, t) => sum.add(t.amount), new Prisma.Decimal(0));
 
-    // Sales returns calculations
-    const salesReturnsTotalAmount = salesReturns.reduce((sum, sr) => sum.add(sr.amount), new Prisma.Decimal(0));
+    // Sales returns calculations: sum line totals from SalesReturnItem records
+    const salesReturnsTotalAmount = salesReturns.reduce((sum, sr) => {
+      const itemsTotal = (sr.items || []).reduce(
+        (itemSum: Prisma.Decimal, item: any) => itemSum.add(item.lineTotal),
+        new Prisma.Decimal(0)
+      );
+      return sum.add(itemsTotal);
+    }, new Prisma.Decimal(0));
 
     // Update aggregate - use absolute values instead of increments for recalculation
     // First, get existing aggregate to clear it
