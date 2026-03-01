@@ -472,6 +472,7 @@ router.post('/advances', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('A
         isFullyPaid: false,
         paymentMethod: data.paymentMethod || 'CASH',
         createdBy: req.user!.id,
+        paidAt: new Date(), // Cash given at creation - advances appear in reports from creation date
       },
       include: {
         employee: {
@@ -482,6 +483,29 @@ router.post('/advances', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('A
         },
       },
     });
+
+    // Update aggregates (advance paid at creation - cash given when advance is created)
+    try {
+      const paymentMethod = data.paymentMethod || 'CASH';
+      const advancesByMethod = {
+        CASH: paymentMethod === 'CASH' ? amountDecimal : new Prisma.Decimal(0),
+        BANKAK: paymentMethod === 'BANKAK' ? amountDecimal : new Prisma.Decimal(0),
+        BANK_NILE: paymentMethod === 'BANK_NILE' ? amountDecimal : new Prisma.Decimal(0),
+        DEBT: paymentMethod === 'DEBT' ? amountDecimal : new Prisma.Decimal(0),
+        OTHERS: (paymentMethod === 'OTHERS' || paymentMethod === 'COMMISSION') ? amountDecimal : new Prisma.Decimal(0),
+      };
+      await aggregationService.updateDailyFinancialAggregate(new Date(), {
+        advancesTotal: amountDecimal,
+        advancesCount: 1,
+        advancesCash: advancesByMethod.CASH,
+        advancesBank: advancesByMethod.BANKAK,
+        advancesBankNile: advancesByMethod.BANK_NILE,
+        advancesDebtMethod: advancesByMethod.DEBT,
+        advancesOthers: advancesByMethod.OTHERS,
+      });
+    } catch (aggError) {
+      console.error('Aggregation update error (non-blocking):', aggError);
+    }
 
     // Update EmployeeLoanBalance for the current month (track advancesTaken)
     try {

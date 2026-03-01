@@ -3687,6 +3687,7 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER')
         CASH: new Prisma.Decimal(0),
         BANKAK: new Prisma.Decimal(0),
         BANK_NILE: new Prisma.Decimal(0),
+        other: new Prisma.Decimal(0), // DEBT, OTHERS - included in total but not in liquid balance
       };
 
       dayData.income.forEach((t: any) => {
@@ -3698,8 +3699,11 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER')
 
       dayData.losses.forEach((t: any) => {
         const method = t.method;
+        const amount = new Prisma.Decimal(t.amount);
         if (isValidMethod(method)) {
-          realLossesByMethod[method] = realLossesByMethod[method].add(new Prisma.Decimal(t.amount));
+          realLossesByMethod[method] = realLossesByMethod[method].add(amount);
+        } else {
+          realLossesByMethod.other = realLossesByMethod.other.add(amount);
         }
       });
 
@@ -3734,9 +3738,10 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER')
         BANK_NILE: runningBalances.BANK_NILE,
       };
 
-      // Calculate REAL totals (excluding transfers) for display
+      // Calculate REAL totals (excluding transfers) for display - include DEBT/OTHERS in losses total
       const realIncomeTotal = realIncomeByMethod.CASH.add(realIncomeByMethod.BANKAK).add(realIncomeByMethod.BANK_NILE);
-      const realLossTotal = realLossesByMethod.CASH.add(realLossesByMethod.BANKAK).add(realLossesByMethod.BANK_NILE);
+      const realLossTotal = realLossesByMethod.CASH.add(realLossesByMethod.BANKAK)
+        .add(realLossesByMethod.BANK_NILE).add(realLossesByMethod.other);
       const netProfit = realIncomeTotal.sub(realLossTotal);
       
       return {
