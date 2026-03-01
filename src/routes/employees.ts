@@ -492,7 +492,7 @@ router.post('/advances', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('A
         BANKAK: paymentMethod === 'BANKAK' ? amountDecimal : new Prisma.Decimal(0),
         BANK_NILE: paymentMethod === 'BANK_NILE' ? amountDecimal : new Prisma.Decimal(0),
         DEBT: paymentMethod === 'DEBT' ? amountDecimal : new Prisma.Decimal(0),
-        OTHERS: (paymentMethod === 'OTHERS' || paymentMethod === 'COMMISSION') ? amountDecimal : new Prisma.Decimal(0),
+        OTHERS: paymentMethod === 'OTHERS' ? amountDecimal : new Prisma.Decimal(0),
       };
       await aggregationService.updateDailyFinancialAggregate(new Date(), {
         advancesTotal: amountDecimal,
