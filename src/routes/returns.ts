@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { requireAuth, requireRole, blockAuditorWrites } from '../middleware/auth';
 import { createAuditLog } from '../middleware/audit';
@@ -7,12 +7,31 @@ import { AuthRequest } from '../types';
 import { stockMovementService } from '../services/stockMovementService';
 import { aggregationService } from '../services/aggregationService';
 import { journalService } from '../services/journalService';
+import { prisma } from '../lib/prisma';
 
 const router = Router();
-const prisma = new PrismaClient();
 
 router.use(requireAuth);
 router.use(blockAuditorWrites);
+
+async function checkBalanceOpen(req: AuthRequest, res: any, next: any) {
+  try {
+    const openBalance = await prisma.openingBalance.findFirst({
+      where: { isClosed: false },
+    });
+
+    if (!openBalance) {
+      return res.status(400).json({ 
+        error: 'الحساب مغلق. يرجى فتح حساب جديد قبل إجراء أي معاملات.' 
+      });
+    }
+
+    next();
+  } catch (error) {
+    console.error('Check balance error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+}
 
 // ─── Schemas ────────────────────────────────────────────────────────────────
 
@@ -55,6 +74,7 @@ function calculatePaymentStatus(paidAmount: Prisma.Decimal, total: Prisma.Decima
 router.post(
   '/sales/invoices/:id/return',
   requireRole('ACCOUNTANT', 'MANAGER'),
+  checkBalanceOpen,
   createAuditLog('SalesReturn'),
   async (req: AuthRequest, res) => {
     try {
@@ -74,6 +94,21 @@ router.post(
         return res.status(404).json({ error: 'الفاتورة غير موجودة' });
       }
 
+      if (invoice.paymentConfirmationStatus === 'REJECTED') {
+        return res.status(400).json({ error: 'لا يمكن عمل مرتجع لفاتورة ملغية' });
+      }
+
+      // Query previously returned quantities for this invoice
+      const previousReturns = await prisma.salesReturnItem.groupBy({
+        by: ['itemId'],
+        where: { salesReturn: { invoiceId } },
+        _sum: { quantity: true },
+      });
+      const returnedByItem: Record<string, Prisma.Decimal> = {};
+      for (const pr of previousReturns) {
+        returnedByItem[pr.itemId] = pr._sum.quantity || new Prisma.Decimal(0);
+      }
+
       // Validate that return items exist in the invoice
       for (const returnItem of data.items) {
         const invoiceItem = invoice.items.find(i => i.itemId === returnItem.itemId);
@@ -82,9 +117,11 @@ router.post(
             error: `الصنف ${returnItem.itemId} غير موجود في الفاتورة`,
           });
         }
-        if (new Prisma.Decimal(returnItem.quantity).greaterThan(invoiceItem.quantity)) {
+        const alreadyReturned = returnedByItem[returnItem.itemId] || new Prisma.Decimal(0);
+        const maxReturnable = invoiceItem.quantity.sub(alreadyReturned);
+        if (new Prisma.Decimal(returnItem.quantity).greaterThan(maxReturnable)) {
           return res.status(400).json({
-            error: `كمية المرتجع للصنف ${returnItem.itemId} أكبر من الكمية المباعة`,
+            error: `كمية المرتجع للصنف ${returnItem.itemId} أكبر من الكمية المتبقية (${maxReturnable})`,
           });
         }
       }
@@ -136,7 +173,7 @@ router.post(
         // 2. For each returned item: restore stock and record movement
         for (const returnItem of data.items) {
           // Add quantity back to InventoryStock
-          await tx.inventoryStock.update({
+          const stockRecord = await tx.inventoryStock.update({
             where: {
               inventoryId_itemId: {
                 inventoryId: invoice.inventoryId,
@@ -147,6 +184,16 @@ router.post(
               quantity: {
                 increment: new Prisma.Decimal(returnItem.quantity),
               },
+            },
+          });
+
+          await tx.stockBatch.create({
+            data: {
+              inventoryId: invoice.inventoryId,
+              itemId: returnItem.itemId,
+              quantity: new Prisma.Decimal(returnItem.quantity),
+              receivedAt: new Date(),
+              notes: `مرتجع مبيعات - فاتورة ${invoice.invoiceNumber}`,
             },
           });
 
@@ -241,6 +288,15 @@ router.post(
         return salesReturn;
       });
 
+      try {
+        await aggregationService.updateDailyFinancialAggregate(new Date(), {
+          salesReturnsTotal: returnTotal,
+          salesReturnsCount: 1,
+        });
+      } catch (aggError) {
+        console.error('Aggregation update error (sales return):', aggError);
+      }
+
       res.status(201).json(salesReturn);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -317,6 +373,7 @@ router.get(
 router.put(
   '/sales/invoices/:id',
   requireRole('MANAGER'),
+  checkBalanceOpen,
   createAuditLog('SalesInvoice'),
   async (req: AuthRequest, res) => {
     try {
@@ -436,6 +493,27 @@ router.put(
         return updated;
       });
 
+      // Update aggregates to reflect total change
+      try {
+        const oldTotal = parseFloat(invoice.total.toString());
+        const newTotal = parseFloat(updatedInvoice.total.toString());
+        const diff = newTotal - oldTotal;
+        if (diff !== 0) {
+          await aggregationService.updateDailyFinancialAggregate(invoice.createdAt, {
+            salesTotal: new Prisma.Decimal(diff),
+          });
+          if (invoice.customerId) {
+            await aggregationService.updateCustomerCumulativeAggregate(
+              invoice.customerId,
+              invoice.createdAt,
+              { totalSales: new Prisma.Decimal(diff) }
+            );
+          }
+        }
+      } catch (aggError) {
+        console.error('Aggregation update error (invoice edit):', aggError);
+      }
+
       res.json(updatedInvoice);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -497,6 +575,201 @@ router.get(
     } catch (error) {
       console.error('Daily journal error:', error);
       res.status(500).json({ error: 'خطأ في الخادم أثناء جلب دفتر اليومية' });
+    }
+  }
+);
+
+// ─── POST /sales/invoices/:id/void — Void an invoice ────────────────────────
+
+router.post(
+  '/sales/invoices/:id/void',
+  requireRole('MANAGER'),
+  checkBalanceOpen,
+  createAuditLog('SalesInvoice'),
+  async (req: AuthRequest, res) => {
+    try {
+      const { id: invoiceId } = req.params;
+
+      const invoice = await prisma.salesInvoice.findUnique({
+        where: { id: invoiceId },
+        include: {
+          items: { include: { item: true } },
+          customer: true,
+        },
+      });
+
+      if (!invoice) {
+        return res.status(404).json({ error: 'الفاتورة غير موجودة' });
+      }
+
+      if (invoice.paymentConfirmationStatus === 'REJECTED') {
+        return res.status(400).json({ error: 'الفاتورة ملغية بالفعل' });
+      }
+
+      const voidedInvoice = await prisma.$transaction(async (tx) => {
+        // a) Mark invoice as voided
+        const updated = await tx.salesInvoice.update({
+          where: { id: invoiceId },
+          data: {
+            paymentConfirmationStatus: 'REJECTED',
+            notes: invoice.notes
+              ? `${invoice.notes} | ملغية`
+              : 'ملغية',
+          },
+          include: {
+            items: { include: { item: true } },
+            customer: true,
+            payments: true,
+            salesUser: {
+              select: { id: true, username: true, role: true },
+            },
+          },
+        });
+
+        // b) Restore stock for each delivered item, minus already-returned quantities
+        if (invoice.deliveryStatus === 'DELIVERED') {
+          const existingReturnItems = await tx.salesReturnItem.groupBy({
+            by: ['itemId'],
+            where: { salesReturn: { invoiceId } },
+            _sum: { quantity: true },
+          });
+          const returnedMap: Record<string, number> = {};
+          for (const ri of existingReturnItems) {
+            returnedMap[ri.itemId] = parseFloat((ri._sum.quantity || new Prisma.Decimal(0)).toString());
+          }
+
+          for (const invItem of invoice.items) {
+            const alreadyReturned = returnedMap[invItem.itemId] || 0;
+            const restoreQty = parseFloat(invItem.quantity.toString()) - alreadyReturned;
+
+            if (restoreQty > 0) {
+              const stockRecord = await tx.inventoryStock.update({
+                where: {
+                  inventoryId_itemId: {
+                    inventoryId: invoice.inventoryId,
+                    itemId: invItem.itemId,
+                  },
+                },
+                data: {
+                  quantity: { increment: new Prisma.Decimal(restoreQty) },
+                },
+              });
+
+              await tx.stockBatch.create({
+                data: {
+                  inventoryId: invoice.inventoryId,
+                  itemId: invItem.itemId,
+                  quantity: new Prisma.Decimal(restoreQty),
+                  receivedAt: new Date(),
+                  notes: `إلغاء فاتورة ${invoice.invoiceNumber}`,
+                },
+              });
+
+              await stockMovementService.updateStockMovement(
+                invoice.inventoryId,
+                invItem.itemId,
+                new Date(),
+                { incoming: restoreQty }
+              );
+            }
+          }
+        }
+
+        // d) Update customer aggregate if customer exists
+        if (invoice.customerId) {
+          const latestAggregate = await tx.customerCumulativeAggregate.findFirst({
+            where: { customerId: invoice.customerId },
+            orderBy: { date: 'desc' },
+          });
+
+          if (latestAggregate) {
+            const dateOnly = new Date();
+            dateOnly.setHours(0, 0, 0, 0);
+
+            await tx.customerCumulativeAggregate.upsert({
+              where: {
+                customerId_date: {
+                  customerId: invoice.customerId,
+                  date: dateOnly,
+                },
+              },
+              update: {
+                totalSales: latestAggregate.totalSales.sub(invoice.total),
+                totalPaid: latestAggregate.totalPaid.sub(invoice.paidAmount),
+                totalOutstanding: latestAggregate.totalOutstanding.sub(
+                  invoice.total.sub(invoice.paidAmount)
+                ),
+              },
+              create: {
+                customerId: invoice.customerId,
+                date: dateOnly,
+                totalInvoices: Math.max(latestAggregate.totalInvoices - 1, 0),
+                totalSales: latestAggregate.totalSales.sub(invoice.total),
+                totalPaid: latestAggregate.totalPaid.sub(invoice.paidAmount),
+                totalOutstanding: latestAggregate.totalOutstanding.sub(
+                  invoice.total.sub(invoice.paidAmount)
+                ),
+                salesCash: latestAggregate.salesCash,
+                salesBank: latestAggregate.salesBank,
+                salesBankNile: latestAggregate.salesBankNile,
+              },
+            });
+          }
+        }
+
+        // e) Audit log
+        await tx.auditLog.create({
+          data: {
+            userId: req.user!.id,
+            action: 'INVOICE_VOID',
+            entity: 'SalesInvoice',
+            entityId: invoiceId,
+            before: JSON.stringify({
+              paymentConfirmationStatus: invoice.paymentConfirmationStatus,
+              total: invoice.total.toString(),
+              paidAmount: invoice.paidAmount.toString(),
+            }),
+            after: JSON.stringify({
+              paymentConfirmationStatus: 'REJECTED',
+              notes: 'ملغية',
+            }),
+          },
+        });
+
+        // f) Journal entry
+        await journalService.createJournalEntry({
+          date: new Date(),
+          entryType: 'VOID',
+          referenceId: invoiceId,
+          referenceType: 'SalesInvoice',
+          direction: 'CREDIT',
+          amount: invoice.total,
+          method: invoice.paymentMethod,
+          description: `إلغاء فاتورة ${invoice.invoiceNumber}`,
+          createdBy: req.user!.id,
+        });
+
+        return updated;
+      });
+
+      try {
+        const invoiceTotal = parseFloat(invoice.total.toString());
+        const invoicePaid = parseFloat(invoice.paidAmount.toString());
+
+        await aggregationService.updateDailyFinancialAggregate(invoice.createdAt, {
+          salesTotal: new Prisma.Decimal(-invoiceTotal),
+          salesReceived: new Prisma.Decimal(-invoicePaid),
+          salesDebt: new Prisma.Decimal(-(invoiceTotal - invoicePaid)),
+          salesCount: -1,
+        });
+      } catch (aggError) {
+        console.error('Aggregation reversal error (void):', aggError);
+      }
+
+      res.json(voidedInvoice);
+    } catch (error) {
+      console.error('Invoice void error:', error);
+      res.status(500).json({ error: 'خطأ في الخادم أثناء إلغاء الفاتورة' });
     }
   }
 );

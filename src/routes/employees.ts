@@ -1,13 +1,13 @@
 import { Router } from 'express';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { requireAuth, requireRole, blockAuditorWrites } from '../middleware/auth';
 import { createAuditLog } from '../middleware/audit';
 import { AuthRequest } from '../types';
 import { aggregationService } from '../services/aggregationService';
+import { prisma } from '../lib/prisma';
 
 const router = Router();
-const prisma = new PrismaClient();
 
 router.use(requireAuth);
 router.use(blockAuditorWrites);
@@ -78,6 +78,66 @@ router.post('/', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('Employee'
       return res.status(400).json({ error: 'بيانات غير صالحة', details: error.errors });
     }
     console.error('Create employee error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
+// Get all-employees loan summary
+router.get('/loan-summary', requireRole('ACCOUNTANT', 'MANAGER'), async (req: AuthRequest, res) => {
+  try {
+    const activeEmployees = await prisma.employee.findMany({
+      where: { isActive: true },
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true, position: true },
+    });
+
+    const summaries = await Promise.all(
+      activeEmployees.map(async (emp) => {
+        const outstandingAgg = await prisma.advance.aggregate({
+          where: {
+            employeeId: emp.id,
+            isFullyPaid: false,
+          },
+          _sum: { remainingBalance: true },
+        });
+
+        const totalOutstanding = outstandingAgg._sum.remainingBalance || new Prisma.Decimal(0);
+
+        const lastLoanBalance = await prisma.employeeLoanBalance.findFirst({
+          where: { employeeId: emp.id },
+          orderBy: [{ year: 'desc' }, { month: 'desc' }],
+        });
+
+        return {
+          employeeId: emp.id,
+          employeeName: emp.name,
+          position: emp.position,
+          totalOutstanding: totalOutstanding.toString(),
+          lastLoanBalance: lastLoanBalance
+            ? {
+                month: lastLoanBalance.month,
+                year: lastLoanBalance.year,
+                openingBalance: lastLoanBalance.openingBalance.toString(),
+                closingBalance: lastLoanBalance.closingBalance.toString(),
+              }
+            : null,
+        };
+      })
+    );
+
+    const totalOutstandingAll = summaries.reduce(
+      (sum, s) => sum.add(new Prisma.Decimal(s.totalOutstanding)),
+      new Prisma.Decimal(0)
+    );
+
+    res.json({
+      employees: summaries,
+      grandTotal: {
+        totalOutstandingAll: totalOutstandingAll.toString(),
+      },
+    });
+  } catch (error) {
+    console.error('Loan summary error:', error);
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
 });
@@ -341,6 +401,8 @@ router.post('/salaries/:id/pay', requireRole('ACCOUNTANT', 'MANAGER'), createAud
           CASH: paymentMethod === 'CASH' ? salaryAmount : new Prisma.Decimal(0),
           BANKAK: paymentMethod === 'BANKAK' ? salaryAmount : new Prisma.Decimal(0),
           BANK_NILE: paymentMethod === 'BANK_NILE' ? salaryAmount : new Prisma.Decimal(0),
+          DEBT: paymentMethod === 'DEBT' ? salaryAmount : new Prisma.Decimal(0),
+          OTHERS: (paymentMethod === 'OTHERS' || paymentMethod === 'COMMISSION') ? salaryAmount : new Prisma.Decimal(0),
         };
 
         await aggregationService.updateDailyFinancialAggregate(
@@ -351,6 +413,8 @@ router.post('/salaries/:id/pay', requireRole('ACCOUNTANT', 'MANAGER'), createAud
             salariesCash: salariesByMethod.CASH,
             salariesBank: salariesByMethod.BANKAK,
             salariesBankNile: salariesByMethod.BANK_NILE,
+            salariesDebtMethod: salariesByMethod.DEBT,
+            salariesOthers: salariesByMethod.OTHERS,
           }
         );
       }
@@ -425,6 +489,20 @@ router.post('/advances', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('A
       const currentMonth = now.getMonth() + 1;
       const currentYear = now.getFullYear();
 
+      // Fetch the most recent previous balance to carry over closingBalance as openingBalance
+      const previousBalance = await prisma.employeeLoanBalance.findFirst({
+        where: {
+          employeeId: data.employeeId,
+          OR: [
+            { year: { lt: currentYear } },
+            { year: currentYear, month: { lt: currentMonth } },
+          ],
+        },
+        orderBy: [{ year: 'desc' }, { month: 'desc' }],
+      });
+
+      const carryOver = previousBalance?.closingBalance ?? new Prisma.Decimal(0);
+
       await prisma.employeeLoanBalance.upsert({
         where: {
           employeeId_month_year: {
@@ -437,10 +515,10 @@ router.post('/advances', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('A
           employeeId: data.employeeId,
           month: currentMonth,
           year: currentYear,
-          openingBalance: new Prisma.Decimal(0),
+          openingBalance: carryOver,
           advancesTaken: amountDecimal,
           deductions: new Prisma.Decimal(0),
-          closingBalance: amountDecimal,
+          closingBalance: new Prisma.Decimal(carryOver).add(amountDecimal),
         },
         update: {
           advancesTaken: { increment: amountDecimal },
@@ -489,6 +567,8 @@ router.post('/advances/:id/pay', requireRole('ACCOUNTANT', 'MANAGER'), createAud
           CASH: paymentMethod === 'CASH' ? advanceAmount : new Prisma.Decimal(0),
           BANKAK: paymentMethod === 'BANKAK' ? advanceAmount : new Prisma.Decimal(0),
           BANK_NILE: paymentMethod === 'BANK_NILE' ? advanceAmount : new Prisma.Decimal(0),
+          DEBT: paymentMethod === 'DEBT' ? advanceAmount : new Prisma.Decimal(0),
+          OTHERS: (paymentMethod === 'OTHERS' || paymentMethod === 'COMMISSION') ? advanceAmount : new Prisma.Decimal(0),
         };
 
         await aggregationService.updateDailyFinancialAggregate(
@@ -499,6 +579,8 @@ router.post('/advances/:id/pay', requireRole('ACCOUNTANT', 'MANAGER'), createAud
             advancesCash: advancesByMethod.CASH,
             advancesBank: advancesByMethod.BANKAK,
             advancesBankNile: advancesByMethod.BANK_NILE,
+            advancesDebtMethod: advancesByMethod.DEBT,
+            advancesOthers: advancesByMethod.OTHERS,
           }
         );
       }

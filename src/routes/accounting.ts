@@ -1,13 +1,13 @@
 import { Router } from 'express';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { requireAuth, requireRole, blockAuditorWrites } from '../middleware/auth';
 import { createAuditLog } from '../middleware/audit';
 import { AuthRequest } from '../types';
 import { aggregationService } from '../services/aggregationService';
+import { prisma } from '../lib/prisma';
 
 const router = Router();
-const prisma = new PrismaClient();
 
 router.use(requireAuth);
 router.use(blockAuditorWrites);
@@ -341,6 +341,8 @@ router.post('/expenses', requireRole('ACCOUNTANT', 'MANAGER'), checkBalanceOpen,
         CASH: data.method === 'CASH' ? expenseAmount : new Prisma.Decimal(0),
         BANKAK: data.method === 'BANKAK' ? expenseAmount : new Prisma.Decimal(0),
         BANK_NILE: data.method === 'BANK_NILE' ? expenseAmount : new Prisma.Decimal(0),
+        DEBT: data.method === 'DEBT' ? expenseAmount : new Prisma.Decimal(0),
+        OTHERS: data.method === 'OTHERS' ? expenseAmount : new Prisma.Decimal(0),
       };
 
       await aggregationService.updateDailyFinancialAggregate(
@@ -351,6 +353,8 @@ router.post('/expenses', requireRole('ACCOUNTANT', 'MANAGER'), checkBalanceOpen,
           expensesCash: expensesByMethod.CASH,
           expensesBank: expensesByMethod.BANKAK,
           expensesBankNile: expensesByMethod.BANK_NILE,
+          expensesDebtMethod: expensesByMethod.DEBT,
+          expensesOthers: expensesByMethod.OTHERS,
         },
         data.inventoryId || undefined,
         data.section || undefined
@@ -472,6 +476,8 @@ router.post('/income', requireRole('ACCOUNTANT', 'MANAGER'), checkBalanceOpen, c
         CASH: data.method === 'CASH' ? incomeAmount : new Prisma.Decimal(0),
         BANKAK: data.method === 'BANKAK' ? incomeAmount : new Prisma.Decimal(0),
         BANK_NILE: data.method === 'BANK_NILE' ? incomeAmount : new Prisma.Decimal(0),
+        DEBT: data.method === 'DEBT' ? incomeAmount : new Prisma.Decimal(0),
+        OTHERS: data.method === 'OTHERS' ? incomeAmount : new Prisma.Decimal(0),
       };
 
       await aggregationService.updateDailyFinancialAggregate(
@@ -482,6 +488,8 @@ router.post('/income', requireRole('ACCOUNTANT', 'MANAGER'), checkBalanceOpen, c
           incomeCash: incomeByMethod.CASH,
           incomeBank: incomeByMethod.BANKAK,
           incomeBankNile: incomeByMethod.BANK_NILE,
+          incomeDebtMethod: incomeByMethod.DEBT,
+          incomeOthers: incomeByMethod.OTHERS,
         },
         data.inventoryId || undefined,
         data.section || undefined
@@ -1692,30 +1700,37 @@ router.get('/receivables-payables', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGE
   try {
     const { section } = req.query;
 
-    // Customers receivables: sum invoices total - paidAmount
+    // Customers receivables: invoices (total - paid) minus account-level payments
     const customers = await prisma.customer.findMany({
       include: {
         salesInvoices: section
           ? { where: { section: section as any }, select: { total: true, paidAmount: true } }
           : { select: { total: true, paidAmount: true } },
+        customerPayments: { select: { amount: true } },
+        salesDeposits: { select: { amount: true } },
       },
     });
 
-    const receivables = customers
-      .map((c) => {
-        const total = c.salesInvoices.reduce((sum: Prisma.Decimal, inv: any) => sum.add(inv.total), new Prisma.Decimal(0));
-        const paid = c.salesInvoices.reduce((sum: Prisma.Decimal, inv: any) => sum.add(inv.paidAmount || 0), new Prisma.Decimal(0));
-        const remaining = total.sub(paid);
-        return {
-          id: c.id,
-          name: c.name,
-          division: c.division,
-          total: total.toFixed(2),
-          paid: paid.toFixed(2),
-          remaining: remaining.toFixed(2),
-        };
-      })
-      .filter((r) => new Prisma.Decimal(r.remaining).greaterThan(0));
+    const customerBalances = customers.map((c) => {
+      const invoiceTotal = c.salesInvoices.reduce((sum: Prisma.Decimal, inv: any) => sum.add(inv.total), new Prisma.Decimal(0));
+      const invoicePaid = c.salesInvoices.reduce((sum: Prisma.Decimal, inv: any) => sum.add(inv.paidAmount || 0), new Prisma.Decimal(0));
+      const accountPayments = (c as any).customerPayments.reduce((sum: Prisma.Decimal, p: any) => sum.add(p.amount), new Prisma.Decimal(0));
+      const deposits = (c as any).salesDeposits.reduce((sum: Prisma.Decimal, d: any) => sum.add(d.amount), new Prisma.Decimal(0));
+      const remaining = invoiceTotal.sub(invoicePaid).sub(accountPayments).sub(deposits);
+      return {
+        id: c.id,
+        name: c.name,
+        division: c.division,
+        total: invoiceTotal.toFixed(2),
+        paid: invoicePaid.add(accountPayments).add(deposits).toFixed(2),
+        remaining: remaining.toFixed(2),
+      };
+    });
+
+    const receivables = customerBalances.filter((r) => new Prisma.Decimal(r.remaining).greaterThan(0));
+    const creditBalances = customerBalances
+      .filter((r) => new Prisma.Decimal(r.remaining).lessThan(0))
+      .map((r) => ({ ...r, remaining: new Prisma.Decimal(r.remaining).abs().toFixed(2) }));
 
     // Suppliers payables: sum procurement orders total - paidAmount, excluding cancelled
     const suppliers = await prisma.supplier.findMany({
@@ -1772,6 +1787,10 @@ router.get('/receivables-payables', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGE
       (sum: Prisma.Decimal, r: any) => sum.add(r.remaining),
       new Prisma.Decimal(0)
     );
+    const creditBalancesTotal = creditBalances.reduce(
+      (sum: Prisma.Decimal, r: any) => sum.add(r.remaining),
+      new Prisma.Decimal(0)
+    );
     const payablesTotal = payables.reduce(
       (sum: Prisma.Decimal, p: any) => sum.add(p.remaining),
       new Prisma.Decimal(0)
@@ -1779,6 +1798,7 @@ router.get('/receivables-payables', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGE
 
     const totals = {
       receivables: receivablesTotal.toFixed(2),
+      creditBalances: creditBalancesTotal.toFixed(2),
       payables: payablesTotal.toFixed(2),
       expenses: totalAllExpenses.toFixed(2),
       payablesWithExpenses: payablesTotal.add(totalAllExpenses).toFixed(2),
@@ -1786,6 +1806,7 @@ router.get('/receivables-payables', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGE
 
     res.json({ 
       receivables, 
+      creditBalances,
       payables, 
       expenses: {
         regular: totalExpenses.toFixed(2),
@@ -1827,11 +1848,30 @@ router.post('/balance/close', requireRole('ACCOUNTANT', 'MANAGER'), async (req: 
 
 router.post('/balance/open', requireRole('ACCOUNTANT', 'MANAGER'), async (req: AuthRequest, res) => {
   try {
-    const { cash = 0, bank = 0, bankNile = 0, notes } = req.body;
+    const { cash = 0, bank = 0, bankNile = 0, notes, confirm } = req.body;
 
     // Ensure at least one balance is provided
     if (!cash && !bank && !bankNile) {
       return res.status(400).json({ error: 'يرجى إدخال رصيد افتتاحي على الأقل لطريقة دفع واحدة' });
+    }
+
+    // Safeguard: if there are open balances with activity since opened, require confirm
+    const openBalances = await prisma.openingBalance.findMany({
+      where: { scope: 'CASHBOX', isClosed: false },
+      orderBy: { openedAt: 'desc' },
+    });
+    if (openBalances.length > 0 && !confirm) {
+      const lastOpenedAt = openBalances[0].openedAt;
+      const [cpCount, ttCount] = await Promise.all([
+        (prisma as any).customerPayment.count({ where: { createdAt: { gt: lastOpenedAt } } }),
+        (prisma as any).treasuryTransaction.count({ where: { createdAt: { gt: lastOpenedAt } } }),
+      ]);
+      if (cpCount + ttCount > 0) {
+        return res.status(400).json({
+          error: 'يوجد حركات منذ آخر رصيد افتتاحي. أرسل confirm: true للتأكيد واستبدال الرصيد',
+          activityCount: cpCount + ttCount,
+        });
+      }
     }
 
     // Close any existing open balances first
@@ -3942,18 +3982,19 @@ router.get('/customer-report', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER', '
     
     // Date filtering
     if (startDate && endDate) {
-      where.createdAt = {
-        gte: new Date(startDate as string),
-        lte: new Date(endDate as string),
-      };
+      const start = new Date(startDate as string);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(endDate as string);
+      end.setHours(23, 59, 59, 999);
+      where.createdAt = { gte: start, lte: end };
     } else if (startDate) {
-      where.createdAt = {
-        gte: new Date(startDate as string),
-      };
+      const start = new Date(startDate as string);
+      start.setHours(0, 0, 0, 0);
+      where.createdAt = { gte: start };
     } else if (endDate) {
-      where.createdAt = {
-        lte: new Date(endDate as string),
-      };
+      const end = new Date(endDate as string);
+      end.setHours(23, 59, 59, 999);
+      where.createdAt = { lte: end };
     }
     
     // Filter by customer(s) - support both single customerId (backward compatibility) and multiple customerIds
@@ -4148,18 +4189,19 @@ router.get('/supplier-report', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER', '
     
     // Date filtering
     if (startDate && endDate) {
-      where.createdAt = {
-        gte: new Date(startDate as string),
-        lte: new Date(endDate as string),
-      };
+      const start = new Date(startDate as string);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(endDate as string);
+      end.setHours(23, 59, 59, 999);
+      where.createdAt = { gte: start, lte: end };
     } else if (startDate) {
-      where.createdAt = {
-        gte: new Date(startDate as string),
-      };
+      const start = new Date(startDate as string);
+      start.setHours(0, 0, 0, 0);
+      where.createdAt = { gte: start };
     } else if (endDate) {
-      where.createdAt = {
-        lte: new Date(endDate as string),
-      };
+      const end = new Date(endDate as string);
+      end.setHours(23, 59, 59, 999);
+      where.createdAt = { lte: end };
     }
     
     // Filter by supplier(s) - support both single supplierId (backward compatibility) and multiple supplierIds

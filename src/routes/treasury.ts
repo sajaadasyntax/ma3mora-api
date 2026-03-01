@@ -1,12 +1,13 @@
 import { Router } from 'express';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { requireAuth, requireRole, blockAuditorWrites } from '../middleware/auth';
 import { createAuditLog } from '../middleware/audit';
 import { AuthRequest } from '../types';
+import { aggregationService } from '../services/aggregationService';
+import { prisma } from '../lib/prisma';
 
 const router = Router();
-const prisma = new PrismaClient();
 
 router.use(requireAuth);
 router.use(blockAuditorWrites);
@@ -319,6 +320,15 @@ router.post(
           const today = new Date();
           const dateOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
 
+          const previousAggregate = await tx.customerCumulativeAggregate.findFirst({
+            where: { customerId, date: { lte: dateOnly } },
+            orderBy: { date: 'desc' },
+          });
+
+          const newTotalOutstanding = previousAggregate
+            ? previousAggregate.totalOutstanding.add(new Prisma.Decimal(amount))
+            : new Prisma.Decimal(amount);
+
           await tx.customerCumulativeAggregate.upsert({
             where: {
               customerId_date: {
@@ -326,19 +336,33 @@ router.post(
                 date: dateOnly,
               },
             },
+            update: { totalOutstanding: newTotalOutstanding },
             create: {
               customerId,
               date: dateOnly,
-              totalOutstanding: new Prisma.Decimal(amount),
-            },
-            update: {
-              totalOutstanding: { increment: amount },
+              totalSales: previousAggregate?.totalSales || new Prisma.Decimal(0),
+              totalPaid: previousAggregate?.totalPaid || new Prisma.Decimal(0),
+              totalOutstanding: newTotalOutstanding,
+              totalInvoices: previousAggregate?.totalInvoices || 0,
+              salesCash: previousAggregate?.salesCash || new Prisma.Decimal(0),
+              salesBank: previousAggregate?.salesBank || new Prisma.Decimal(0),
+              salesBankNile: previousAggregate?.salesBankNile || new Prisma.Decimal(0),
+              salesDebtMethod: previousAggregate?.salesDebtMethod || new Prisma.Decimal(0),
+              salesOthers: previousAggregate?.salesOthers || new Prisma.Decimal(0),
             },
           });
         }
 
         return created;
       });
+
+      try {
+        await aggregationService.updateDailyFinancialAggregate(new Date(), {
+          treasuryOutflow: new Prisma.Decimal(amount),
+        });
+      } catch (aggError) {
+        console.error('Aggregation update error:', aggError);
+      }
 
       res.status(201).json(transaction);
     } catch (error) {
@@ -389,6 +413,14 @@ router.post(
           creator: { select: { id: true, username: true } },
         },
       });
+
+      try {
+        await aggregationService.updateDailyFinancialAggregate(new Date(), {
+          treasuryInflow: new Prisma.Decimal(amount),
+        });
+      } catch (aggError) {
+        console.error('Aggregation update error:', aggError);
+      }
 
       res.status(201).json(transaction);
     } catch (error) {

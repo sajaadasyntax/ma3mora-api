@@ -1,6 +1,5 @@
-import { PrismaClient, Prisma } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { Prisma } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 
 export class StockMovementService {
   /**
@@ -35,46 +34,26 @@ export class StockMovementService {
     });
 
     if (existing) {
-      // Update existing movement
-      const newIncoming = new Prisma.Decimal(existing.incoming.toString())
-        .add(changes.incoming || 0);
-      const newOutgoing = new Prisma.Decimal(existing.outgoing.toString())
-        .add(changes.outgoing || 0);
-      const newPendingOutgoing = new Prisma.Decimal(existing.pendingOutgoing.toString())
-        .add(changes.pendingOutgoing || 0);
-      const newIncomingGifts = new Prisma.Decimal(existing.incomingGifts.toString())
-        .add(changes.incomingGifts || 0);
-      const newOutgoingGifts = new Prisma.Decimal(existing.outgoingGifts.toString())
-        .add(changes.outgoingGifts || 0);
-
-      // Calculate new closing balance
-      const closingBalance = new Prisma.Decimal(existing.openingBalance.toString())
-        .add(newIncoming)
-        .add(newIncomingGifts)
-        .sub(newOutgoing)
-        .sub(newPendingOutgoing)
-        .sub(newOutgoingGifts);
+      const incoming = changes.incoming || 0;
+      const outgoing = changes.outgoing || 0;
+      const pendingOutgoing = changes.pendingOutgoing || 0;
+      const incomingGifts = changes.incomingGifts || 0;
+      const outgoingGifts = changes.outgoingGifts || 0;
+      const balanceDelta = incoming + incomingGifts - outgoing - pendingOutgoing - outgoingGifts;
 
       await prisma.stockMovement.update({
-        where: {
-          inventoryId_itemId_movementDate: {
-            inventoryId,
-            itemId,
-            movementDate,
-          },
-        },
+        where: { id: existing.id },
         data: {
-          incoming: newIncoming,
-          outgoing: newOutgoing,
-          pendingOutgoing: newPendingOutgoing,
-          incomingGifts: newIncomingGifts,
-          outgoingGifts: newOutgoingGifts,
-          closingBalance,
+          incoming: { increment: incoming },
+          outgoing: { increment: outgoing },
+          pendingOutgoing: { increment: pendingOutgoing },
+          incomingGifts: { increment: incomingGifts },
+          outgoingGifts: { increment: outgoingGifts },
+          closingBalance: { increment: balanceDelta },
         },
       });
 
-      // Update all future dates' opening balances
-      await this.propagateClosingBalanceToFutureDays(inventoryId, itemId, movementDate, closingBalance);
+      await this.propagateClosingBalanceToFutureDays(inventoryId, itemId, movementDate, balanceDelta);
     } else {
       // Create new movement - get opening balance from previous day
       // If we're adding incoming stock, pass it to subtract from current stock
@@ -114,8 +93,9 @@ export class StockMovementService {
         },
       });
 
-      // Update all future dates' opening balances
-      await this.propagateClosingBalanceToFutureDays(inventoryId, itemId, movementDate, closingBalance);
+      const balanceDelta = (changes.incoming || 0) + (changes.incomingGifts || 0)
+        - (changes.outgoing || 0) - (changes.pendingOutgoing || 0) - (changes.outgoingGifts || 0);
+      await this.propagateClosingBalanceToFutureDays(inventoryId, itemId, movementDate, balanceDelta);
     }
   }
 
@@ -212,49 +192,25 @@ export class StockMovementService {
     inventoryId: string,
     itemId: string,
     fromDate: Date,
-    newClosingBalance: Prisma.Decimal
+    balanceDelta: number
   ): Promise<void> {
-    // Get all future movements
+    if (balanceDelta === 0) return;
+
     const nextDay = new Date(fromDate);
     nextDay.setDate(nextDay.getDate() + 1);
     nextDay.setHours(0, 0, 0, 0);
 
-    const futureMovements = await prisma.stockMovement.findMany({
+    await prisma.stockMovement.updateMany({
       where: {
         inventoryId,
         itemId,
-        movementDate: {
-          gte: nextDay,
-        },
+        movementDate: { gte: nextDay },
       },
-      orderBy: {
-        movementDate: 'asc',
+      data: {
+        openingBalance: { increment: balanceDelta },
+        closingBalance: { increment: balanceDelta },
       },
     });
-
-    // Update each future day sequentially
-    let currentClosing = newClosingBalance;
-    for (const movement of futureMovements) {
-      const newOpeningBalance = currentClosing;
-      const newClosingBalance = newOpeningBalance
-        .add(movement.incoming)
-        .add(movement.incomingGifts)
-        .sub(movement.outgoing)
-        .sub(movement.pendingOutgoing)
-        .sub(movement.outgoingGifts);
-
-      await prisma.stockMovement.update({
-        where: {
-          id: movement.id,
-        },
-        data: {
-          openingBalance: newOpeningBalance,
-          closingBalance: newClosingBalance,
-        },
-      });
-
-      currentClosing = newClosingBalance;
-    }
   }
 
   /**

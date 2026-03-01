@@ -1,13 +1,13 @@
 import { Router } from 'express';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { requireAuth, requireRole, blockAuditorWrites } from '../middleware/auth';
 import { createAuditLog } from '../middleware/audit';
 import { AuthRequest } from '../types';
 import { aggregationService } from '../services/aggregationService';
+import { prisma } from '../lib/prisma';
 
 const router = Router();
-const prisma = new PrismaClient();
 
 router.use(requireAuth);
 router.use(blockAuditorWrites);
@@ -57,71 +57,28 @@ const createOrderSchema = z.object({
   notes: z.string().optional(),
 });
 
-// Generate order number with retry to handle race conditions
-// Uses serializable transaction to ensure unique numbers under concurrent access
-async function generateOrderNumber(tx?: any): Promise<string> {
-  const client = tx || prisma;
-  
-  // Get the highest existing order number and increment
-  const lastOrder = await client.procOrder.findFirst({
+// Generate order number inside transaction to avoid race conditions
+async function generateOrderNumber(tx: any): Promise<string> {
+  const lastOrder = await tx.procOrder.findFirst({
     orderBy: { orderNumber: 'desc' },
     select: { orderNumber: true },
   });
-  
+
   if (lastOrder) {
-    // Extract number from format PO-000001
     const match = lastOrder.orderNumber.match(/PO-(\d+)/);
     if (match) {
       const nextNum = parseInt(match[1], 10) + 1;
       return `PO-${String(nextNum).padStart(6, '0')}`;
     }
   }
-  
-  // Fallback: count + 1 (first order or invalid format)
-  const count = await client.procOrder.count();
+
+  const count = await tx.procOrder.count();
   return `PO-${String(count + 1).padStart(6, '0')}`;
 }
 
-// Generate order number with retry logic for handling unique constraint violations
-async function generateOrderNumberWithRetry(maxRetries = 5): Promise<string> {
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    try {
-      const orderNumber = await generateOrderNumber();
-      // Verify the number doesn't already exist
-      const existing = await prisma.procOrder.findUnique({
-        where: { orderNumber },
-        select: { id: true },
-      });
-      if (!existing) {
-        return orderNumber;
-      }
-      // If exists, continue to retry with fresh query
-    } catch (error) {
-      if (attempt === maxRetries - 1) throw error;
-    }
-  }
-  
-  // Final fallback: use timestamp as numeric identifier to maintain regex compatibility
-  // The regex /PO-(\d+)/ expects digits only, so we use timestamp directly as numeric string
-  // Format: PO-{timestamp} where timestamp is all digits, ensuring uniqueness while remaining parseable
-  for (let fallbackAttempt = 0; fallbackAttempt < 3; fallbackAttempt++) {
-    const timestamp = Date.now().toString(); // Full timestamp as numeric string
-    const fallbackNumber = `PO-${timestamp}`;
-    
-    const existing = await prisma.procOrder.findUnique({
-      where: { orderNumber: fallbackNumber },
-      select: { id: true },
-    });
-    
-    if (!existing) {
-      return fallbackNumber;
-    }
-    // Small delay to allow timestamp to change if collision occurs
-    await new Promise(resolve => setTimeout(resolve, 1));
-  }
-  
-  // If all attempts fail, throw a meaningful error
-  throw new Error('فشل في إنشاء رقم طلب فريد بعد محاولات متعددة. يرجى المحاولة مرة أخرى.');
+// Random 6-digit suffix for PO fallback (collision-resistant, avoids timestamp)
+function randomPOFallback(): string {
+  return `PO-${String(Math.floor(100000 + Math.random() * 900000))}`;
 }
 
 router.get('/orders', requireRole('PROCUREMENT', 'ACCOUNTANT', 'AUDITOR', 'MANAGER', 'INVENTORY'), async (req: AuthRequest, res) => {
@@ -183,6 +140,53 @@ router.post('/orders', requireRole('PROCUREMENT', 'MANAGER'), checkBalanceOpen, 
   try {
     const data = createOrderSchema.parse(req.body);
 
+    // Upfront validation: ensure inventory, supplier, and all items exist before creating order
+    const [inventory, supplier, itemsExist] = await Promise.all([
+      prisma.inventory.findUnique({ where: { id: data.inventoryId }, select: { id: true } }),
+      prisma.supplier.findUnique({ where: { id: data.supplierId }, select: { id: true } }),
+      prisma.item.findMany({
+        where: { id: { in: data.items.map(i => i.itemId) } },
+        select: { id: true },
+      }),
+    ]);
+
+    if (!inventory) {
+      return res.status(400).json({ error: 'المخزن غير موجود' });
+    }
+    if (!supplier) {
+      return res.status(400).json({ error: 'المورد غير موجود' });
+    }
+
+    const existingItemIds = new Set(itemsExist.map(i => i.id));
+    const missingItemIds = data.items
+      .map(i => i.itemId)
+      .filter(id => !existingItemIds.has(id));
+    if (missingItemIds.length > 0) {
+      return res.status(400).json({
+        error: 'صنف أو أكثر غير موجود',
+        details: missingItemIds,
+      });
+    }
+
+    // Validate gift items if present
+    const giftItemIds = data.items
+      .filter(i => i.giftItemId)
+      .map(i => i.giftItemId!);
+    if (giftItemIds.length > 0) {
+      const giftItemsExist = await prisma.item.findMany({
+        where: { id: { in: giftItemIds } },
+        select: { id: true },
+      });
+      const existingGiftIds = new Set(giftItemsExist.map(i => i.id));
+      const missingGiftIds = giftItemIds.filter(id => !existingGiftIds.has(id));
+      if (missingGiftIds.length > 0) {
+        return res.status(400).json({
+          error: 'صنف الهدية غير موجود',
+          details: missingGiftIds,
+        });
+      }
+    }
+
     // Calculate line totals
     const orderItems = data.items.map((lineItem) => {
       const lineTotal = new Prisma.Decimal(lineItem.quantity).mul(lineItem.unitCost);
@@ -203,33 +207,51 @@ router.post('/orders', requireRole('PROCUREMENT', 'MANAGER'), checkBalanceOpen, 
       new Prisma.Decimal(0)
     );
 
-    const orderNumber = await generateOrderNumberWithRetry();
-
-    const order = await prisma.procOrder.create({
-      data: {
-        orderNumber,
-        inventoryId: data.inventoryId,
-        section: data.section,
-        createdBy: req.user!.id,
-        supplierId: data.supplierId,
-        status: 'CREATED',
-        total,
-        notes: data.notes,
-        items: {
-          create: orderItems,
-        },
-      },
-      include: {
-        items: {
-          include: {
-            item: true,
-            giftItem: true, // Include gift item details
-          },
-        },
-        supplier: true,
-        inventory: true,
-      },
-    });
+    let order!: Awaited<ReturnType<typeof prisma.procOrder.create>>;
+    const maxRetries = 10;
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        order = await prisma.$transaction(async (tx) => {
+          const orderNumber = attempt < maxRetries - 1
+            ? await generateOrderNumber(tx)
+            : randomPOFallback();
+          return tx.procOrder.create({
+            data: {
+              orderNumber,
+              inventoryId: data.inventoryId,
+              section: data.section,
+              createdBy: req.user!.id,
+              supplierId: data.supplierId,
+              status: 'CREATED',
+              total,
+              notes: data.notes,
+              items: {
+                create: orderItems,
+              },
+            },
+            include: {
+              items: {
+                include: {
+                  item: true,
+                  giftItem: true, // Include gift item details
+                },
+              },
+              supplier: true,
+              inventory: true,
+            },
+          });
+        });
+        break;
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+          if (attempt === maxRetries - 1) {
+            throw new Error('فشل في إنشاء رقم طلب فريد بعد محاولات متعددة. يرجى المحاولة مرة أخرى.');
+          }
+          continue;
+        }
+        throw error;
+      }
+    }
 
     // Update aggregates (async, don't block response)
     try {
@@ -262,6 +284,13 @@ router.post('/orders', requireRole('PROCUREMENT', 'MANAGER'), checkBalanceOpen, 
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: 'بيانات غير صالحة', details: error.errors });
+    }
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === 'P2003') {
+        return res.status(400).json({
+          error: 'بيانات مرجعية غير صالحة: المخزن أو المورد أو الصنف غير موجود',
+        });
+      }
     }
     console.error('Create procurement order error:', error);
     res.status(500).json({ error: 'خطأ في الخادم' });
@@ -515,8 +544,8 @@ router.post('/orders/:id/cancel', requireRole('MANAGER'), createAuditLog('ProcOr
       return res.status(400).json({ error: 'أمر الشراء ملغي بالفعل' });
     }
 
-    if (order.status === 'RECEIVED') {
-      return res.status(400).json({ error: 'لا يمكن إلغاء أمر شراء مستلم بالفعل' });
+    if (order.status === 'RECEIVED' || order.status === 'PARTIAL') {
+      return res.status(400).json({ error: 'لا يمكن إلغاء أمر شراء مستلم أو مستلم جزئياً' });
     }
 
     // Check if order has payments - require refund information
@@ -562,7 +591,7 @@ router.post('/orders/:id/cancel', requireRole('MANAGER'), createAuditLog('ProcOr
         items: {
           include: {
             item: true,
-            giftItem: true, // Include gift item details
+            giftItem: true,
           },
         },
         payments: {
@@ -575,6 +604,29 @@ router.post('/orders/:id/cancel', requireRole('MANAGER'), createAuditLog('ProcOr
         },
       },
     });
+
+    try {
+      const orderTotal = parseFloat(order.total.toString());
+      const orderPaid = parseFloat(order.paidAmount.toString());
+      await aggregationService.updateDailyFinancialAggregate(order.createdAt, {
+        procurementTotal: new Prisma.Decimal(-orderTotal),
+        procurementPaid: new Prisma.Decimal(-orderPaid),
+        procurementDebt: new Prisma.Decimal(-(orderTotal - orderPaid)),
+        procurementCount: -1,
+      });
+
+      await aggregationService.updateSupplierCumulativeAggregate(
+        order.supplierId,
+        order.createdAt,
+        {
+          totalPurchases: new Prisma.Decimal(-orderTotal),
+          totalPaid: new Prisma.Decimal(-orderPaid),
+          orderCount: -1,
+        }
+      );
+    } catch (aggError) {
+      console.error('Aggregation reversal error:', aggError);
+    }
 
     res.json(updatedOrder);
   } catch (error) {
@@ -599,7 +651,7 @@ const receiveOrderSchema = z.object({
   extraItems: z.array(extraItemSchema).optional(), // Extra gift/compensation items added during GRN
 });
 
-router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAuditLog('InventoryReceipt'), async (req: AuthRequest, res) => {
+router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), checkBalanceOpen, createAuditLog('InventoryReceipt'), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
     const { notes, partial, batches, extraItems } = receiveOrderSchema.parse(req.body);
@@ -634,6 +686,11 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
 
     // Use transaction to ensure atomicity
     const result = await prisma.$transaction(async (tx) => {
+      const freshOrder = await tx.procOrder.findUnique({ where: { id }, include: { items: { include: { item: true, giftItem: true } } } });
+      if (!freshOrder || freshOrder.status === 'RECEIVED') {
+        throw new Error('ALREADY_RECEIVED');
+      }
+
       // Create receipt record
       const receipt = await tx.inventoryReceipt.create({
         data: {
@@ -686,8 +743,8 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
           }
 
           // Verify this item exists in the order (either as main item or gift item)
-          const orderItem = order.items.find((oi) => oi.itemId === batch.itemId);
-          const giftOrderItem = !orderItem ? order.items.find((oi) => oi.giftItemId === batch.itemId) : null;
+          const orderItem = freshOrder.items.find((oi) => oi.itemId === batch.itemId);
+          const giftOrderItem = !orderItem ? freshOrder.items.find((oi) => oi.giftItemId === batch.itemId) : null;
           
           if (!orderItem && !giftOrderItem) {
             throw new Error(`الصنف ${batch.itemId} غير موجود في أمر الشراء`);
@@ -704,7 +761,7 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
           const stock = await tx.inventoryStock.findUnique({
             where: {
               inventoryId_itemId: {
-                inventoryId: order.inventoryId,
+                inventoryId: freshOrder.inventoryId,
                 itemId: batch.itemId,
               },
             },
@@ -727,7 +784,7 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
           
           await tx.stockBatch.create({
             data: {
-              inventoryId: order.inventoryId,
+              inventoryId: freshOrder.inventoryId,
               itemId: batch.itemId,
               quantity: totalQuantity,
               expiryDate: batch.expiryDate ? new Date(batch.expiryDate) : null,
@@ -740,7 +797,7 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
           await tx.inventoryStock.update({
             where: {
               inventoryId_itemId: {
-                inventoryId: order.inventoryId,
+                inventoryId: freshOrder.inventoryId,
                 itemId: batch.itemId,
               },
             },
@@ -762,7 +819,7 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
               const giftStock = await tx.inventoryStock.findUnique({
                 where: {
                   inventoryId_itemId: {
-                    inventoryId: order.inventoryId,
+                    inventoryId: freshOrder.inventoryId,
                     itemId: orderItem.giftItemId,
                   },
                 },
@@ -775,7 +832,7 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
               // Create stock batch for gift item (no expiry date for legacy gifts)
               await tx.stockBatch.create({
                 data: {
-                  inventoryId: order.inventoryId,
+                  inventoryId: freshOrder.inventoryId,
                   itemId: orderItem.giftItemId,
                   quantity: orderItem.giftQuantity,
                   receiptId: receipt.id,
@@ -787,7 +844,7 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
               await tx.inventoryStock.update({
                 where: {
                   inventoryId_itemId: {
-                    inventoryId: order.inventoryId,
+                    inventoryId: freshOrder.inventoryId,
                     itemId: orderItem.giftItemId,
                   },
                 },
@@ -802,11 +859,11 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
         }
       } else {
         // Default behavior: create batches without expiry dates
-        for (const item of order.items) {
+        for (const item of freshOrder.items) {
           const stock = await tx.inventoryStock.findUnique({
             where: {
               inventoryId_itemId: {
-                inventoryId: order.inventoryId,
+                inventoryId: freshOrder.inventoryId,
                 itemId: item.itemId,
               },
             },
@@ -822,7 +879,7 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
           // Create stock batch without expiry date
           await tx.stockBatch.create({
             data: {
-              inventoryId: order.inventoryId,
+              inventoryId: freshOrder.inventoryId,
               itemId: item.itemId,
               quantity: totalQuantity,
               receiptId: receipt.id,
@@ -834,7 +891,7 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
           await tx.inventoryStock.update({
             where: {
               inventoryId_itemId: {
-                inventoryId: order.inventoryId,
+                inventoryId: freshOrder.inventoryId,
                 itemId: item.itemId,
               },
             },
@@ -850,7 +907,7 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
             const giftStock = await tx.inventoryStock.findUnique({
               where: {
                 inventoryId_itemId: {
-                  inventoryId: order.inventoryId,
+                  inventoryId: freshOrder.inventoryId,
                   itemId: item.giftItemId,
                 },
               },
@@ -863,7 +920,7 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
             // Create stock batch for gift item
             await tx.stockBatch.create({
               data: {
-                inventoryId: order.inventoryId,
+                inventoryId: freshOrder.inventoryId,
                 itemId: item.giftItemId,
                 quantity: item.giftQuantity,
                 receiptId: receipt.id,
@@ -875,7 +932,7 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
             await tx.inventoryStock.update({
               where: {
                 inventoryId_itemId: {
-                  inventoryId: order.inventoryId,
+                  inventoryId: freshOrder.inventoryId,
                   itemId: item.giftItemId,
                 },
               },
@@ -908,7 +965,7 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
           const extraStock = await tx.inventoryStock.findUnique({
             where: {
               inventoryId_itemId: {
-                inventoryId: order.inventoryId,
+                inventoryId: freshOrder.inventoryId,
                 itemId: extra.itemId,
               },
             },
@@ -923,7 +980,7 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
           // Create stock batch for extra gift/compensation item
           await tx.stockBatch.create({
             data: {
-              inventoryId: order.inventoryId,
+              inventoryId: freshOrder.inventoryId,
               itemId: extra.itemId,
               quantity: extraQty,
               receiptId: receipt.id,
@@ -935,7 +992,7 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
           await tx.inventoryStock.update({
             where: {
               inventoryId_itemId: {
-                inventoryId: order.inventoryId,
+                inventoryId: freshOrder.inventoryId,
                 itemId: extra.itemId,
               },
             },
@@ -963,10 +1020,20 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
         }
       }
 
+      // Over-receiving guard: ensure received qty doesn't exceed 150% of ordered qty
+      for (const it of freshOrder.items) {
+        if ((it as any).isGiftCompensation) continue;
+        const orderedQty = new Prisma.Decimal(it.quantity);
+        const totalReceived = receivedByItem[it.itemId] || new Prisma.Decimal(0);
+        if (totalReceived.greaterThan(orderedQty.mul(1.5))) {
+          throw new Error(`الكمية المستلمة للصنف ${it.item.name} تتجاوز الحد الأقصى المسموح (150%)`);
+        }
+      }
+
       // Check if all items are fully received
       let allFullyReceived = true;
       const receivedTotals: Prisma.Decimal[] = [];
-      for (const it of order.items) {
+      for (const it of freshOrder.items) {
         // For old system: giftQty is a separate quantity that needs to be received
         // The total ordered is quantity + giftQty (both need to be received)
         const orderedMain = new Prisma.Decimal(it.quantity).add(it.giftQty || 0);
@@ -1023,35 +1090,52 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
     // Update StockMovement records after successful receipt (outside transaction to avoid deadlocks)
     try {
       const { stockMovementService } = await import('../services/stockMovementService');
-      const receiptDate = new Date(); // Use actual receipt timestamp
-      
+      const receiptDate = new Date();
+
+      // Query actual received quantities from this receipt's batches
+      const receiptBatches = await prisma.stockBatch.findMany({
+        where: { receiptId: result.receipt.id },
+      });
+      const receivedByItem: Record<string, number> = {};
+      for (const batch of receiptBatches) {
+        const qty = parseFloat(batch.quantity.toString());
+        receivedByItem[batch.itemId] = (receivedByItem[batch.itemId] || 0) + qty;
+      }
+
       for (const item of result.order.items) {
-        // Update stock movement for main item (incoming)
-        await stockMovementService.updateStockMovement(
-          result.order.inventoryId,
-          item.itemId,
-          receiptDate,
-          {
-            incoming: parseFloat(item.quantity.toString()),
-            incomingGifts: parseFloat((item.giftQty || 0).toString()),
-          }
-        );
-        
-        // Update stock movement for gift item if applicable (new system)
-        if (item.giftItemId && item.giftQuantity) {
+        if ((item as any).isGiftCompensation) continue;
+
+        const actualReceived = receivedByItem[item.itemId] || 0;
+        if (actualReceived > 0) {
+          const giftQty = parseFloat((item.giftQty || 0).toString());
           await stockMovementService.updateStockMovement(
             result.order.inventoryId,
-            item.giftItemId,
+            item.itemId,
             receiptDate,
             {
-              incomingGifts: parseFloat(item.giftQuantity.toString()),
+              incoming: Math.max(0, actualReceived - giftQty),
+              incomingGifts: Math.min(giftQty, actualReceived),
             }
           );
+        }
+
+        // Update stock movement for gift item if applicable (new system)
+        if (item.giftItemId && item.giftQuantity) {
+          const giftReceived = receivedByItem[item.giftItemId] || 0;
+          if (giftReceived > 0) {
+            await stockMovementService.updateStockMovement(
+              result.order.inventoryId,
+              item.giftItemId,
+              receiptDate,
+              {
+                incomingGifts: giftReceived,
+              }
+            );
+          }
         }
       }
     } catch (error) {
       console.error('Failed to update stock movements:', error);
-      // Don't fail the receipt if stock movement update fails
     }
 
     // Update StockMovement records for extra gift/compensation items
@@ -1097,6 +1181,9 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), createAu
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: 'بيانات غير صالحة', details: error.errors });
     }
+    if (error instanceof Error && error.message === 'ALREADY_RECEIVED') {
+      return res.status(400).json({ error: 'أمر الشراء مستلم بالفعل' });
+    }
     console.error('Receive order error:', error);
     res.status(500).json({ error: error instanceof Error ? error.message : 'خطأ في الخادم' });
   }
@@ -1131,6 +1218,10 @@ router.post('/orders/:id/payments', requireRole('MANAGER'), checkBalanceOpen, cr
 
     if (!order) {
       return res.status(404).json({ error: 'أمر الشراء غير موجود' });
+    }
+
+    if (order.status === 'CANCELLED') {
+      return res.status(400).json({ error: 'لا يمكن الدفع لأمر شراء ملغي' });
     }
 
     const newPaidAmount = new Prisma.Decimal(order.paidAmount).add(paymentData.amount);
@@ -1308,67 +1399,72 @@ router.post('/orders/:id/payments', requireRole('MANAGER'), checkBalanceOpen, cr
       }
     }
 
-    const payment = await prisma.procOrderPayment.create({
-      data: {
-        orderId: id,
-        amount: paymentData.amount,
-        method: paymentData.method,
-        recordedBy: req.user!.id,
-        notes: paymentData.notes,
-        receiptUrl: paymentData.receiptUrl,
-        receiptNumber: paymentData.receiptNumber || null,
-      },
-    });
-
-    // Update order paid amount
-    const updatedOrder = await prisma.procOrder.update({
-      where: { id },
-      data: { paidAmount: newPaidAmount },
-      include: {
-        payments: {
-          include: { recordedByUser: { select: { id: true, username: true } } },
-          orderBy: { paidAt: 'desc' },
+    const { payment, updatedOrder } = await prisma.$transaction(async (tx) => {
+      const txPayment = await tx.procOrderPayment.create({
+        data: {
+          orderId: id,
+          amount: paymentData.amount,
+          method: paymentData.method,
+          recordedBy: req.user!.id,
+          notes: paymentData.notes,
+          receiptUrl: paymentData.receiptUrl,
+          receiptNumber: paymentData.receiptNumber || null,
         },
-        supplier: true,
-      },
+      });
+
+      const txUpdatedOrder = await tx.procOrder.update({
+        where: { id },
+        data: { paidAmount: newPaidAmount },
+        include: {
+          payments: {
+            include: { recordedByUser: { select: { id: true, username: true } } },
+            orderBy: { paidAt: 'desc' },
+          },
+          supplier: true,
+        },
+      });
+
+      return { payment: txPayment, updatedOrder: txUpdatedOrder };
     });
 
     // Update aggregates (async, don't block response)
     try {
-      if (paymentData.method !== 'COMMISSION') {
-        const paymentDate = payment.paidAt;
-        const paymentAmount = new Prisma.Decimal(paymentData.amount);
-        const procurementPaidByMethod = {
-          CASH: paymentData.method === 'CASH' ? paymentAmount : new Prisma.Decimal(0),
-          BANKAK: paymentData.method === 'BANKAK' ? paymentAmount : new Prisma.Decimal(0),
-          BANK_NILE: paymentData.method === 'BANK_NILE' ? paymentAmount : new Prisma.Decimal(0),
-        };
+      const paymentDate = payment.paidAt;
+      const paymentAmount = new Prisma.Decimal(paymentData.amount);
+      const procurementPaidByMethod = {
+        CASH: paymentData.method === 'CASH' ? paymentAmount : new Prisma.Decimal(0),
+        BANKAK: paymentData.method === 'BANKAK' ? paymentAmount : new Prisma.Decimal(0),
+        BANK_NILE: paymentData.method === 'BANK_NILE' ? paymentAmount : new Prisma.Decimal(0),
+        DEBT: paymentData.method === 'DEBT' ? paymentAmount : new Prisma.Decimal(0),
+        OTHERS: (paymentData.method === 'OTHERS' || paymentData.method === 'COMMISSION') ? paymentAmount : new Prisma.Decimal(0),
+      };
 
-        await aggregationService.updateDailyFinancialAggregate(
-          paymentDate,
-          {
-            procurementPaid: paymentAmount,
-            procurementDebt: paymentAmount.neg(), // Reduce debt
-            procurementCash: procurementPaidByMethod.CASH,
-            procurementBank: procurementPaidByMethod.BANKAK,
-            procurementBankNile: procurementPaidByMethod.BANK_NILE,
-          },
-          order.inventoryId,
-          order.section
-        );
+      await aggregationService.updateDailyFinancialAggregate(
+        paymentDate,
+        {
+          procurementPaid: paymentAmount,
+          procurementDebt: paymentAmount.neg(),
+          procurementCash: procurementPaidByMethod.CASH,
+          procurementBank: procurementPaidByMethod.BANKAK,
+          procurementBankNile: procurementPaidByMethod.BANK_NILE,
+          procurementDebtMethod: procurementPaidByMethod.DEBT,
+          procurementOthers: procurementPaidByMethod.OTHERS,
+        },
+        order.inventoryId,
+        order.section
+      );
 
-        // Update supplier aggregate
-        await aggregationService.updateSupplierCumulativeAggregate(
-          order.supplierId,
-          paymentDate,
-          {
-            totalPaid: paymentAmount,
-            purchasesCash: procurementPaidByMethod.CASH,
-            purchasesBank: procurementPaidByMethod.BANKAK,
-            purchasesBankNile: procurementPaidByMethod.BANK_NILE,
-          }
-        );
-      }
+      // Update supplier aggregate
+      await aggregationService.updateSupplierCumulativeAggregate(
+        order.supplierId,
+        paymentDate,
+        {
+          totalPaid: paymentAmount,
+          purchasesCash: procurementPaidByMethod.CASH,
+          purchasesBank: procurementPaidByMethod.BANKAK,
+          purchasesBankNile: procurementPaidByMethod.BANK_NILE,
+        }
+      );
     } catch (aggError) {
       console.error('Aggregation update error (non-blocking):', aggError);
     }
@@ -1462,17 +1558,21 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
     
     // Date filtering
     if (startDate && endDate) {
+      const endDateObj = new Date(endDate as string);
+      endDateObj.setHours(23, 59, 59, 999);
       where.createdAt = {
         gte: new Date(startDate as string),
-        lte: new Date(endDate as string),
+        lte: endDateObj,
       };
     } else if (startDate) {
       where.createdAt = {
         gte: new Date(startDate as string),
       };
     } else if (endDate) {
+      const endDateObj = new Date(endDate as string);
+      endDateObj.setHours(23, 59, 59, 999);
       where.createdAt = {
-        lte: new Date(endDate as string),
+        lte: endDateObj,
       };
     }
 
@@ -1815,11 +1915,13 @@ router.get('/reports/po-vs-grn', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER')
       return res.status(400).json({ error: 'dateFrom و dateTo مطلوبان' });
     }
 
+    const endDate = new Date(dateTo as string);
+    endDate.setHours(23, 59, 59, 999);
     const where: any = {
       status: { in: ['RECEIVED', 'PARTIAL'] },
       createdAt: {
         gte: new Date(dateFrom as string),
-        lte: new Date(dateTo as string),
+        lte: endDate,
       },
     };
     if (inventoryId) where.inventoryId = inventoryId;
@@ -1847,17 +1949,39 @@ router.get('/reports/po-vs-grn', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER')
 
     for (const order of orders) {
       // Aggregate received quantities per item from all receipts
-      const receivedByItem: Record<string, number> = {};
+      const totalReceivedByItem: Record<string, number> = {};
       for (const receipt of order.receipts) {
         for (const batch of receipt.batches) {
-          receivedByItem[batch.itemId] = (receivedByItem[batch.itemId] || 0) + parseFloat(batch.quantity.toString());
+          totalReceivedByItem[batch.itemId] = (totalReceivedByItem[batch.itemId] || 0) + parseFloat(batch.quantity.toString());
+        }
+      }
+
+      // Separate received quantities per (itemId, isGiftCompensation) to prevent
+      // double-counting when the same item appears as both regular and gift/compensation
+      const giftQtyByItemId: Record<string, number> = {};
+      for (const item of order.items) {
+        if ((item as any).isGiftCompensation) {
+          giftQtyByItemId[item.itemId] = (giftQtyByItemId[item.itemId] || 0) + parseFloat(item.quantity.toString());
+        }
+      }
+
+      const receivedByItemType: Record<string, number> = {};
+      for (const [itemId, totalReceived] of Object.entries(totalReceivedByItem)) {
+        const giftOrdered = giftQtyByItemId[itemId] || 0;
+        if (giftOrdered > 0) {
+          const giftReceived = Math.min(giftOrdered, totalReceived);
+          receivedByItemType[`${itemId}:gift`] = giftReceived;
+          receivedByItemType[`${itemId}:regular`] = totalReceived - giftReceived;
+        } else {
+          receivedByItemType[`${itemId}:regular`] = totalReceived;
         }
       }
 
       for (const item of order.items) {
         const ordered = parseFloat(item.quantity.toString());
         const isGift = (item as any).isGiftCompensation === true;
-        const received = receivedByItem[item.itemId] || 0;
+        const key = `${item.itemId}:${isGift ? 'gift' : 'regular'}`;
+        const received = receivedByItemType[key] || 0;
         const variance = isGift ? received : received - ordered;
         const giftCompQty = isGift ? received : 0;
 
@@ -1915,11 +2039,13 @@ router.get('/reports/by-category', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER
       return res.status(400).json({ error: 'dateFrom و dateTo مطلوبان' });
     }
 
+    const endDate = new Date(dateTo as string);
+    endDate.setHours(23, 59, 59, 999);
     const where: any = {
       status: { not: 'CANCELLED' },
       createdAt: {
         gte: new Date(dateFrom as string),
-        lte: new Date(dateTo as string),
+        lte: endDate,
       },
     };
 
@@ -1944,7 +2070,7 @@ router.get('/reports/by-category', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER
 
       for (const item of order.items) {
         if (!(item as any).isGiftCompensation) {
-          categoryMap[cat].itemCount += 1;
+          categoryMap[cat].itemCount += parseFloat(item.quantity.toString());
         }
       }
     }

@@ -1,0 +1,1 @@
+ALTER TYPE "JournalEntryType" ADD VALUE IF NOT EXISTS 'VOID';

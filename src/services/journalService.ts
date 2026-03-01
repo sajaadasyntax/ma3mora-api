@@ -1,6 +1,5 @@
-import { PrismaClient, Prisma, JournalEntryType, TransactionDirection, PaymentMethod, JournalEntry } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { Prisma, JournalEntryType, TransactionDirection, PaymentMethod, JournalEntry } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 
 export class JournalService {
   /**

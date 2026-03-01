@@ -1,12 +1,12 @@
 import { Router } from 'express';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { requireAuth, requireRole, blockAuditorWrites } from '../middleware/auth';
 import { createAuditLog } from '../middleware/audit';
 import { AuthRequest } from '../types';
+import { prisma } from '../lib/prisma';
 
 const router = Router();
-const prisma = new PrismaClient();
 
 router.use(requireAuth);
 router.use(blockAuditorWrites);
@@ -399,6 +399,419 @@ router.get('/daily', async (req: AuthRequest, res) => {
     });
   } catch (error) {
     console.error('Daily bankak report error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
+// GET /bankak/nile-daily - Daily Bank Nile Movement Report
+router.get('/nile-daily', async (req: AuthRequest, res) => {
+  try {
+    const dateParam = req.query.date as string | undefined;
+    const targetDate = dateParam ? new Date(dateParam) : new Date();
+
+    const startOfDay = new Date(targetDate);
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const endOfDay = new Date(targetDate);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const METHOD = 'BANK_NILE' as const;
+
+    // ---- Opening Balance ----
+    const openingBalanceRecord = await prisma.openingBalance.findFirst({
+      where: {
+        scope: 'CASHBOX',
+        paymentMethod: METHOD,
+      },
+      orderBy: { openedAt: 'desc' },
+    });
+
+    let opening = openingBalanceRecord
+      ? new Prisma.Decimal(openingBalanceRecord.amount)
+      : new Prisma.Decimal(0);
+
+    // Pre-day sales payments with method=BANK_NILE
+    const preDaySalesPayments = await prisma.salesPayment.findMany({
+      where: {
+        paidAt: { lt: startOfDay },
+        method: METHOD,
+        invoice: { paymentConfirmationStatus: 'CONFIRMED' },
+      },
+    });
+    preDaySalesPayments.forEach((p) => {
+      opening = opening.add(p.amount);
+    });
+
+    // Pre-day customer payments with method=BANK_NILE
+    const preDayCustomerPayments = await prisma.customerPayment.findMany({
+      where: {
+        createdAt: { lt: startOfDay },
+        method: METHOD,
+      },
+    });
+    preDayCustomerPayments.forEach((p) => {
+      opening = opening.add(p.amount);
+    });
+
+    // Pre-day cash exchanges toMethod=BANK_NILE (IN) and fromMethod=BANK_NILE (OUT)
+    const preDayExchanges = await (prisma as any).cashExchange.findMany({
+      where: { createdAt: { lt: startOfDay } },
+    });
+    preDayExchanges.forEach((e: any) => {
+      if (e.toMethod === METHOD) {
+        opening = opening.add(e.amount);
+      }
+      if (e.fromMethod === METHOD) {
+        opening = opening.sub(e.amount);
+      }
+    });
+
+    // Pre-day procurement payments with method=BANK_NILE
+    const preDayProcPayments = await prisma.procOrderPayment.findMany({
+      where: {
+        paidAt: { lt: startOfDay },
+        method: METHOD,
+        order: { paymentConfirmed: true, status: { not: 'CANCELLED' } },
+      },
+    });
+    preDayProcPayments.forEach((p) => {
+      opening = opening.sub(p.amount);
+    });
+
+    // Pre-day expenses with method=BANK_NILE
+    const preDayExpenses = await prisma.expense.findMany({
+      where: {
+        createdAt: { lt: startOfDay },
+        method: METHOD,
+      },
+    });
+    preDayExpenses.forEach((e) => {
+      opening = opening.sub(e.amount);
+    });
+
+    // ---- Today's IN ----
+    // Sales payments with method=BANK_NILE today
+    const todaySalesPayments = await prisma.salesPayment.findMany({
+      where: {
+        paidAt: { gte: startOfDay, lte: endOfDay },
+        method: METHOD,
+        invoice: { paymentConfirmationStatus: 'CONFIRMED' },
+      },
+      include: {
+        invoice: { include: { customer: true } },
+      },
+    });
+    const salesNileIn = todaySalesPayments.reduce(
+      (sum, p) => sum.add(p.amount),
+      new Prisma.Decimal(0)
+    );
+
+    // Customer payments with method=BANK_NILE today
+    const todayCustomerPayments = await prisma.customerPayment.findMany({
+      where: {
+        createdAt: { gte: startOfDay, lte: endOfDay },
+        method: METHOD,
+      },
+      include: {
+        customer: true,
+        recordedByUser: { select: { id: true, username: true } },
+      },
+    });
+    const customerNileIn = todayCustomerPayments.reduce(
+      (sum, p) => sum.add(p.amount),
+      new Prisma.Decimal(0)
+    );
+
+    // Cash exchanges toMethod=BANK_NILE today
+    const todayExchanges = await (prisma as any).cashExchange.findMany({
+      where: {
+        createdAt: { gte: startOfDay, lte: endOfDay },
+      },
+    });
+    const exchangeIn = todayExchanges
+      .filter((e: any) => e.toMethod === METHOD)
+      .reduce((sum: Prisma.Decimal, e: any) => sum.add(e.amount), new Prisma.Decimal(0));
+
+    const totalIn = salesNileIn.add(customerNileIn).add(exchangeIn);
+
+    // ---- Today's OUT ----
+    // Procurement payments with method=BANK_NILE today
+    const todayProcPayments = await prisma.procOrderPayment.findMany({
+      where: {
+        paidAt: { gte: startOfDay, lte: endOfDay },
+        method: METHOD,
+        order: { paymentConfirmed: true, status: { not: 'CANCELLED' } },
+      },
+    });
+    const procNileOut = todayProcPayments.reduce(
+      (sum, p) => sum.add(p.amount),
+      new Prisma.Decimal(0)
+    );
+
+    // Expenses with method=BANK_NILE today
+    const todayExpenses = await prisma.expense.findMany({
+      where: {
+        createdAt: { gte: startOfDay, lte: endOfDay },
+        method: METHOD,
+      },
+    });
+    const expensesNileOut = todayExpenses.reduce(
+      (sum, e) => sum.add(e.amount),
+      new Prisma.Decimal(0)
+    );
+
+    // Cash exchanges fromMethod=BANK_NILE today
+    const exchangeOut = todayExchanges
+      .filter((e: any) => e.fromMethod === METHOD)
+      .reduce((sum: Prisma.Decimal, e: any) => sum.add(e.amount), new Prisma.Decimal(0));
+
+    const totalOut = procNileOut.add(expensesNileOut).add(exchangeOut);
+
+    // ---- Closing ----
+    const closing = opening.add(totalIn).sub(totalOut);
+
+    // Combine all today's transactions
+    const transactions = [
+      ...todaySalesPayments.map((p) => ({
+        id: p.id,
+        type: 'SALES_PAYMENT' as const,
+        amount: p.amount.toString(),
+        description: 'دفعة مبيعات بنك النيل',
+        referenceNumber: p.receiptNumber,
+        customer: p.invoice?.customer || null,
+        creator: null,
+        date: p.paidAt,
+      })),
+      ...todayCustomerPayments.map((p) => ({
+        id: p.id,
+        type: 'CUSTOMER_PAYMENT' as const,
+        amount: p.amount.toString(),
+        description: p.notes || 'دفعة عميل بنك النيل',
+        referenceNumber: p.referenceNumber,
+        customer: p.customer,
+        creator: p.recordedByUser,
+        date: p.createdAt,
+      })),
+      ...todayProcPayments.map((p) => ({
+        id: p.id,
+        type: 'PROC_PAYMENT' as const,
+        amount: p.amount.toString(),
+        description: 'دفعة مشتريات بنك النيل',
+        referenceNumber: p.receiptNumber,
+        customer: null,
+        creator: null,
+        date: p.paidAt,
+      })),
+      ...todayExpenses.map((e) => ({
+        id: e.id,
+        type: 'EXPENSE' as const,
+        amount: e.amount.toString(),
+        description: e.description,
+        referenceNumber: null,
+        customer: null,
+        creator: null,
+        date: e.createdAt,
+      })),
+      ...todayExchanges
+        .filter((e: any) => e.toMethod === METHOD || e.fromMethod === METHOD)
+        .map((e: any) => ({
+          id: e.id,
+          type: e.toMethod === METHOD ? ('EXCHANGE_IN' as const) : ('EXCHANGE_OUT' as const),
+          amount: e.amount.toString(),
+          description: `تحويل ${e.fromMethod === METHOD ? 'من' : 'إلى'} بنك النيل`,
+          referenceNumber: e.receiptNumber,
+          customer: null,
+          creator: null,
+          date: e.createdAt,
+        })),
+    ].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+    res.json({
+      date: startOfDay.toISOString().split('T')[0],
+      opening: opening.toFixed(2),
+      totalIn: totalIn.toFixed(2),
+      totalOut: totalOut.toFixed(2),
+      closing: closing.toFixed(2),
+      transactions,
+    });
+  } catch (error) {
+    console.error('Daily bank nile report error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
+// GET /bankak/nile-transactions - List all BANK_NILE transactions with search and totals
+router.get('/nile-transactions', async (req: AuthRequest, res) => {
+  try {
+    const { dateFrom, dateTo, referenceNumber } = req.query;
+    const METHOD = 'BANK_NILE' as const;
+
+    const dateFilter = (field: string) => {
+      const filter: any = {};
+      if (dateFrom || dateTo) {
+        filter[field] = {};
+        if (dateFrom) {
+          filter[field].gte = new Date(dateFrom as string);
+        }
+        if (dateTo) {
+          const to = new Date(dateTo as string);
+          to.setHours(23, 59, 59, 999);
+          filter[field].lte = to;
+        }
+      }
+      return filter;
+    };
+
+    const refFilter = referenceNumber
+      ? { contains: referenceNumber as string, mode: 'insensitive' as const }
+      : undefined;
+
+    // Sales payments with BANK_NILE
+    const salesPayments = await prisma.salesPayment.findMany({
+      where: {
+        method: METHOD,
+        ...dateFilter('paidAt'),
+        ...(refFilter ? { receiptNumber: refFilter } : {}),
+      },
+      include: {
+        invoice: { include: { customer: true } },
+        recordedByUser: { select: { id: true, username: true } },
+      },
+      orderBy: { paidAt: 'desc' },
+    });
+
+    // Customer payments with BANK_NILE
+    const customerPayments = await prisma.customerPayment.findMany({
+      where: {
+        method: METHOD,
+        ...dateFilter('createdAt'),
+        ...(refFilter ? { referenceNumber: refFilter } : {}),
+      },
+      include: {
+        customer: true,
+        recordedByUser: { select: { id: true, username: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // Procurement payments with BANK_NILE
+    const procPayments = await prisma.procOrderPayment.findMany({
+      where: {
+        method: METHOD,
+        ...dateFilter('paidAt'),
+        ...(refFilter ? { receiptNumber: refFilter } : {}),
+      },
+      include: {
+        order: { include: { supplier: true } },
+        recordedByUser: { select: { id: true, username: true } },
+      },
+      orderBy: { paidAt: 'desc' },
+    });
+
+    // Expenses with BANK_NILE
+    const expenses = await prisma.expense.findMany({
+      where: {
+        method: METHOD,
+        ...dateFilter('createdAt'),
+      },
+      include: {
+        creator: { select: { id: true, username: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // Cash exchanges involving BANK_NILE
+    const cashExchanges = await (prisma as any).cashExchange.findMany({
+      where: {
+        ...dateFilter('createdAt'),
+        OR: [{ fromMethod: METHOD }, { toMethod: METHOD }],
+        ...(refFilter ? { receiptNumber: refFilter } : {}),
+      },
+      include: {
+        createdByUser: { select: { id: true, username: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // Normalize all into a unified list
+    const results = [
+      ...salesPayments.map((p) => ({
+        id: p.id,
+        type: 'SALES_PAYMENT' as const,
+        amount: p.amount.toString(),
+        direction: 'IN' as const,
+        referenceNumber: p.receiptNumber,
+        description: `دفعة مبيعات - فاتورة ${p.invoiceId}`,
+        customer: p.invoice?.customer || null,
+        user: p.recordedByUser,
+        date: p.paidAt,
+      })),
+      ...customerPayments.map((p) => ({
+        id: p.id,
+        type: 'CUSTOMER_PAYMENT' as const,
+        amount: p.amount.toString(),
+        direction: 'IN' as const,
+        referenceNumber: p.referenceNumber,
+        description: p.notes || 'دفعة عميل بنك النيل',
+        customer: p.customer,
+        user: p.recordedByUser,
+        date: p.createdAt,
+      })),
+      ...procPayments.map((p) => ({
+        id: p.id,
+        type: 'PROC_PAYMENT' as const,
+        amount: p.amount.toString(),
+        direction: 'OUT' as const,
+        referenceNumber: p.receiptNumber,
+        description: `دفعة مشتريات - طلب ${p.orderId}`,
+        customer: null,
+        user: p.recordedByUser,
+        date: p.paidAt,
+      })),
+      ...expenses.map((e) => ({
+        id: e.id,
+        type: 'EXPENSE' as const,
+        amount: e.amount.toString(),
+        direction: 'OUT' as const,
+        referenceNumber: null,
+        description: e.description,
+        customer: null,
+        user: e.creator,
+        date: e.createdAt,
+      })),
+      ...cashExchanges.map((e: any) => ({
+        id: e.id,
+        type: 'CASH_EXCHANGE' as const,
+        amount: e.amount.toString(),
+        direction: e.toMethod === METHOD ? ('IN' as const) : ('OUT' as const),
+        referenceNumber: e.receiptNumber,
+        description: `تحويل من ${e.fromMethod} إلى ${e.toMethod}`,
+        customer: null,
+        user: e.createdByUser,
+        date: e.createdAt,
+      })),
+    ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+    const totalIn = results
+      .filter((r) => r.direction === 'IN')
+      .reduce((sum, r) => sum.add(new Prisma.Decimal(r.amount)), new Prisma.Decimal(0));
+
+    const totalOut = results
+      .filter((r) => r.direction === 'OUT')
+      .reduce((sum, r) => sum.add(new Prisma.Decimal(r.amount)), new Prisma.Decimal(0));
+
+    const net = totalIn.sub(totalOut);
+
+    res.json({
+      transactions: results,
+      grandTotal: {
+        totalIn: totalIn.toFixed(2),
+        totalOut: totalOut.toFixed(2),
+        net: net.toFixed(2),
+      },
+    });
+  } catch (error) {
+    console.error('List bank nile transactions error:', error);
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
 });

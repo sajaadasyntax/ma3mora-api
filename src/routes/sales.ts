@@ -1,20 +1,20 @@
 import { Router } from 'express';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { requireAuth, requireRole, blockAuditorWrites } from '../middleware/auth';
 import { createAuditLog } from '../middleware/audit';
 import { AuthRequest } from '../types';
 import { aggregationService } from '../services/aggregationService';
+import { prisma } from '../lib/prisma';
 
 const router = Router();
-const prisma = new PrismaClient();
 
 router.use(requireAuth);
 router.use(blockAuditorWrites);
 
 // Utility function to calculate payment status based on paidAmount and total
 function calculatePaymentStatus(paidAmount: Prisma.Decimal, total: Prisma.Decimal): 'PAID' | 'PARTIAL' | 'CREDIT' {
-  if (paidAmount.equals(0)) {
+  if (paidAmount.lessThanOrEqualTo(0)) {
     return 'CREDIT';
   } else if (paidAmount.greaterThanOrEqualTo(total)) {
     return 'PAID';
@@ -88,71 +88,28 @@ const paymentSchema = z.object({
   path: ['receiptNumber'],
 });
 
-// Generate invoice number with retry to handle race conditions
-// Uses serializable transaction to ensure unique numbers under concurrent access
-async function generateInvoiceNumber(tx?: any): Promise<string> {
-  const client = tx || prisma;
-  
-  // Get the highest existing invoice number and increment
-  const lastInvoice = await client.salesInvoice.findFirst({
+// Generate invoice number inside transaction to avoid race conditions
+async function generateInvoiceNumber(tx: any): Promise<string> {
+  const lastInvoice = await tx.salesInvoice.findFirst({
     orderBy: { invoiceNumber: 'desc' },
     select: { invoiceNumber: true },
   });
-  
+
   if (lastInvoice) {
-    // Extract number from format INV-000001
     const match = lastInvoice.invoiceNumber.match(/INV-(\d+)/);
     if (match) {
       const nextNum = parseInt(match[1], 10) + 1;
       return `INV-${String(nextNum).padStart(6, '0')}`;
     }
   }
-  
-  // Fallback: count + 1 (first invoice or invalid format)
-  const count = await client.salesInvoice.count();
+
+  const count = await tx.salesInvoice.count();
   return `INV-${String(count + 1).padStart(6, '0')}`;
 }
 
-// Generate invoice number with retry logic for handling unique constraint violations
-async function generateInvoiceNumberWithRetry(maxRetries = 5): Promise<string> {
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    try {
-      const invoiceNumber = await generateInvoiceNumber();
-      // Verify the number doesn't already exist
-      const existing = await prisma.salesInvoice.findUnique({
-        where: { invoiceNumber },
-        select: { id: true },
-      });
-      if (!existing) {
-        return invoiceNumber;
-      }
-      // If exists, continue to retry with fresh query
-    } catch (error) {
-      if (attempt === maxRetries - 1) throw error;
-    }
-  }
-  
-  // Final fallback: use timestamp as numeric identifier to maintain regex compatibility
-  // The regex /INV-(\d+)/ expects digits only, so we use timestamp directly as numeric string
-  // Format: INV-{timestamp} where timestamp is all digits, ensuring uniqueness while remaining parseable
-  for (let fallbackAttempt = 0; fallbackAttempt < 3; fallbackAttempt++) {
-    const timestamp = Date.now().toString(); // Full timestamp as numeric string
-    const fallbackNumber = `INV-${timestamp}`;
-    
-    const existing = await prisma.salesInvoice.findUnique({
-      where: { invoiceNumber: fallbackNumber },
-      select: { id: true },
-    });
-    
-    if (!existing) {
-      return fallbackNumber;
-    }
-    // Small delay to allow timestamp to change if collision occurs
-    await new Promise(resolve => setTimeout(resolve, 1));
-  }
-  
-  // If all attempts fail, throw a meaningful error
-  throw new Error('فشل في إنشاء رقم فاتورة فريد بعد محاولات متعددة. يرجى المحاولة مرة أخرى.');
+// Random 6-digit suffix for invoice fallback (collision-resistant)
+function randomInvoiceFallback(): string {
+  return `INV-${String(Math.floor(100000 + Math.random() * 900000))}`;
 }
 
 router.get('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GROCERY', 'AGENT_BAKERY', 'ACCOUNTANT', 'AUDITOR', 'MANAGER', 'INVENTORY', 'PROCUREMENT'), async (req: AuthRequest, res) => {
@@ -460,6 +417,10 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GRO
     const discountDecimal = new Prisma.Decimal(data.discount);
     const total = subtotal.sub(discountDecimal);
 
+    if (total.lessThanOrEqualTo(0)) {
+      return res.status(400).json({ error: 'الخصم أكبر من أو يساوي المجموع' });
+    }
+
     // Validate amounts don't exceed database limit (Decimal(15,2) max value)
     const maxAmount = new Prisma.Decimal('999999999999999.99'); // Decimal(15,2) max value
     if (subtotal.greaterThan(maxAmount)) {
@@ -472,38 +433,71 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GRO
       return res.status(400).json({ error: 'مبلغ الخصم كبير جداً. الحد الأقصى هو 999,999,999,999,999.99' });
     }
 
-    const invoiceNumber = await generateInvoiceNumberWithRetry();
-
-    const invoice = await prisma.salesInvoice.create({
-      data: {
-        invoiceNumber,
+    const recentDuplicate = await prisma.salesInvoice.findFirst({
+      where: {
+        customerId: data.customerId || null,
+        total: total,
+        createdAt: { gte: new Date(Date.now() - 30 * 1000) },
         inventoryId: data.inventoryId,
-        section: data.section,
-        salesUserId: req.user!.id,
-        customerId: data.customerId || undefined,
-        paymentMethod: data.paymentMethod,
-        paymentStatus: 'CREDIT',
-        deliveryStatus: 'NOT_DELIVERED',
-        subtotal,
-        discount: discountDecimal,
-        total,
-        paidAmount: new Prisma.Decimal(0),
-        notes: data.notes,
-        items: {
-          create: invoiceItems,
-        },
-      },
-      include: {
-        items: {
-          include: {
-            item: true,
-            giftItem: true, // Include gift item details
-          },
-        },
-        customer: true,
-        inventory: true,
       },
     });
+    if (recentDuplicate) {
+      return res.status(409).json({
+        error: 'يوجد فاتورة مماثلة تم إنشاؤها مؤخراً',
+        existingInvoice: { id: recentDuplicate.id, invoiceNumber: recentDuplicate.invoiceNumber }
+      });
+    }
+
+    let invoice!: Awaited<ReturnType<typeof prisma.salesInvoice.create>>;
+    const maxRetries = 10;
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        invoice = await prisma.$transaction(async (tx) => {
+          const invoiceNumber = attempt < maxRetries - 1
+            ? await generateInvoiceNumber(tx)
+            : randomInvoiceFallback();
+          return tx.salesInvoice.create({
+            data: {
+              invoiceNumber,
+              inventoryId: data.inventoryId,
+              section: data.section,
+              salesUserId: req.user!.id,
+              customerId: data.customerId || undefined,
+              paymentMethod: data.paymentMethod,
+              paymentStatus: 'CREDIT',
+              deliveryStatus: 'NOT_DELIVERED',
+              subtotal,
+              discount: discountDecimal,
+              total,
+              paidAmount: new Prisma.Decimal(0),
+              notes: data.notes,
+              items: {
+                create: invoiceItems,
+              },
+            },
+            include: {
+              items: {
+                include: {
+                  item: true,
+                  giftItem: true, // Include gift item details
+                },
+              },
+              customer: true,
+              inventory: true,
+            },
+          });
+        });
+        break;
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+          if (attempt === maxRetries - 1) {
+            throw new Error('فشل في إنشاء رقم فاتورة فريد بعد محاولات متعددة. يرجى المحاولة مرة أخرى.');
+          }
+          continue;
+        }
+        throw error;
+      }
+    }
 
     // Update aggregates (async, don't block response)
     try {
@@ -512,6 +506,8 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GRO
         CASH: data.paymentMethod === 'CASH' ? total : new Prisma.Decimal(0),
         BANKAK: data.paymentMethod === 'BANKAK' ? total : new Prisma.Decimal(0),
         BANK_NILE: data.paymentMethod === 'BANK_NILE' ? total : new Prisma.Decimal(0),
+        DEBT: data.paymentMethod === 'DEBT' ? total : new Prisma.Decimal(0),
+        OTHERS: (data.paymentMethod === 'OTHERS' || data.paymentMethod === 'COMMISSION') ? total : new Prisma.Decimal(0),
       };
 
       await aggregationService.updateDailyFinancialAggregate(
@@ -523,6 +519,8 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GRO
           salesCash: salesByMethod.CASH,
           salesBank: salesByMethod.BANKAK,
           salesBankNile: salesByMethod.BANK_NILE,
+          salesDebtMethod: salesByMethod.DEBT,
+          salesOthers: salesByMethod.OTHERS,
         },
         data.inventoryId,
         data.section
@@ -555,6 +553,8 @@ router.post('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GRO
             salesCash: salesByMethod.CASH,
             salesBank: salesByMethod.BANKAK,
             salesBankNile: salesByMethod.BANK_NILE,
+            salesDebtMethod: salesByMethod.DEBT,
+            salesOthers: salesByMethod.OTHERS,
           }
         );
       }
@@ -688,6 +688,37 @@ router.post('/invoices/:id/payments', requireRole('ACCOUNTANT', 'SALES_GROCERY',
         });
       }
 
+      // Check if receipt number exists in procurement payments
+      const existingProcPayment = await prisma.procOrderPayment.findFirst({
+        where: { receiptNumber: paymentData.receiptNumber },
+        include: {
+          order: {
+            include: { supplier: true },
+          },
+          recordedByUser: {
+            select: { id: true, username: true },
+          },
+        },
+      });
+
+      if (existingProcPayment) {
+        return res.status(400).json({ 
+          error: 'رقم الإيصال مستخدم بالفعل في دفعة مشتريات',
+          existingTransaction: {
+            id: existingProcPayment.id,
+            orderId: existingProcPayment.orderId,
+            supplier: existingProcPayment.order.supplier.name,
+            amount: existingProcPayment.amount.toString(),
+            method: existingProcPayment.method,
+            receiptNumber: existingProcPayment.receiptNumber,
+            receiptUrl: existingProcPayment.receiptUrl,
+            paidAt: existingProcPayment.paidAt,
+            recordedBy: existingProcPayment.recordedByUser.username,
+            notes: existingProcPayment.notes,
+          }
+        });
+      }
+
       // Check if receipt number exists in cash exchanges
       const existingExchange = await prisma.cashExchange.findUnique({
         where: { receiptNumber: paymentData.receiptNumber },
@@ -724,18 +755,6 @@ router.post('/invoices/:id/payments', requireRole('ACCOUNTANT', 'SALES_GROCERY',
       return res.status(400).json({ error: 'المبلغ كبير جداً. الحد الأقصى هو 999,999,999,999,999.99' });
     }
 
-    const payment = await prisma.salesPayment.create({
-      data: {
-        invoiceId: id,
-        amount: paymentAmount, // Use Prisma.Decimal instead of JavaScript number
-        method: paymentData.method,
-        recordedBy: req.user!.id,
-        notes: paymentData.notes,
-        receiptUrl: paymentData.receiptUrl,
-        receiptNumber: paymentData.receiptNumber,
-      },
-    });
-
     // Update invoice payment status using utility function
     const paymentStatus = calculatePaymentStatus(newPaidAmount, invoice.total);
 
@@ -748,33 +767,41 @@ router.post('/invoices/:id/payments', requireRole('ACCOUNTANT', 'SALES_GROCERY',
       updateData.paymentMethod = paymentData.method;
     }
 
-    const updatedInvoice = await prisma.salesInvoice.update({
-      where: { id },
-      data: updateData,
-      include: {
-        payments: true,
-        customer: true,
-      },
+    const { payment, updatedInvoice } = await prisma.$transaction(async (tx) => {
+      const payment = await tx.salesPayment.create({
+        data: {
+          invoiceId: id,
+          amount: paymentAmount,
+          method: paymentData.method,
+          recordedBy: req.user!.id,
+          notes: paymentData.notes,
+          receiptUrl: paymentData.receiptUrl,
+          receiptNumber: paymentData.receiptNumber,
+        },
+      });
+
+      const updatedInvoice = await tx.salesInvoice.update({
+        where: { id },
+        data: updateData,
+        include: {
+          payments: true,
+          customer: true,
+        },
+      });
+
+      return { payment, updatedInvoice };
     });
 
     // Update aggregates (async, don't block response)
     try {
       const paymentDate = payment.paidAt;
       const paymentAmount = new Prisma.Decimal(paymentData.amount);
-      const salesReceivedByMethod = {
-        CASH: paymentData.method === 'CASH' ? paymentAmount : new Prisma.Decimal(0),
-        BANKAK: paymentData.method === 'BANKAK' ? paymentAmount : new Prisma.Decimal(0),
-        BANK_NILE: paymentData.method === 'BANK_NILE' ? paymentAmount : new Prisma.Decimal(0),
-      };
 
       await aggregationService.updateDailyFinancialAggregate(
         paymentDate,
         {
           salesReceived: paymentAmount,
           salesDebt: paymentAmount.neg(), // Reduce debt
-          salesCash: salesReceivedByMethod.CASH,
-          salesBank: salesReceivedByMethod.BANKAK,
-          salesBankNile: salesReceivedByMethod.BANK_NILE,
         },
         invoice.inventoryId,
         invoice.section
@@ -787,9 +814,6 @@ router.post('/invoices/:id/payments', requireRole('ACCOUNTANT', 'SALES_GROCERY',
           paymentDate,
           {
             totalPaid: paymentAmount,
-            salesCash: salesReceivedByMethod.CASH,
-            salesBank: salesReceivedByMethod.BANKAK,
-            salesBankNile: salesReceivedByMethod.BANK_NILE,
           }
         );
       }
@@ -1035,21 +1059,11 @@ router.post('/invoices/:id/deliver', requireRole('INVENTORY', 'MANAGER'), create
               const giftItemDetails = await tx.item.findUnique({ where: { id: item.giftItemId } });
               throw new Error(`المخزون غير موجود للهدية: ${giftItemDetails?.name || item.giftItemId}`);
             }
-
-            if (new Prisma.Decimal(giftStock.quantity).lessThan(remainingGiftToDeliver)) {
-              const giftItemDetails = await tx.item.findUnique({ where: { id: item.giftItemId } });
-              throw new Error(`الكمية غير كافية للهدية: ${giftItemDetails?.name || item.giftItemId}`);
-            }
           }
         }
         
         if (remainingToDeliver.lte(0) && remainingGiftToDeliver.lte(0)) {
           continue; // nothing left for this item
-        }
-
-        if (remainingToDeliver.gt(0) && new Prisma.Decimal(stock.quantity).lessThan(remainingToDeliver)) {
-          const itemDetails = await tx.item.findUnique({ where: { id: item.itemId } });
-          throw new Error(`الكمية غير كافية للصنف ${itemDetails?.name || item.itemId}`);
         }
 
         // Get available batches for this item
@@ -1118,21 +1132,24 @@ router.post('/invoices/:id/deliver', requireRole('INVENTORY', 'MANAGER'), create
           consumedBatches.set(item.itemId, itemConsumedBatches);
         }
 
-        // Update total stock quantity for remaining only
+        // BUG 2: FIFO batch coverage - ensure we had enough in batches
+        if (remainingQty.gt(0)) {
+          throw Object.assign(new Error('INSUFFICIENT_BATCH_STOCK'), { code: 'INSUFFICIENT_BATCH_STOCK' });
+        }
+
+        // BUG 1: Atomic stock decrement - avoid race condition
         if (remainingToDeliver.gt(0)) {
-          await tx.inventoryStock.update({
-            where: {
-              inventoryId_itemId: {
-                inventoryId: invoice.inventoryId,
-                itemId: item.itemId,
-              },
-            },
-            data: {
-              quantity: {
-                decrement: remainingToDeliver,
-              },
-            },
-          });
+          const affected = await tx.$executeRaw`
+            UPDATE "inventory_stocks"
+            SET quantity = quantity - ${remainingToDeliver}::decimal
+            WHERE "inventoryId" = ${invoice.inventoryId}
+              AND "itemId" = ${item.itemId}
+              AND quantity >= ${remainingToDeliver}::decimal
+          `;
+          if (affected === 0) {
+            const itemDetails = await tx.item.findUnique({ where: { id: item.itemId } });
+            throw Object.assign(new Error(`INSUFFICIENT_STOCK: ${itemDetails?.name || item.itemId}`), { code: 'INSUFFICIENT_STOCK' });
+          }
         }
 
         // Handle gift item stock deduction (new system)
@@ -1193,25 +1210,28 @@ router.post('/invoices/:id/deliver', requireRole('INVENTORY', 'MANAGER'), create
             });
           }
 
+          // BUG 2: FIFO batch coverage for gift item
+          if (remainingGiftQty.gt(0)) {
+            throw Object.assign(new Error('INSUFFICIENT_BATCH_STOCK'), { code: 'INSUFFICIENT_BATCH_STOCK' });
+          }
+
           // Store consumed gift batches
           if (giftConsumedBatches.length > 0) {
             consumedGiftBatches.set(item.giftItemId, giftConsumedBatches);
           }
 
-          // Update total stock quantity for gift item
-          await tx.inventoryStock.update({
-            where: {
-              inventoryId_itemId: {
-                inventoryId: invoice.inventoryId,
-                itemId: item.giftItemId,
-              },
-            },
-            data: {
-              quantity: {
-                decrement: remainingGiftToDeliver,
-              },
-            },
-          });
+          // BUG 1: Atomic stock decrement for gift item
+          const giftAffected = await tx.$executeRaw`
+            UPDATE "inventory_stocks"
+            SET quantity = quantity - ${remainingGiftToDeliver}::decimal
+            WHERE "inventoryId" = ${invoice.inventoryId}
+              AND "itemId" = ${item.giftItemId}
+              AND quantity >= ${remainingGiftToDeliver}::decimal
+          `;
+          if (giftAffected === 0) {
+            const giftItemDetails = await tx.item.findUnique({ where: { id: item.giftItemId } });
+            throw Object.assign(new Error(`INSUFFICIENT_STOCK: ${giftItemDetails?.name || item.giftItemId}`), { code: 'INSUFFICIENT_STOCK' });
+          }
         }
 
       }
@@ -1397,6 +1417,12 @@ router.post('/invoices/:id/deliver', requireRole('INVENTORY', 'MANAGER'), create
 
     res.json(result);
   } catch (error) {
+    if ((error as any)?.code === 'INSUFFICIENT_STOCK') {
+      return res.status(400).json({ error: 'الكمية المتاحة غير كافية', details: (error as Error).message });
+    }
+    if ((error as any)?.code === 'INSUFFICIENT_BATCH_STOCK') {
+      return res.status(400).json({ error: 'الكمية المتاحة في الدفعات غير كافية', details: (error as Error).message });
+    }
     console.error('Deliver invoice error:', error);
     res.status(500).json({ error: error instanceof Error ? error.message : 'خطأ في الخادم' });
   }

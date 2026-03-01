@@ -20,6 +20,7 @@ import treasuryRoutes from './routes/treasury';
 import bankakRoutes from './routes/bankak';
 import otherIncomeRoutes from './routes/otherIncome';
 import returnsRoutes from './routes/returns';
+import giftAccrualRoutes from './routes/giftAccrual';
 import path from 'path';
 
 const app = express();
@@ -55,6 +56,7 @@ app.use('/api/treasury', treasuryRoutes);
 app.use('/api/bankak', bankakRoutes);
 app.use('/api/other-income', otherIncomeRoutes);
 app.use('/api/returns', returnsRoutes);
+app.use('/api', giftAccrualRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

@@ -1,12 +1,13 @@
 import { Router } from 'express';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { requireAuth, requireRole, blockAuditorWrites } from '../middleware/auth';
 import { createAuditLog } from '../middleware/audit';
 import { AuthRequest } from '../types';
+import { stockMovementService } from '../services/stockMovementService';
+import { prisma } from '../lib/prisma';
 
 const router = Router();
-const prisma = new PrismaClient();
 
 router.use(requireAuth);
 router.use(blockAuditorWrites); // Manager and Inventory can write, Auditor cannot
@@ -19,6 +20,170 @@ router.get('/', async (req: AuthRequest, res) => {
     res.json(inventories);
   } catch (error) {
     console.error('Get inventories error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
+// Manual stock adjustment
+const adjustStockSchema = z.object({
+  itemId: z.string().min(1, 'الصنف مطلوب'),
+  quantity: z.number().refine(val => val !== 0, 'الكمية لا يمكن أن تكون صفر'),
+  reason: z.string().min(1, 'السبب مطلوب'),
+  notes: z.string().optional(),
+});
+
+router.post('/:inventoryId/adjust-stock', requireRole('MANAGER', 'ACCOUNTANT'), createAuditLog('InventoryStock'), async (req: AuthRequest, res) => {
+  try {
+    const { inventoryId } = req.params;
+    const data = adjustStockSchema.parse(req.body);
+
+    const inventory = await prisma.inventory.findUnique({ where: { id: inventoryId } });
+    if (!inventory) {
+      return res.status(404).json({ error: 'المخزن غير موجود' });
+    }
+
+    const item = await prisma.item.findUnique({ where: { id: data.itemId } });
+    if (!item) {
+      return res.status(404).json({ error: 'الصنف غير موجود' });
+    }
+
+    const qty = new Prisma.Decimal(data.quantity);
+    const isPositive = data.quantity > 0;
+
+    const updatedStock = await prisma.$transaction(async (tx) => {
+      let stock = await tx.inventoryStock.findUnique({
+        where: {
+          inventoryId_itemId: { inventoryId, itemId: data.itemId },
+        },
+      });
+
+      if (!stock) {
+        stock = await tx.inventoryStock.create({
+          data: { inventoryId, itemId: data.itemId, quantity: 0 },
+        });
+      }
+
+      if (!isPositive) {
+        const absQty = qty.abs();
+        if (stock.quantity.lt(absQty)) {
+          throw Object.assign(new Error('INSUFFICIENT_STOCK'), {
+            code: 'INSUFFICIENT_STOCK',
+            available: stock.quantity.toString(),
+          });
+        }
+      }
+
+      const newStock = await tx.inventoryStock.update({
+        where: {
+          inventoryId_itemId: { inventoryId, itemId: data.itemId },
+        },
+        data: {
+          quantity: isPositive
+            ? { increment: qty }
+            : { decrement: qty.abs() },
+        },
+        include: { item: true },
+      });
+
+      if (isPositive) {
+        await tx.stockBatch.create({
+          data: {
+            inventoryId,
+            itemId: data.itemId,
+            quantity: qty,
+            notes: data.notes || `تعديل يدوي: ${data.reason}`,
+          },
+        });
+      } else {
+        const batches = await tx.stockBatch.findMany({
+          where: {
+            inventoryId,
+            itemId: data.itemId,
+            quantity: { gt: 0 },
+          },
+          orderBy: [{ receivedAt: 'asc' }],
+        });
+
+        batches.sort((a, b) => {
+          if (a.expiryDate && b.expiryDate) {
+            const dateDiff = a.expiryDate.getTime() - b.expiryDate.getTime();
+            if (dateDiff !== 0) return dateDiff;
+          }
+          if (a.expiryDate && !b.expiryDate) return -1;
+          if (!a.expiryDate && b.expiryDate) return 1;
+          return a.receivedAt.getTime() - b.receivedAt.getTime();
+        });
+
+        let remaining = qty.abs();
+        for (const batch of batches) {
+          if (remaining.lte(0)) break;
+          const batchQty = new Prisma.Decimal(batch.quantity);
+          if (batchQty.lte(0)) continue;
+
+          if (remaining.gte(batchQty)) {
+            await tx.stockBatch.update({
+              where: { id: batch.id },
+              data: { quantity: 0 },
+            });
+            remaining = remaining.sub(batchQty);
+          } else {
+            await tx.stockBatch.update({
+              where: { id: batch.id },
+              data: { quantity: batchQty.sub(remaining) },
+            });
+            remaining = new Prisma.Decimal(0);
+          }
+        }
+      }
+
+      await tx.auditLog.create({
+        data: {
+          userId: req.user!.id,
+          action: 'STOCK_ADJUSTMENT',
+          entity: 'InventoryStock',
+          entityId: `${inventoryId}_${data.itemId}`,
+          after: JSON.stringify({
+            inventoryId,
+            itemId: data.itemId,
+            quantity: data.quantity,
+            reason: data.reason,
+            notes: data.notes,
+          }),
+        },
+      });
+
+      return newStock;
+    });
+
+    try {
+      const movementDate = new Date();
+      if (isPositive) {
+        await stockMovementService.updateStockMovement(
+          inventoryId, data.itemId, movementDate,
+          { incoming: data.quantity }
+        );
+      } else {
+        await stockMovementService.updateStockMovement(
+          inventoryId, data.itemId, movementDate,
+          { outgoing: Math.abs(data.quantity) }
+        );
+      }
+    } catch (moveError) {
+      console.error('StockMovement update error for adjustment:', moveError);
+    }
+
+    res.json(updatedStock);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: 'بيانات غير صالحة', details: error.errors });
+    }
+    if ((error as any)?.code === 'INSUFFICIENT_STOCK') {
+      return res.status(400).json({
+        error: 'الكمية المتاحة غير كافية',
+        available: (error as any).available,
+      });
+    }
+    console.error('Adjust stock error:', error);
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
 });
@@ -439,10 +604,14 @@ router.get('/transfers', requireRole('INVENTORY', 'MANAGER', 'ACCOUNTANT', 'AUDI
     if (startDate || endDate) {
       where.transferredAt = {};
       if (startDate) {
-        where.transferredAt.gte = new Date(startDate as string);
+        const start = new Date(startDate as string);
+        start.setHours(0, 0, 0, 0);
+        where.transferredAt.gte = start;
       }
       if (endDate) {
-        where.transferredAt.lte = new Date(endDate as string);
+        const end = new Date(endDate as string);
+        end.setHours(23, 59, 59, 999);
+        where.transferredAt.lte = end;
       }
     }
 
@@ -609,7 +778,7 @@ router.post('/transfers', requireRole('INVENTORY', 'MANAGER', 'SALES_GROCERY', '
 
       // Consume from source batches using FIFO and create destination batches
       let remainingQty = transferQty;
-      const transferredBatches: Array<{ expiryDate: Date | null; quantity: Prisma.Decimal; notes: string | null }> = [];
+      const transferredBatches: Array<{ expiryDate: Date | null; quantity: Prisma.Decimal; notes: string | null; receivedAt: Date }> = [];
 
       for (const batch of sourceBatches) {
         if (remainingQty.lte(0)) break;
@@ -639,6 +808,7 @@ router.post('/transfers', requireRole('INVENTORY', 'MANAGER', 'SALES_GROCERY', '
           expiryDate: batch.expiryDate,
           quantity: consumeQty,
           notes: batch.notes ? `نقل: ${batch.notes}` : 'نقل من مخزن آخر',
+          receivedAt: batch.receivedAt,
         });
 
         remainingQty = remainingQty.sub(consumeQty);
@@ -690,8 +860,6 @@ router.post('/transfers', requireRole('INVENTORY', 'MANAGER', 'SALES_GROCERY', '
       }
 
       // Create destination batches with same expiry dates (preserving FIFO info)
-      // Use a single timestamp for all batches to maintain correct FIFO ordering as a transfer group
-      const transferTimestamp = new Date();
       for (const batchInfo of transferredBatches) {
         await tx.stockBatch.create({
           data: {
@@ -700,13 +868,31 @@ router.post('/transfers', requireRole('INVENTORY', 'MANAGER', 'SALES_GROCERY', '
             quantity: batchInfo.quantity,
             expiryDate: batchInfo.expiryDate,
             notes: batchInfo.notes,
-            receivedAt: transferTimestamp,
+            receivedAt: batchInfo.receivedAt,  // preserve original date for correct FIFO ordering
           },
         });
       }
 
       return transfer;
     });
+
+    try {
+      const transferDate = new Date();
+      await stockMovementService.updateStockMovement(
+        data.fromInventoryId,
+        data.itemId,
+        transferDate,
+        { outgoing: parseFloat(data.quantity.toString()) }
+      );
+      await stockMovementService.updateStockMovement(
+        data.toInventoryId,
+        data.itemId,
+        transferDate,
+        { incoming: parseFloat(data.quantity.toString()) }
+      );
+    } catch (moveError) {
+      console.error('StockMovement update error for transfer:', moveError);
+    }
 
     res.status(201).json(result);
   } catch (error) {
@@ -958,14 +1144,17 @@ router.get('/stock-movements', requireRole('INVENTORY', 'SALES_GROCERY', 'SALES_
     };
 
     for (const item of movementsReport) {
-      for (const m of item.movements) {
-        grandTotal.totalOpeningBalance += parseFloat(m.openingBalance);
+      for (let i = 0; i < item.movements.length; i++) {
+        const m = item.movements[i];
+        const isFirstDate = i === 0;
+        const isLastDate = i === item.movements.length - 1;
+        if (isFirstDate) grandTotal.totalOpeningBalance += parseFloat(m.openingBalance);
         grandTotal.totalIncoming += parseFloat(m.incoming);
         grandTotal.totalOutgoing += parseFloat(m.outgoing);
         grandTotal.totalPendingOutgoing += parseFloat(m.pendingOutgoing);
         grandTotal.totalIncomingGifts += parseFloat(m.incomingGifts);
         grandTotal.totalOutgoingGifts += parseFloat(m.outgoingGifts);
-        grandTotal.totalClosingBalance += parseFloat(m.closingBalance);
+        if (isLastDate) grandTotal.totalClosingBalance += parseFloat(m.closingBalance);
       }
     }
 
@@ -1092,7 +1281,7 @@ router.get('/:id/balance-report', requireRole('INVENTORY', 'MANAGER', 'ACCOUNTAN
     dateEnd.setHours(23, 59, 59, 999);
 
     // Get movements for this inventory on the specified date
-    const movements = await prisma.stockMovement.findMany({
+    const movementsOnDate = await prisma.stockMovement.findMany({
       where: {
         inventoryId: id,
         movementDate: {
@@ -1106,27 +1295,94 @@ router.get('/:id/balance-report', requireRole('INVENTORY', 'MANAGER', 'ACCOUNTAN
       orderBy: { item: { name: 'asc' } },
     });
 
-    const items = movements.map((m) => ({
-      itemId: m.itemId,
-      itemName: m.item.name,
-      section: m.item.section,
-      openingBalance: m.openingBalance.toString(),
-      incoming: m.incoming.toString(),
-      incomingGifts: m.incomingGifts.toString(),
-      outgoing: m.outgoing.toString(),
-      pendingOutgoing: m.pendingOutgoing.toString(),
-      outgoingGifts: m.outgoingGifts.toString(),
-      closingBalance: m.closingBalance.toString(),
-    }));
+    // Get all stocks in this inventory (for items with no movement on date)
+    const stocks = await prisma.inventoryStock.findMany({
+      where: { inventoryId: id },
+      include: {
+        item: { select: { id: true, name: true, section: true } },
+      },
+      orderBy: { item: { name: 'asc' } },
+    });
+
+    // For items with no movement on date: get most recent prior closing balance
+    const itemIdsWithMovement = new Set(movementsOnDate.map(m => m.itemId));
+    const itemIdsWithoutMovement = stocks
+      .map(s => s.itemId)
+      .filter(itemId => !itemIdsWithMovement.has(itemId));
+
+    const latestPriorByItem = new Map<string, { closingBalance: Prisma.Decimal }>();
+    if (itemIdsWithoutMovement.length > 0) {
+      const movementsBeforeDate = await prisma.stockMovement.findMany({
+        where: {
+          inventoryId: id,
+          itemId: { in: itemIdsWithoutMovement },
+          movementDate: { lt: dateStart },
+        },
+        orderBy: { movementDate: 'desc' },
+      });
+      for (const m of movementsBeforeDate) {
+        if (!latestPriorByItem.has(m.itemId)) {
+          latestPriorByItem.set(m.itemId, { closingBalance: m.closingBalance });
+        }
+      }
+    }
+
+    // Build items: use movement data if present, else use prior closing balance
+    const movementMap = new Map(movementsOnDate.map(m => [m.itemId, m]));
+    const stockMap = new Map(stocks.map(s => [s.itemId, s]));
+
+    const allItemIds = new Set([...movementMap.keys(), ...stockMap.keys()]);
+    const items = Array.from(allItemIds).sort((a, b) => {
+      const nameA = (movementMap.get(a)?.item || stockMap.get(a)?.item)?.name ?? '';
+      const nameB = (movementMap.get(b)?.item || stockMap.get(b)?.item)?.name ?? '';
+      return nameA.localeCompare(nameB);
+    }).map((itemId) => {
+      const movement = movementMap.get(itemId);
+      const stock = stockMap.get(itemId);
+      const itemInfo = movement?.item || stock?.item;
+      if (!itemInfo) return null;
+
+      if (movement) {
+        return {
+          itemId,
+          itemName: itemInfo.name,
+          section: itemInfo.section,
+          openingBalance: movement.openingBalance.toString(),
+          incoming: movement.incoming.toString(),
+          incomingGifts: movement.incomingGifts.toString(),
+          outgoing: movement.outgoing.toString(),
+          pendingOutgoing: movement.pendingOutgoing.toString(),
+          outgoingGifts: movement.outgoingGifts.toString(),
+          closingBalance: movement.closingBalance.toString(),
+        };
+      }
+
+      // No movement on this date: use most recent prior closing balance
+      const prior = latestPriorByItem.get(itemId);
+      const priorClosing = prior ? prior.closingBalance.toString() : (stock ? stock.quantity.toString() : '0');
+
+      return {
+        itemId,
+        itemName: itemInfo.name,
+        section: itemInfo.section,
+        openingBalance: priorClosing,
+        incoming: '0',
+        incomingGifts: '0',
+        outgoing: '0',
+        pendingOutgoing: '0',
+        outgoingGifts: '0',
+        closingBalance: priorClosing,
+      };
+    }).filter((x): x is NonNullable<typeof x> => x !== null);
 
     const grandTotal = {
-      totalOpeningBalance: movements.reduce((sum, m) => sum + parseFloat(m.openingBalance.toString()), 0),
-      totalIncoming: movements.reduce((sum, m) => sum + parseFloat(m.incoming.toString()), 0),
-      totalIncomingGifts: movements.reduce((sum, m) => sum + parseFloat(m.incomingGifts.toString()), 0),
-      totalOutgoing: movements.reduce((sum, m) => sum + parseFloat(m.outgoing.toString()), 0),
-      totalPendingOutgoing: movements.reduce((sum, m) => sum + parseFloat(m.pendingOutgoing.toString()), 0),
-      totalOutgoingGifts: movements.reduce((sum, m) => sum + parseFloat(m.outgoingGifts.toString()), 0),
-      totalClosingBalance: movements.reduce((sum, m) => sum + parseFloat(m.closingBalance.toString()), 0),
+      totalOpeningBalance: items.reduce((sum, i) => sum + parseFloat(i.openingBalance), 0),
+      totalIncoming: items.reduce((sum, i) => sum + parseFloat(i.incoming), 0),
+      totalIncomingGifts: items.reduce((sum, i) => sum + parseFloat(i.incomingGifts), 0),
+      totalOutgoing: items.reduce((sum, i) => sum + parseFloat(i.outgoing), 0),
+      totalPendingOutgoing: items.reduce((sum, i) => sum + parseFloat(i.pendingOutgoing), 0),
+      totalOutgoingGifts: items.reduce((sum, i) => sum + parseFloat(i.outgoingGifts), 0),
+      totalClosingBalance: items.reduce((sum, i) => sum + parseFloat(i.closingBalance), 0),
     };
 
     res.json({

@@ -1,6 +1,5 @@
-import { PrismaClient, Prisma, Section, PaymentMethod } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { Prisma, Section, PaymentMethod } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 
 export interface DailyAggregateUpdate {
   salesTotal?: Prisma.Decimal;
@@ -452,9 +451,12 @@ export class AggregationService {
       .filter(b => (b as any).paymentMethod === 'BANK_NILE')
       .reduce((sum, b) => sum.add(b.amount), new Prisma.Decimal(0));
 
-    // Calculate net balances (opening + sales + income - expenses - salaries - advances - procurement + cash exchanges)
-    // Note: This calculates net for the entire period, not just this day
-    // For daily net, we'd need to track cumulative from start of period
+    const customerPaymentsTotalAmount = updateData.customerPaymentsTotal || existing?.customerPaymentsTotal || new Prisma.Decimal(0);
+    const treasuryInflowAmount = updateData.treasuryInflow || existing?.treasuryInflow || new Prisma.Decimal(0);
+    const treasuryOutflowAmount = updateData.treasuryOutflow || existing?.treasuryOutflow || new Prisma.Decimal(0);
+    const salesReturnsTotalAmount = updateData.salesReturnsTotal || existing?.salesReturnsTotal || new Prisma.Decimal(0);
+
+    // Calculate net balances per payment method
     const netCash = openingCash
       .add(salesCashAmount)
       .add(incomeCashAmount)
@@ -462,7 +464,11 @@ export class AggregationService {
       .sub(expensesCashAmount)
       .sub(salariesCashAmount)
       .sub(advancesCashAmount)
-      .add(cashExchangesCashAmount);
+      .add(cashExchangesCashAmount)
+      .add(customerPaymentsTotalAmount)
+      .add(treasuryInflowAmount)
+      .sub(treasuryOutflowAmount)
+      .sub(salesReturnsTotalAmount);
 
     const netBank = openingBank
       .add(salesBankAmount)
@@ -538,6 +544,20 @@ export class AggregationService {
 
     // Update monthly aggregate
     await this.updateMonthlyAggregate(date, updates, inventoryId, section);
+
+    // Update cumulative balance snapshot
+    try {
+      await this.updateBalanceSnapshot(date, {
+        openingCash,
+        openingBank,
+        openingBankNile,
+        closingCash: netCash,
+        closingBank: netBank,
+        closingBankNile: netBankNile,
+      }, inventoryId, section);
+    } catch (snapshotError) {
+      console.error('Balance snapshot update error:', snapshotError);
+    }
   }
 
   /**
@@ -835,8 +855,8 @@ export class AggregationService {
     const totalQuantity = existing
       ? existing.totalQuantity.add(updates.quantity)
       : updates.quantity;
-    const totalGiftQty = existing && updates.giftQty
-      ? existing.totalGiftQty.add(updates.giftQty)
+    const totalGiftQty = existing
+      ? existing.totalGiftQty.add(updates.giftQty || new Prisma.Decimal(0))
       : (updates.giftQty || new Prisma.Decimal(0));
     const totalAmount = existing
       ? existing.totalAmount.add(updates.amount)
@@ -892,6 +912,8 @@ export class AggregationService {
       salesCash?: Prisma.Decimal;
       salesBank?: Prisma.Decimal;
       salesBankNile?: Prisma.Decimal;
+      salesDebtMethod?: Prisma.Decimal;
+      salesOthers?: Prisma.Decimal;
     }
   ): Promise<void> {
     const dateOnly = new Date(date);
@@ -901,7 +923,7 @@ export class AggregationService {
     const previousAggregate = await prisma.customerCumulativeAggregate.findFirst({
       where: {
         customerId,
-        date: { lt: dateOnly },
+        date: { lte: dateOnly },
       },
       orderBy: { date: 'desc' },
     });
@@ -924,6 +946,12 @@ export class AggregationService {
     const salesBankNile = previousAggregate
       ? previousAggregate.salesBankNile.add(updates.salesBankNile || 0)
       : (updates.salesBankNile || new Prisma.Decimal(0));
+    const salesDebtMethod = previousAggregate
+      ? previousAggregate.salesDebtMethod.add(updates.salesDebtMethod || 0)
+      : (updates.salesDebtMethod || new Prisma.Decimal(0));
+    const salesOthers = previousAggregate
+      ? previousAggregate.salesOthers.add(updates.salesOthers || 0)
+      : (updates.salesOthers || new Prisma.Decimal(0));
 
     await prisma.customerCumulativeAggregate.upsert({
       where: {
@@ -940,6 +968,8 @@ export class AggregationService {
         salesCash,
         salesBank,
         salesBankNile,
+        salesDebtMethod,
+        salesOthers,
       },
       create: {
         customerId,
@@ -951,6 +981,8 @@ export class AggregationService {
         salesCash,
         salesBank,
         salesBankNile,
+        salesDebtMethod,
+        salesOthers,
       },
     });
   }
@@ -1122,16 +1154,30 @@ export class AggregationService {
       section?: Section;
     }
   ) {
-    return await prisma.monthlyFinancialAggregate.findMany({
-      where: {
+    let where: any = {
+      ...(filters?.inventoryId ? { inventoryId: filters.inventoryId } : {}),
+      ...(filters?.section ? { section: filters.section } : {}),
+    };
+
+    if (startYear === endYear) {
+      where = {
+        ...where,
+        year: startYear,
+        month: { gte: startMonth, lte: endMonth },
+      };
+    } else {
+      where = {
+        ...where,
         OR: [
           { year: startYear, month: { gte: startMonth } },
           { year: { gt: startYear, lt: endYear } },
           { year: endYear, month: { lte: endMonth } },
         ],
-        ...(filters?.inventoryId ? { inventoryId: filters.inventoryId } : {}),
-        ...(filters?.section ? { section: filters.section } : {}),
-      },
+      };
+    }
+
+    return await prisma.monthlyFinancialAggregate.findMany({
+      where,
       orderBy: [{ year: 'desc' }, { month: 'desc' }],
     });
   }
@@ -1164,55 +1210,71 @@ export class AggregationService {
     });
     const orders = await prisma.procOrder.findMany({ where });
     const expenses = await prisma.expense.findMany({ where });
-    const salaries = await prisma.salary.findMany({
-      where: {
-        paidAt: {
-          gte: dateOnly,
-          lte: dateEnd,
-        },
-      },
-    });
-    const advances = await prisma.advance.findMany({
-      where: {
-        paidAt: {
-          gte: dateOnly,
-          lte: dateEnd,
-        },
-      },
-    });
-    const cashExchanges = await prisma.cashExchange.findMany({
-      where: {
-        createdAt: {
-          gte: dateOnly,
-          lte: dateEnd,
-        },
-      },
-    });
-    const incomes = await prisma.income.findMany({ where });
-    const customerPayments: any[] = await (prisma as any).customerPayment.findMany({
-      where: {
-        createdAt: {
-          gte: dateOnly,
-          lte: dateEnd,
-        },
-      },
-    });
-    const treasuryTransactions: any[] = await (prisma as any).treasuryTransaction.findMany({
-      where: {
-        createdAt: {
-          gte: dateOnly,
-          lte: dateEnd,
-        },
-      },
-    });
-    const bankakTransactions: any[] = await (prisma as any).bankakTransaction.findMany({
-      where: {
-        createdAt: {
-          gte: dateOnly,
-          lte: dateEnd,
-        },
-      },
-    });
+    // Global transactions (salaries, advances, treasury, etc.) have no inventoryId – only include when recalculating
+    // the global aggregate. When inventoryId or section is set, omit to avoid double-counting.
+    const includeGlobal = !inventoryId && !section;
+
+    const salaries = includeGlobal
+      ? await prisma.salary.findMany({
+          where: {
+            paidAt: {
+              gte: dateOnly,
+              lte: dateEnd,
+            },
+          },
+        })
+      : [];
+    const advances = includeGlobal
+      ? await prisma.advance.findMany({
+          where: {
+            paidAt: {
+              gte: dateOnly,
+              lte: dateEnd,
+            },
+          },
+        })
+      : [];
+    const cashExchanges = includeGlobal
+      ? await prisma.cashExchange.findMany({
+          where: {
+            createdAt: {
+              gte: dateOnly,
+              lte: dateEnd,
+            },
+          },
+        })
+      : [];
+    const incomes = includeGlobal ? await prisma.income.findMany({ where }) : [];
+    const customerPayments: any[] = includeGlobal
+      ? await (prisma as any).customerPayment.findMany({
+          where: {
+            createdAt: {
+              gte: dateOnly,
+              lte: dateEnd,
+            },
+          },
+        })
+      : [];
+    const treasuryTransactions: any[] = includeGlobal
+      ? await (prisma as any).treasuryTransaction.findMany({
+          where: {
+            createdAt: {
+              gte: dateOnly,
+              lte: dateEnd,
+            },
+          },
+        })
+      : [];
+    const bankakTransactions: any[] = includeGlobal
+      ? await (prisma as any).bankakTransaction.findMany({
+          where: {
+            createdAt: {
+              gte: dateOnly,
+              lte: dateEnd,
+            },
+          },
+        })
+      : [];
     // SalesReturn model uses returnedAt as the date field, not createdAt
     const salesReturns: any[] = await (prisma as any).salesReturn.findMany({
       where: {

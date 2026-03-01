@@ -1,12 +1,13 @@
 import { Router } from 'express';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { requireAuth, requireRole, blockAuditorWrites } from '../middleware/auth';
 import { createAuditLog } from '../middleware/audit';
 import { AuthRequest } from '../types';
+import { aggregationService } from '../services/aggregationService';
+import { prisma } from '../lib/prisma';
 
 const router = Router();
-const prisma = new PrismaClient();
 
 router.use(requireAuth);
 router.use(blockAuditorWrites);
@@ -139,6 +140,15 @@ router.post(
 
         return newPayment;
       });
+
+      try {
+        await aggregationService.updateDailyFinancialAggregate(new Date(), {
+          customerPaymentsTotal: new Prisma.Decimal(data.amount),
+          customerPaymentsCount: 1,
+        });
+      } catch (aggError) {
+        console.error('Aggregation update error:', aggError);
+      }
 
       res.status(201).json(payment);
     } catch (error) {
@@ -398,7 +408,7 @@ router.get('/customers/:id/statement', async (req: AuthRequest, res) => {
 router.get('/customers/:id/item-volume', async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
-    const { dateFrom, dateTo } = req.query;
+    const { dateFrom, dateTo, itemId } = req.query;
 
     // Verify customer exists
     const customer = await prisma.customer.findUnique({
@@ -429,6 +439,7 @@ router.get('/customers/:id/item-volume', async (req: AuthRequest, res) => {
     const items = await prisma.salesInvoiceItem.findMany({
       where: {
         invoice: invoiceWhere,
+        ...(itemId ? { itemId: itemId as string } : {}),
       },
       select: {
         itemId: true,
