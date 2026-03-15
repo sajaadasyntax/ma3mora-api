@@ -27,8 +27,8 @@ const usersData: { username: string; role: Role }[] = [
 const warehousesData: { name: string; isMain: boolean; warehouseType: WarehouseType }[] = [
   { name: 'المخزن الرئيسي', isMain: true, warehouseType: WarehouseType.MAIN },
   { name: 'المخزن الفرعي', isMain: false, warehouseType: WarehouseType.MAIN },
-  { name: 'مخزن الطريق', isMain: false, warehouseType: WarehouseType.ROAD },
-  { name: 'المخزن الجانبي', isMain: false, warehouseType: WarehouseType.SIDE },
+  { name: 'مخزن ألقرشي', isMain: false, warehouseType: WarehouseType.ROAD },
+  { name: 'المخزن عبود', isMain: false, warehouseType: WarehouseType.SIDE },
 ];
 
 async function main() {
