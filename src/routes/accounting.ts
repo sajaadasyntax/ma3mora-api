@@ -3307,6 +3307,55 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER')
       },
       orderBy: { createdAt: 'asc' },
     });
+
+    // Sales returns (refunds) — grouped by returnedAt date
+    const salesReturnsInPeriod = await prisma.salesReturn.findMany({
+      where: {
+        returnedAt: {
+          gte: startOfDay,
+          lte: endOfDay,
+        },
+        ...(method ? { invoice: { paymentMethod: method as any } } : {}),
+      },
+      include: {
+        invoice: {
+          include: {
+            customer: { select: { name: true } },
+            inventory: { select: { name: true } },
+          },
+        },
+        items: true,
+        returnedByUser: {
+          select: { id: true, username: true },
+        },
+      },
+      orderBy: { returnedAt: 'asc' },
+    });
+
+    // Document register: sales & purchase documents created in period (by document date)
+    const salesInvoicesCreated = await prisma.salesInvoice.findMany({
+      where: {
+        createdAt: { gte: startOfDay, lte: endOfDay },
+        paymentConfirmationStatus: { not: 'REJECTED' },
+      },
+      include: {
+        customer: { select: { name: true } },
+        inventory: { select: { name: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const procurementOrdersCreated = await prisma.procOrder.findMany({
+      where: {
+        createdAt: { gte: startOfDay, lte: endOfDay },
+        status: { not: 'CANCELLED' },
+      },
+      include: {
+        supplier: { select: { name: true } },
+        inventory: { select: { name: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
     
     // Group transactions by date
     const transactionsByDate: Record<string, any> = {};
@@ -3486,10 +3535,113 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER')
         },
       });
     });
+
+    // Process sales returns (cash / position outflow — same bucket as losses)
+    salesReturnsInPeriod.forEach((sr) => {
+      const dateKey = new Date(sr.returnedAt).toISOString().split('T')[0];
+      if (!transactionsByDate[dateKey]) {
+        transactionsByDate[dateKey] = {
+          date: dateKey,
+          income: [],
+          losses: [],
+          transfers: [],
+        };
+      }
+      const returnTotal = sr.items.reduce(
+        (sum, it) => sum.add(it.lineTotal),
+        new Prisma.Decimal(0)
+      );
+      transactionsByDate[dateKey].losses.push({
+        type: 'SALES_RETURN',
+        typeLabel: 'مرتجع مبيعات',
+        id: sr.id,
+        amount: returnTotal.toString(),
+        method: sr.invoice.paymentMethod,
+        date: sr.returnedAt,
+        recordedBy: sr.returnedByUser?.username || 'غير محدد',
+        details: {
+          invoiceNumber: sr.invoice.invoiceNumber,
+          customer: sr.invoice.customer?.name || 'غير محدد',
+          inventory: sr.invoice.inventory?.name || 'غير محدد',
+          reason: sr.reason,
+        },
+      });
+    });
+
+    // Build per-day document register (بيع، شراء، مرتجعات، منصرفات)
+    const emptySessionRegister = () => ({
+      salesInvoices: [] as any[],
+      procurementOrders: [] as any[],
+      salesReturns: [] as any[],
+      expenses: [] as any[],
+    });
+    const sessionRegisterByDate: Record<string, ReturnType<typeof emptySessionRegister>> = {};
+
+    const ensureReg = (dateKey: string) => {
+      if (!sessionRegisterByDate[dateKey]) {
+        sessionRegisterByDate[dateKey] = emptySessionRegister();
+      }
+      return sessionRegisterByDate[dateKey];
+    };
+
+    salesInvoicesCreated.forEach((inv) => {
+      const dateKey = inv.createdAt.toISOString().split('T')[0];
+      ensureReg(dateKey).salesInvoices.push({
+        id: inv.id,
+        invoiceNumber: inv.invoiceNumber,
+        customer: inv.customer?.name,
+        inventory: inv.inventory?.name,
+        total: inv.total.toString(),
+        paidAmount: inv.paidAmount.toString(),
+        createdAt: inv.createdAt,
+      });
+    });
+
+    procurementOrdersCreated.forEach((po) => {
+      const dateKey = po.createdAt.toISOString().split('T')[0];
+      ensureReg(dateKey).procurementOrders.push({
+        id: po.id,
+        orderNumber: po.orderNumber,
+        supplier: po.supplier.name,
+        inventory: po.inventory.name,
+        total: po.total.toString(),
+        paidAmount: po.paidAmount.toString(),
+        status: po.status,
+        createdAt: po.createdAt,
+      });
+    });
+
+    salesReturnsInPeriod.forEach((sr) => {
+      const dateKey = new Date(sr.returnedAt).toISOString().split('T')[0];
+      const returnTotal = sr.items.reduce(
+        (sum, it) => sum.add(it.lineTotal),
+        new Prisma.Decimal(0)
+      );
+      ensureReg(dateKey).salesReturns.push({
+        id: sr.id,
+        returnTotal: returnTotal.toString(),
+        invoiceNumber: sr.invoice.invoiceNumber,
+        customer: sr.invoice.customer?.name,
+        returnedAt: sr.returnedAt,
+        reason: sr.reason,
+      });
+    });
+
+    expenses.forEach((exp) => {
+      const dateKey = new Date(exp.createdAt).toISOString().split('T')[0];
+      ensureReg(dateKey).expenses.push({
+        id: exp.id,
+        amount: exp.amount.toString(),
+        method: exp.method,
+        description: exp.description,
+        createdAt: exp.createdAt,
+      });
+    });
     
-    // Sort dates chronologically to calculate cumulative balances
-    const sortedDates = Object.keys(transactionsByDate).sort((a, b) => 
-      new Date(a).getTime() - new Date(b).getTime()
+    // Sort dates chronologically (include days that only have document register, no cash rows yet)
+    const allDateKeys = new Set([...Object.keys(transactionsByDate), ...Object.keys(sessionRegisterByDate)]);
+    const sortedDates = [...allDateKeys].sort(
+      (a, b) => new Date(a).getTime() - new Date(b).getTime()
     );
 
     // Get opening balances (for calculating opening balance before transactions)
@@ -3633,6 +3785,28 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER')
       }
     });
 
+    const prePeriodSalesReturns = await prisma.salesReturn.findMany({
+      where: {
+        returnedAt: { lt: startOfDay },
+        ...(method ? { invoice: { paymentMethod: method as any } } : {}),
+      },
+      include: {
+        invoice: true,
+        items: true,
+      },
+    });
+
+    prePeriodSalesReturns.forEach((sr) => {
+      const total = sr.items.reduce(
+        (sum, it) => sum.add(it.lineTotal),
+        new Prisma.Decimal(0)
+      );
+      const m = sr.invoice.paymentMethod;
+      if (isValidMethod(m)) {
+        prePeriodImpact[m] = prePeriodImpact[m].sub(total);
+      }
+    });
+
     // Calculate opening balance at start of period
     const openingBalanceByMethod = {
       CASH: baseOpeningBalanceByMethod.CASH.add(prePeriodImpact.CASH),
@@ -3649,7 +3823,12 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER')
 
 
     const dailyReports = sortedDates.map((dateKey) => {
-      const dayData = transactionsByDate[dateKey];
+      const dayData = transactionsByDate[dateKey] || {
+        date: dateKey,
+        income: [] as any[],
+        losses: [] as any[],
+        transfers: [] as any[],
+      };
       
       // Calculate income and losses by payment method
       const incomeByMethod = {
@@ -3785,6 +3964,12 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER')
           BANK_NILE: lossesByMethod.BANK_NILE.toString(),
         },
         transfers: dayData.transfers || [],
+        sessionRegister: sessionRegisterByDate[dateKey] || {
+          salesInvoices: [],
+          procurementOrders: [],
+          salesReturns: [],
+          expenses: [],
+        },
       };
     }).reverse(); // Reverse to show newest first
     
