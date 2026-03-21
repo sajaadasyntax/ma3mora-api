@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { Prisma } from '@prisma/client';
+import { Prisma, CustomerType, Section } from '@prisma/client';
 import { z } from 'zod';
 import { requireAuth, requireRole, blockAuditorWrites } from '../middleware/auth';
 import { createAuditLog } from '../middleware/audit';
@@ -2091,6 +2091,283 @@ router.get('/reports/by-category', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER
     res.json({ rows, grandTotal });
   } catch (error) {
     console.error('Purchases by category report error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
+/** Pick WHOLESALE / RETAIL list prices for an inventory (جملة / تفصيل reference). */
+function pickWholesaleRetailPrices(
+  prices: { tier: CustomerType; price: Prisma.Decimal; inventoryId: string | null }[],
+  inventoryId: string
+) {
+  const matchInv = (p: { inventoryId: string | null }) =>
+    p.inventoryId === inventoryId || p.inventoryId === null;
+  const wholesale = prices.find((p) => p.tier === CustomerType.WHOLESALE && matchInv(p));
+  const retail = prices.find((p) => p.tier === CustomerType.RETAIL && matchInv(p));
+  return {
+    wholesalePrice: wholesale ? parseFloat(wholesale.price.toString()) : null,
+    retailPrice: retail ? parseFloat(retail.price.toString()) : null,
+  };
+}
+
+function pickWholesaleRetailFirst(
+  prices: { tier: CustomerType; price: Prisma.Decimal; inventoryId: string | null }[]
+) {
+  const wholesale = prices.find((p) => p.tier === CustomerType.WHOLESALE);
+  const retail = prices.find((p) => p.tier === CustomerType.RETAIL);
+  return {
+    wholesalePrice: wholesale ? parseFloat(wholesale.price.toString()) : null,
+    retailPrice: retail ? parseFloat(retail.price.toString()) : null,
+  };
+}
+
+// Detailed purchases for one specific item
+router.get('/reports/item-purchases', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (req: AuthRequest, res) => {
+  try {
+    const { itemId, dateFrom, dateTo, inventoryId } = req.query;
+
+    if (!itemId || !dateFrom || !dateTo) {
+      return res.status(400).json({ error: 'itemId و dateFrom و dateTo مطلوبة' });
+    }
+
+    const start = new Date(dateFrom as string);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(dateTo as string);
+    end.setHours(23, 59, 59, 999);
+
+    const orderWhere: Prisma.ProcOrderWhereInput = {
+      status: { not: 'CANCELLED' },
+      createdAt: { gte: start, lte: end },
+      ...(inventoryId ? { inventoryId: inventoryId as string } : {}),
+    };
+
+    const lines = await prisma.procOrderItem.findMany({
+      where: {
+        itemId: itemId as string,
+        order: orderWhere,
+      },
+      include: {
+        order: {
+          include: {
+            supplier: true,
+            inventory: true,
+            creator: { select: { username: true } },
+          },
+        },
+        item: { include: { prices: true } },
+      },
+      orderBy: { order: { createdAt: 'desc' } },
+    });
+
+    const item = await prisma.item.findUnique({
+      where: { id: itemId as string },
+      include: { prices: true },
+    });
+
+    if (!item) {
+      return res.status(404).json({ error: 'الصنف غير موجود' });
+    }
+
+    const mainLines = lines.filter((l) => !l.isGiftCompensation);
+    const totalQuantity = mainLines.reduce((s, l) => s + parseFloat(l.quantity.toString()), 0);
+    const totalAmount = mainLines.reduce((s, l) => s + parseFloat(l.lineTotal.toString()), 0);
+    const orderIds = new Set(lines.map((l) => l.orderId));
+
+    const detailRows = lines.map((l) => {
+      const invId = l.order.inventoryId;
+      const { wholesalePrice, retailPrice } = pickWholesaleRetailPrices(l.item.prices, invId);
+      return {
+        lineId: l.id,
+        orderId: l.orderId,
+        orderNumber: l.order.orderNumber,
+        orderDate: l.order.createdAt.toISOString(),
+        supplierName: l.order.supplier.name,
+        warehouseName: l.order.inventory.name,
+        inventoryId: invId,
+        quantity: parseFloat(l.quantity.toString()),
+        giftQty: l.giftQty ? parseFloat(l.giftQty.toString()) : 0,
+        unitCost: parseFloat(l.unitCost.toString()),
+        lineTotal: parseFloat(l.lineTotal.toString()),
+        paymentConfirmed: l.order.paymentConfirmed,
+        orderStatus: l.order.status,
+        isGiftCompensation: l.isGiftCompensation,
+        wholesalePrice,
+        retailPrice,
+        createdBy: l.order.creator?.username ?? null,
+      };
+    });
+
+    res.json({
+      item: {
+        id: item.id,
+        name: item.name,
+        section: item.section,
+      },
+      dateFrom: dateFrom as string,
+      dateTo: dateTo as string,
+      summary: {
+        totalQuantity,
+        totalAmount,
+        lineCount: mainLines.length,
+        orderCount: orderIds.size,
+      },
+      lines: detailRows,
+    });
+  } catch (error) {
+    console.error('Item purchases report error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
+// Purchases by section (BAKERY or GROCERY): جملة (summary per item) + تفصيل (each line)
+router.get('/reports/section-by-items', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (req: AuthRequest, res) => {
+  try {
+    const { section, dateFrom, dateTo, inventoryId } = req.query;
+
+    if (!section || !dateFrom || !dateTo) {
+      return res.status(400).json({ error: 'section و dateFrom و dateTo مطلوبة' });
+    }
+
+    const sec = section as string;
+    if (sec !== Section.BAKERY && sec !== Section.GROCERY) {
+      return res.status(400).json({ error: 'section يجب أن يكون BAKERY أو GROCERY' });
+    }
+
+    const start = new Date(dateFrom as string);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(dateTo as string);
+    end.setHours(23, 59, 59, 999);
+
+    const orderWhere: Prisma.ProcOrderWhereInput = {
+      status: { not: 'CANCELLED' },
+      section: sec as Section,
+      createdAt: { gte: start, lte: end },
+      ...(inventoryId ? { inventoryId: inventoryId as string } : {}),
+    };
+
+    const lines = await prisma.procOrderItem.findMany({
+      where: {
+        order: orderWhere,
+      },
+      include: {
+        order: {
+          include: {
+            supplier: true,
+            inventory: true,
+            creator: { select: { username: true } },
+          },
+        },
+        item: { include: { prices: true } },
+      },
+      orderBy: [{ order: { createdAt: 'desc' } }, { item: { name: 'asc' } }],
+    });
+
+    const summaryMap = new Map<
+      string,
+      {
+        itemId: string;
+        itemName: string;
+        totalQuantity: number;
+        totalAmount: number;
+        lineCount: number;
+        orderIds: Set<string>;
+      }
+    >();
+
+    for (const l of lines) {
+      if (l.isGiftCompensation) continue;
+
+      const id = l.itemId;
+      const qty = parseFloat(l.quantity.toString());
+      const amt = parseFloat(l.lineTotal.toString());
+
+      if (!summaryMap.has(id)) {
+        summaryMap.set(id, {
+          itemId: id,
+          itemName: l.item.name,
+          totalQuantity: 0,
+          totalAmount: 0,
+          lineCount: 0,
+          orderIds: new Set(),
+        });
+      }
+      const row = summaryMap.get(id)!;
+      row.totalQuantity += qty;
+      row.totalAmount += amt;
+      row.lineCount += 1;
+      row.orderIds.add(l.orderId);
+    }
+
+    const itemIds = [...summaryMap.keys()];
+    const itemsForPrices = await prisma.item.findMany({
+      where: { id: { in: itemIds } },
+      include: { prices: true },
+    });
+    const priceByItemId = new Map(itemsForPrices.map((it) => [it.id, it.prices]));
+
+    const summary = [...summaryMap.values()]
+      .map((r) => {
+        const prices = priceByItemId.get(r.itemId) ?? [];
+        const listPrices = inventoryId
+          ? pickWholesaleRetailPrices(prices, inventoryId as string)
+          : pickWholesaleRetailFirst(prices);
+        const avgUnitCost = r.totalQuantity > 0 ? r.totalAmount / r.totalQuantity : 0;
+        return {
+          itemId: r.itemId,
+          itemName: r.itemName,
+          totalQuantity: r.totalQuantity,
+          totalAmount: r.totalAmount,
+          avgUnitCost,
+          lineCount: r.lineCount,
+          orderCount: r.orderIds.size,
+          wholesalePrice: listPrices.wholesalePrice,
+          retailPrice: listPrices.retailPrice,
+        };
+      })
+      .sort((a, b) => a.itemName.localeCompare(b.itemName, 'ar'));
+
+    const details = lines.map((l) => {
+      const invId = l.order.inventoryId;
+      const { wholesalePrice, retailPrice } = pickWholesaleRetailPrices(l.item.prices, invId);
+      return {
+        lineId: l.id,
+        orderNumber: l.order.orderNumber,
+        orderDate: l.order.createdAt.toISOString(),
+        supplierName: l.order.supplier.name,
+        warehouseName: l.order.inventory.name,
+        inventoryId: invId,
+        itemId: l.itemId,
+        itemName: l.item.name,
+        quantity: parseFloat(l.quantity.toString()),
+        giftQty: l.giftQty ? parseFloat(l.giftQty.toString()) : 0,
+        unitCost: parseFloat(l.unitCost.toString()),
+        lineTotal: parseFloat(l.lineTotal.toString()),
+        paymentConfirmed: l.order.paymentConfirmed,
+        orderStatus: l.order.status,
+        isGiftCompensation: l.isGiftCompensation,
+        wholesalePrice,
+        retailPrice,
+        createdBy: l.order.creator?.username ?? null,
+      };
+    });
+
+    const nonGift = lines.filter((l) => !l.isGiftCompensation);
+    const grandTotals = {
+      totalQuantity: nonGift.reduce((s, l) => s + parseFloat(l.quantity.toString()), 0),
+      totalAmount: nonGift.reduce((s, l) => s + parseFloat(l.lineTotal.toString()), 0),
+      lineCount: nonGift.length,
+    };
+
+    res.json({
+      section: sec,
+      dateFrom: dateFrom as string,
+      dateTo: dateTo as string,
+      summary,
+      details,
+      grandTotals,
+    });
+  } catch (error) {
+    console.error('Section by items report error:', error);
     res.status(500).json({ error: 'خطأ في الخادم' });
   }
 });
