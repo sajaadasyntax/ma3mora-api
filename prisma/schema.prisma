@@ -379,11 +379,12 @@ model Supplier {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  procOrders           ProcOrder[]
-  openingBalance       OpeningBalance[]
-  cumulativeAggregates SupplierCumulativeAggregate[]
-  giftAccrualRules     GiftAccrualRule[]
-  giftLedgerEntries    SupplierGiftLedger[]
+  procOrders             ProcOrder[]
+  openingBalance         OpeningBalance[]
+  cumulativeAggregates   SupplierCumulativeAggregate[]
+  giftAccrualRules       GiftAccrualRule[]
+  giftLedgerEntries      SupplierGiftLedger[]
+  treasuryTransactions   TreasuryTransaction[]
 
   @@map("suppliers")
 }
@@ -808,16 +809,19 @@ model TreasuryTransaction {
   type            TreasuryType
   amount          Decimal       @db.Decimal(15, 2)
   method          PaymentMethod
-  customerId      String? // Optional: link to customer for debits
+  customerId      String? // Optional: link to customer (balance effect)
+  supplierId      String? // Optional: link to supplier (balance effect)
   description     String
   referenceNumber String?
   createdBy       String
   createdAt       DateTime      @default(now())
 
   customer Customer? @relation(fields: [customerId], references: [id])
+  supplier Supplier? @relation(fields: [supplierId], references: [id])
   creator  User      @relation(fields: [createdBy], references: [id])
 
   @@index([customerId])
+  @@index([supplierId])
   @@index([createdAt])
   @@map("treasury_transactions")
 }

@@ -1695,12 +1695,56 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
   }
 });
 
+/** Per-customer treasury: cash in = collected at treasury (reduces receivable); cash out = paid to customer (increases receivable). */
+async function getTreasurySumsByCustomer(): Promise<
+  Map<string, { cashIn: Prisma.Decimal; cashOut: Prisma.Decimal }>
+> {
+  const rows = await prisma.treasuryTransaction.findMany({
+    where: { customerId: { not: null } },
+    select: { customerId: true, type: true, amount: true },
+  });
+  const map = new Map<string, { cashIn: Prisma.Decimal; cashOut: Prisma.Decimal }>();
+  for (const r of rows) {
+    const id = r.customerId as string;
+    let e = map.get(id);
+    if (!e) {
+      e = { cashIn: new Prisma.Decimal(0), cashOut: new Prisma.Decimal(0) };
+      map.set(id, e);
+    }
+    if (r.type === 'CASH_IN') e.cashIn = e.cashIn.add(r.amount);
+    else if (r.type === 'CASH_OUT') e.cashOut = e.cashOut.add(r.amount);
+  }
+  return map;
+}
+
+/**
+ * Per-supplier treasury totals toward payables (matches treasury route: both CASH_IN and CASH_OUT add to supplier totalPaid).
+ */
+async function getTreasuryPaidBySupplier(): Promise<Map<string, Prisma.Decimal>> {
+  const rows = await prisma.treasuryTransaction.findMany({
+    where: { supplierId: { not: null } },
+    select: { supplierId: true, amount: true },
+  });
+  const map = new Map<string, Prisma.Decimal>();
+  for (const r of rows) {
+    const id = r.supplierId as string;
+    const prev = map.get(id) || new Prisma.Decimal(0);
+    map.set(id, prev.add(r.amount));
+  }
+  return map;
+}
+
 // Receivables (له) and Payables (عليه) report
 router.get('/receivables-payables', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (req: AuthRequest, res) => {
   try {
     const { section } = req.query;
 
-    // Customers receivables: invoices (total - paid) minus account-level payments
+    const [treasuryByCustomer, treasuryPaidBySupplier] = await Promise.all([
+      getTreasurySumsByCustomer(),
+      getTreasuryPaidBySupplier(),
+    ]);
+
+    // Customers receivables: invoices (total - paid) minus account-level payments, folded with treasury
     const customers = await prisma.customer.findMany({
       include: {
         salesInvoices: section
@@ -1716,14 +1760,20 @@ router.get('/receivables-payables', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGE
       const invoicePaid = c.salesInvoices.reduce((sum: Prisma.Decimal, inv: any) => sum.add(inv.paidAmount || 0), new Prisma.Decimal(0));
       const accountPayments = (c as any).customerPayments.reduce((sum: Prisma.Decimal, p: any) => sum.add(p.amount), new Prisma.Decimal(0));
       const deposits = (c as any).salesDeposits.reduce((sum: Prisma.Decimal, d: any) => sum.add(d.amount), new Prisma.Decimal(0));
-      const remaining = invoiceTotal.sub(invoicePaid).sub(accountPayments).sub(deposits);
+      const tr = treasuryByCustomer.get(c.id) || { cashIn: new Prisma.Decimal(0), cashOut: new Prisma.Decimal(0) };
+      // Treasury cash-in: like payment; cash-out: increases what customer owes
+      const paid =
+        invoicePaid.add(accountPayments).add(deposits).add(tr.cashIn);
+      const remaining = invoiceTotal.sub(paid).add(tr.cashOut);
       return {
         id: c.id,
         name: c.name,
         division: c.division,
         total: invoiceTotal.toFixed(2),
-        paid: invoicePaid.add(accountPayments).add(deposits).toFixed(2),
+        paid: paid.toFixed(2),
         remaining: remaining.toFixed(2),
+        treasuryCashIn: tr.cashIn.toFixed(2),
+        treasuryCashOut: tr.cashOut.toFixed(2),
       };
     });
 
@@ -1744,7 +1794,9 @@ router.get('/receivables-payables', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGE
     const payables = suppliers
       .map((s) => {
         const total = s.procOrders.reduce((sum: Prisma.Decimal, o: any) => sum.add(o.total), new Prisma.Decimal(0));
-        const paid = s.procOrders.reduce((sum: Prisma.Decimal, o: any) => sum.add(o.paidAmount || 0), new Prisma.Decimal(0));
+        const orderPaid = s.procOrders.reduce((sum: Prisma.Decimal, o: any) => sum.add(o.paidAmount || 0), new Prisma.Decimal(0));
+        const treasuryPaid = treasuryPaidBySupplier.get(s.id) || new Prisma.Decimal(0);
+        const paid = orderPaid.add(treasuryPaid);
         const remaining = total.sub(paid);
         return {
           id: s.id,
@@ -1752,6 +1804,7 @@ router.get('/receivables-payables', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGE
           total: total.toFixed(2),
           paid: paid.toFixed(2),
           remaining: remaining.toFixed(2),
+          treasuryPaid: treasuryPaid.toFixed(2),
         };
       })
       .filter((p) => new Prisma.Decimal(p.remaining).greaterThan(0));

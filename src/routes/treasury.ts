@@ -49,25 +49,62 @@ function bucketToNumbers(bucket: Record<TreasuryMethod, Prisma.Decimal>) {
 
 // ─── Zod Schemas ────────────────────────────────────────────────────────────
 
-const cashOutSchema = z.object({
-  amount: z.number().positive({ message: 'المبلغ يجب أن يكون رقم موجب' }),
-  method: z.enum(['CASH', 'BANKAK', 'BANK_NILE', 'COMMISSION', 'DEBT', 'OTHERS'], {
-    errorMap: () => ({ message: 'طريقة الدفع غير صالحة' }),
-  }),
-  description: z.string().min(1, { message: 'الوصف مطلوب' }),
-  customerId: z.string().optional(),
-  referenceNumber: z.string().optional(),
-});
+const cashOutSchema = z
+  .object({
+    amount: z.number().positive({ message: 'المبلغ يجب أن يكون رقم موجب' }),
+    method: z.enum(['CASH', 'BANKAK', 'BANK_NILE', 'COMMISSION', 'DEBT', 'OTHERS'], {
+      errorMap: () => ({ message: 'طريقة الدفع غير صالحة' }),
+    }),
+    description: z.string().min(1, { message: 'الوصف مطلوب' }),
+    customerId: z.string().optional(),
+    supplierId: z.string().optional(),
+    referenceNumber: z.string().optional(),
+  })
+  .refine((d) => !(d.customerId && d.supplierId), {
+    message: 'لا يمكن ربط العملية بعميل ومورد معاً',
+  });
 
-const cashInSchema = z.object({
-  amount: z.number().positive({ message: 'المبلغ يجب أن يكون رقم موجب' }),
-  method: z.enum(['CASH', 'BANKAK', 'BANK_NILE', 'COMMISSION', 'DEBT', 'OTHERS'], {
-    errorMap: () => ({ message: 'طريقة الدفع غير صالحة' }),
-  }),
-  description: z.string().min(1, { message: 'الوصف مطلوب' }),
-  customerId: z.string().optional(),
-  referenceNumber: z.string().optional(),
-});
+const cashInSchema = z
+  .object({
+    amount: z.number().positive({ message: 'المبلغ يجب أن يكون رقم موجب' }),
+    method: z.enum(['CASH', 'BANKAK', 'BANK_NILE', 'COMMISSION', 'DEBT', 'OTHERS'], {
+      errorMap: () => ({ message: 'طريقة الدفع غير صالحة' }),
+    }),
+    description: z.string().min(1, { message: 'الوصف مطلوب' }),
+    customerId: z.string().optional(),
+    supplierId: z.string().optional(),
+    referenceNumber: z.string().optional(),
+  })
+  .refine((d) => !(d.customerId && d.supplierId), {
+    message: 'لا يمكن ربط العملية بعميل ومورد معاً',
+  });
+
+function customerSalesMethodField(
+  method: string
+): 'salesCash' | 'salesBank' | 'salesBankNile' | 'salesDebtMethod' | 'salesOthers' {
+  switch (method) {
+    case 'CASH':
+      return 'salesCash';
+    case 'BANKAK':
+      return 'salesBank';
+    case 'BANK_NILE':
+      return 'salesBankNile';
+    case 'DEBT':
+      return 'salesDebtMethod';
+    case 'COMMISSION':
+    case 'OTHERS':
+    default:
+      return 'salesOthers';
+  }
+}
+
+function supplierPurchaseBuckets(method: string, amount: Prisma.Decimal) {
+  const z = new Prisma.Decimal(0);
+  if (method === 'CASH') return { purchasesCash: amount, purchasesBank: z, purchasesBankNile: z };
+  if (method === 'BANKAK') return { purchasesCash: z, purchasesBank: amount, purchasesBankNile: z };
+  if (method === 'BANK_NILE') return { purchasesCash: z, purchasesBank: z, purchasesBankNile: amount };
+  return { purchasesCash: amount, purchasesBank: z, purchasesBankNile: z };
+}
 
 // ─── GET /treasury/daily — Daily Treasury Ledger ────────────────────────────
 
@@ -287,13 +324,19 @@ router.post(
         });
       }
 
-      const { amount, method, description, customerId, referenceNumber } = validation.data;
+      const { amount, method, description, customerId, supplierId, referenceNumber } = validation.data;
 
       // Verify customer exists if provided
       if (customerId) {
         const customer = await prisma.customer.findUnique({ where: { id: customerId } });
         if (!customer) {
           return res.status(404).json({ error: 'العميل غير موجود' });
+        }
+      }
+      if (supplierId) {
+        const supplier = await prisma.supplier.findUnique({ where: { id: supplierId } });
+        if (!supplier) {
+          return res.status(404).json({ error: 'المورد غير موجود' });
         }
       }
 
@@ -306,11 +349,13 @@ router.post(
             method: method as any,
             description,
             customerId: customerId || null,
+            supplierId: supplierId || null,
             referenceNumber: referenceNumber || null,
             createdBy: req.user!.id,
           },
           include: {
             customer: true,
+            supplier: true,
             creator: { select: { id: true, username: true } },
           },
         });
@@ -356,6 +401,19 @@ router.post(
         return created;
       });
 
+      if (supplierId) {
+        try {
+          const amt = new Prisma.Decimal(amount);
+          const buckets = supplierPurchaseBuckets(method, amt);
+          await aggregationService.updateSupplierCumulativeAggregate(supplierId, new Date(), {
+            totalPaid: amt,
+            ...buckets,
+          });
+        } catch (supAggErr) {
+          console.error('Supplier aggregate update (treasury cash-out):', supAggErr);
+        }
+      }
+
       try {
         await aggregationService.updateDailyFinancialAggregate(new Date(), {
           treasuryOutflow: new Prisma.Decimal(amount),
@@ -388,35 +446,128 @@ router.post(
         });
       }
 
-      const { amount, method, description, customerId, referenceNumber } = validation.data;
+      const { amount, method, description, customerId, supplierId, referenceNumber } = validation.data;
 
-      // Verify customer exists if provided
       if (customerId) {
         const customer = await prisma.customer.findUnique({ where: { id: customerId } });
         if (!customer) {
           return res.status(404).json({ error: 'العميل غير موجود' });
         }
       }
+      if (supplierId) {
+        const supplier = await prisma.supplier.findUnique({ where: { id: supplierId } });
+        if (!supplier) {
+          return res.status(404).json({ error: 'المورد غير موجود' });
+        }
+      }
 
-      const transaction = await prisma.treasuryTransaction.create({
-        data: {
-          type: 'CASH_IN',
-          amount: new Prisma.Decimal(amount),
-          method: method as any,
-          description,
-          customerId: customerId || null,
-          referenceNumber: referenceNumber || null,
-          createdBy: req.user!.id,
-        },
-        include: {
-          customer: true,
-          creator: { select: { id: true, username: true } },
-        },
+      const amountDecimal = new Prisma.Decimal(amount);
+
+      const transaction = await prisma.$transaction(async (tx) => {
+        const created = await tx.treasuryTransaction.create({
+          data: {
+            type: 'CASH_IN',
+            amount: amountDecimal,
+            method: method as any,
+            description,
+            customerId: customerId || null,
+            supplierId: supplierId || null,
+            referenceNumber: referenceNumber || null,
+            createdBy: req.user!.id,
+          },
+          include: {
+            customer: true,
+            supplier: true,
+            creator: { select: { id: true, username: true } },
+          },
+        });
+
+        // Customer paid at treasury → reduce outstanding (same logic as account payment)
+        if (customerId) {
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+
+          const previousAggregate = await tx.customerCumulativeAggregate.findFirst({
+            where: {
+              customerId,
+              date: { lte: today },
+            },
+            orderBy: { date: 'desc' },
+          });
+
+          const totalInvoices = previousAggregate?.totalInvoices || 0;
+          const totalSales = previousAggregate?.totalSales || new Prisma.Decimal(0);
+          const totalPaid = (previousAggregate?.totalPaid || new Prisma.Decimal(0)).add(amountDecimal);
+          const totalOutstanding = totalSales.sub(totalPaid);
+          const totalAccountPayments = (previousAggregate?.totalAccountPayments || new Prisma.Decimal(0)).add(
+            amountDecimal
+          );
+
+          let salesCash = previousAggregate?.salesCash || new Prisma.Decimal(0);
+          let salesBank = previousAggregate?.salesBank || new Prisma.Decimal(0);
+          let salesBankNile = previousAggregate?.salesBankNile || new Prisma.Decimal(0);
+          let salesDebtMethod = previousAggregate?.salesDebtMethod || new Prisma.Decimal(0);
+          let salesOthers = previousAggregate?.salesOthers || new Prisma.Decimal(0);
+
+          const mf = customerSalesMethodField(method);
+          if (mf === 'salesCash') salesCash = salesCash.add(amountDecimal);
+          else if (mf === 'salesBank') salesBank = salesBank.add(amountDecimal);
+          else if (mf === 'salesBankNile') salesBankNile = salesBankNile.add(amountDecimal);
+          else if (mf === 'salesDebtMethod') salesDebtMethod = salesDebtMethod.add(amountDecimal);
+          else salesOthers = salesOthers.add(amountDecimal);
+
+          await tx.customerCumulativeAggregate.upsert({
+            where: {
+              customerId_date: {
+                customerId,
+                date: today,
+              },
+            },
+            update: {
+              totalPaid,
+              totalOutstanding,
+              totalAccountPayments,
+              salesCash,
+              salesBank,
+              salesBankNile,
+              salesDebtMethod,
+              salesOthers,
+            },
+            create: {
+              customerId,
+              date: today,
+              totalInvoices,
+              totalSales,
+              totalPaid,
+              totalOutstanding,
+              totalAccountPayments,
+              salesCash,
+              salesBank,
+              salesBankNile,
+              salesDebtMethod,
+              salesOthers,
+            },
+          });
+        }
+
+        return created;
       });
+
+      if (supplierId) {
+        try {
+          const buckets = supplierPurchaseBuckets(method, amountDecimal);
+          await aggregationService.updateSupplierCumulativeAggregate(supplierId, new Date(), {
+            totalPaid: amountDecimal,
+            ...buckets,
+          });
+        } catch (supAggErr) {
+          console.error('Supplier aggregate update (treasury cash-in):', supAggErr);
+        }
+      }
 
       try {
         await aggregationService.updateDailyFinancialAggregate(new Date(), {
-          treasuryInflow: new Prisma.Decimal(amount),
+          treasuryInflow: amountDecimal,
         });
       } catch (aggError) {
         console.error('Aggregation update error:', aggError);
@@ -434,7 +585,7 @@ router.post(
 
 router.get('/transactions', async (req: AuthRequest, res) => {
   try {
-    const { dateFrom, dateTo, customerId, type } = req.query;
+    const { dateFrom, dateTo, customerId, supplierId, type } = req.query;
 
     const where: Prisma.TreasuryTransactionWhereInput = {};
 
@@ -455,6 +606,9 @@ router.get('/transactions', async (req: AuthRequest, res) => {
     if (customerId) {
       where.customerId = customerId as string;
     }
+    if (supplierId) {
+      where.supplierId = supplierId as string;
+    }
 
     // Type filter
     if (type) {
@@ -469,6 +623,7 @@ router.get('/transactions', async (req: AuthRequest, res) => {
       where,
       include: {
         customer: true,
+        supplier: true,
         creator: { select: { id: true, username: true } },
       },
       orderBy: { createdAt: 'desc' },
