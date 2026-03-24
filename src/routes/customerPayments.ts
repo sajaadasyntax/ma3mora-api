@@ -348,7 +348,7 @@ router.get('/customers/:id/statement', async (req: AuthRequest, res) => {
         customerId: id,
         createdAt: { gte: from, lte: to },
       },
-      select: { id: true, type: true, amount: true, notes: true, createdAt: true },
+      select: { id: true, type: true, amount: true, description: true, createdAt: true },
       orderBy: { createdAt: 'asc' },
     });
 
@@ -405,8 +405,8 @@ router.get('/customers/:id/statement', async (req: AuthRequest, res) => {
         date: tr.createdAt,
         type: tr.type === 'CASH_IN' ? 'TREASURY_CASH_IN' : 'TREASURY_CASH_OUT',
         description: tr.type === 'CASH_IN'
-          ? `إيداع خزينة${tr.notes ? ` - ${tr.notes}` : ''}`
-          : `صرف خزينة${tr.notes ? ` - ${tr.notes}` : ''}`,
+          ? `إيداع خزينة${tr.description ? ` - ${tr.description}` : ''}`
+          : `صرف خزينة${tr.description ? ` - ${tr.description}` : ''}`,
         debit: tr.type === 'CASH_OUT' ? tr.amount.toString() : '0',
         credit: tr.type === 'CASH_IN' ? tr.amount.toString() : '0',
       });
