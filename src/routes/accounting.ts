@@ -1846,7 +1846,7 @@ async function getTreasurySumsByCustomer(): Promise<
  */
 async function getTreasuryPaidBySupplier(): Promise<Map<string, Prisma.Decimal>> {
   const rows = await prisma.treasuryTransaction.findMany({
-    where: { supplierId: { not: null }, type: 'CASH_OUT' },
+    where: { supplierId: { not: null } },
     select: { supplierId: true, amount: true },
   });
   const map = new Map<string, Prisma.Decimal>();
