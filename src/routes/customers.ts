@@ -102,6 +102,9 @@ router.get('/:id', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GROCERY',
         openingBalance: {
           where: { isClosed: false },
         },
+        treasuryTransactions: {
+          select: { type: true, amount: true },
+        },
       },
     });
 

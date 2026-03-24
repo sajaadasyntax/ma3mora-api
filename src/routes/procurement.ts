@@ -787,6 +787,7 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), checkBal
               inventoryId: freshOrder.inventoryId,
               itemId: batch.itemId,
               quantity: totalQuantity,
+              initialQuantity: totalQuantity,
               expiryDate: batch.expiryDate ? new Date(batch.expiryDate) : null,
               receiptId: receipt.id,
               notes: batchNotes,
@@ -835,6 +836,7 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), checkBal
                   inventoryId: freshOrder.inventoryId,
                   itemId: orderItem.giftItemId,
                   quantity: orderItem.giftQuantity,
+                  initialQuantity: orderItem.giftQuantity,
                   receiptId: receipt.id,
                   notes: 'هدية',
                 },
@@ -882,6 +884,7 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), checkBal
               inventoryId: freshOrder.inventoryId,
               itemId: item.itemId,
               quantity: totalQuantity,
+              initialQuantity: totalQuantity,
               receiptId: receipt.id,
               notes: item.giftQty && item.giftQty.gt(0) ? `يشمل ${item.giftQty.toString()} هدية` : undefined,
             },
@@ -923,6 +926,7 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), checkBal
                 inventoryId: freshOrder.inventoryId,
                 itemId: item.giftItemId,
                 quantity: item.giftQuantity,
+                initialQuantity: item.giftQuantity,
                 receiptId: receipt.id,
                 notes: 'هدية',
               },
@@ -983,6 +987,7 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), checkBal
               inventoryId: freshOrder.inventoryId,
               itemId: extra.itemId,
               quantity: extraQty,
+              initialQuantity: extraQty,
               receiptId: receipt.id,
               notes: 'هدية/تعويض',
             },
@@ -1005,7 +1010,8 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), checkBal
         }
       }
 
-      // Calculate received quantities from all receipts (including the one just created)
+      // Calculate received quantities from all receipts using initialQuantity
+      // (initialQuantity preserves original received amount; quantity changes with sales)
       const receivedByItem: Record<string, Prisma.Decimal> = {};
       const allReceipts = await tx.inventoryReceipt.findMany({
         where: { orderId: id },
@@ -1015,7 +1021,7 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), checkBal
       for (const r of allReceipts) {
         for (const b of r.batches) {
           const key = b.itemId;
-          const qty = new Prisma.Decimal(b.quantity);
+          const qty = new Prisma.Decimal(b.initialQuantity ?? b.quantity);
           receivedByItem[key] = (receivedByItem[key] || new Prisma.Decimal(0)).add(qty);
         }
       }
@@ -1853,12 +1859,13 @@ router.post('/orders/:id/assign-delivered', requireRole('INVENTORY', 'MANAGER'),
       return res.status(400).json({ error: 'أمر الشراء مستلم بالفعل' });
     }
 
-    // Sum received quantities by itemId from all receipts
+    // Sum received quantities by itemId using initialQuantity
+    // (initialQuantity preserves original received amount; quantity changes with sales)
     const receivedByItem: Record<string, Prisma.Decimal> = {};
     for (const r of order.receipts) {
       for (const b of r.batches) {
         const key = b.itemId;
-        const qty = new Prisma.Decimal(b.quantity);
+        const qty = new Prisma.Decimal(b.initialQuantity ?? b.quantity);
         receivedByItem[key] = (receivedByItem[key] || new Prisma.Decimal(0)).add(qty);
       }
     }
@@ -1948,11 +1955,13 @@ router.get('/reports/po-vs-grn', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER')
     let grandTotalGiftComp = 0;
 
     for (const order of orders) {
-      // Aggregate received quantities per item from all receipts
+      // Aggregate received quantities per item using initialQuantity
+      // (initialQuantity preserves original received amount; quantity changes with sales)
       const totalReceivedByItem: Record<string, number> = {};
       for (const receipt of order.receipts) {
         for (const batch of receipt.batches) {
-          totalReceivedByItem[batch.itemId] = (totalReceivedByItem[batch.itemId] || 0) + parseFloat(batch.quantity.toString());
+          const qty = parseFloat((batch.initialQuantity ?? batch.quantity).toString());
+          totalReceivedByItem[batch.itemId] = (totalReceivedByItem[batch.itemId] || 0) + qty;
         }
       }
 

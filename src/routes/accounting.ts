@@ -599,201 +599,133 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
   try {
     const { inventoryId, section } = req.query;
 
-    // Sales summary - exclude rejected invoices
+    // ── 0. Detect current open session (CASHBOX scope) ───────────────────────
+    const openingBalances = await prisma.openingBalance.findMany({
+      where: { scope: 'CASHBOX', isClosed: false },
+      orderBy: { openedAt: 'asc' },
+    });
+
+    // Session start = earliest open CASHBOX balance; if none, use epoch
+    const sessionStart: Date = openingBalances.length > 0
+      ? openingBalances[0].openedAt
+      : new Date(0);
+    const sessionEnd = new Date();
+
+    const totalOpeningBalance = openingBalances.reduce(
+      (sum, bal) => sum.add(bal.amount),
+      new Prisma.Decimal(0)
+    );
+
+    // ── 1. Sales (session-scoped) ─────────────────────────────────────────────
     const salesWhere: any = {
       paymentConfirmationStatus: { not: 'REJECTED' },
+      createdAt: { gte: sessionStart, lte: sessionEnd },
     };
     if (inventoryId) salesWhere.inventoryId = inventoryId;
     if (section) salesWhere.section = section;
 
-    const salesInvoices = await prisma.salesInvoice.findMany({
-      where: salesWhere,
-    });
+    const salesInvoices = await prisma.salesInvoice.findMany({ where: salesWhere });
 
-    const totalSales = salesInvoices.reduce(
-      (sum, inv) => sum.add(inv.total),
-      new Prisma.Decimal(0)
-    );
-
-    const totalReceived = salesInvoices.reduce(
-      (sum, inv) => sum.add(inv.paidAmount || 0),
-      new Prisma.Decimal(0)
-    );
-
-    // Calculate unpaid sales debt - only count DELIVERED invoices that are not fully paid
-    // المديونيات should only include delivered but unpaid invoices
-    const deliveredUnpaidInvoices = salesInvoices.filter(
-      inv => inv.deliveryStatus === 'DELIVERED' && inv.paymentStatus !== 'PAID'
-    );
-    
-    const totalSalesDebt = deliveredUnpaidInvoices.reduce(
-      (sum, inv) => {
+    const totalSales = salesInvoices.reduce((sum, inv) => sum.add(inv.total), new Prisma.Decimal(0));
+    const totalReceived = salesInvoices.reduce((sum, inv) => sum.add(inv.paidAmount || 0), new Prisma.Decimal(0));
+    const totalSalesDebt = salesInvoices
+      .filter(inv => inv.deliveryStatus === 'DELIVERED' && inv.paymentStatus !== 'PAID')
+      .reduce((sum, inv) => {
         const outstanding = new Prisma.Decimal(inv.total).sub(inv.paidAmount || 0);
         return sum.add(outstanding.greaterThan(0) ? outstanding : new Prisma.Decimal(0));
-      },
-      new Prisma.Decimal(0)
-    );
+      }, new Prisma.Decimal(0));
 
-    // Procurement summary - exclude cancelled orders
+    // ── 2. Procurement (session-scoped) ───────────────────────────────────────
     const procWhere: any = {
-      status: { not: 'CANCELLED' }
+      status: { not: 'CANCELLED' },
+      createdAt: { gte: sessionStart, lte: sessionEnd },
     };
     if (inventoryId) procWhere.inventoryId = inventoryId;
     if (section) procWhere.section = section;
 
     const procOrders = await prisma.procOrder.findMany({
       where: procWhere,
+      include: { items: true },
     });
-
-    // Get cancelled orders separately for reporting
-    const cancelledProcWhere: any = {
-      status: 'CANCELLED'
-    };
-    if (inventoryId) cancelledProcWhere.inventoryId = inventoryId;
-    if (section) cancelledProcWhere.section = section;
 
     const cancelledProcOrders = await prisma.procOrder.findMany({
-      where: cancelledProcWhere,
-    });
-
-    const totalProcurement = procOrders.reduce(
-      (sum, order) => sum.add(order.total),
-      new Prisma.Decimal(0)
-    );
-
-    const totalCancelledProcurement = cancelledProcOrders.reduce(
-      (sum, order) => sum.add(order.total),
-      new Prisma.Decimal(0)
-    );
-
-    // Expenses summary - separate debts from regular expenses
-    const expensesWhere: any = {};
-    if (inventoryId) expensesWhere.inventoryId = inventoryId;
-    if (section) expensesWhere.section = section;
-
-    const expenses = await prisma.expense.findMany({
-      where: expensesWhere,
-    });
-
-    // Separate debt expenses from regular expenses
-    const regularExpenses = expenses.filter(exp => !exp.isDebt);
-    const debtExpenses = expenses.filter(exp => exp.isDebt);
-
-    // Income summary - separate debts from regular income
-    const incomeWhere: any = {};
-    if (inventoryId) incomeWhere.inventoryId = inventoryId;
-    if (section) incomeWhere.section = section;
-
-    const income = await prisma.income.findMany({
-      where: incomeWhere,
-    });
-
-    // Separate debt income from regular income
-    const regularIncome = income.filter(inc => !inc.isDebt);
-    const debtIncome = income.filter(inc => inc.isDebt);
-
-    const totalIncome = regularIncome.reduce(
-      (sum, inc) => sum.add(inc.amount),
-      new Prisma.Decimal(0)
-    );
-
-    // Calculate debt totals
-    const totalInboundDebt = debtIncome.reduce(
-      (sum, inc) => sum.add(inc.amount),
-      new Prisma.Decimal(0)
-    );
-
-    const totalOutboundDebt = debtExpenses.reduce(
-      (sum, exp) => sum.add(exp.amount),
-      new Prisma.Decimal(0)
-    );
-
-    // Get paid salaries (only where paidAt is not null)
-    const paidSalaries = await prisma.salary.findMany({
       where: {
-        paidAt: { not: null },
+        status: 'CANCELLED',
+        createdAt: { gte: sessionStart, lte: sessionEnd },
+        ...(inventoryId ? { inventoryId: inventoryId as string } : {}),
+        ...(section ? { section: section as any } : {}),
       },
     });
 
-    // Get paid advances (only where paidAt is not null)
-    const paidAdvances = await prisma.advance.findMany({
-      where: {
-        paidAt: { not: null },
-      },
-    });
+    const totalProcurement = procOrders.reduce((sum, o) => sum.add(o.total), new Prisma.Decimal(0));
+    const totalCancelledProcurement = cancelledProcOrders.reduce((sum, o) => sum.add(o.total), new Prisma.Decimal(0));
 
-    const totalExpenses = regularExpenses.reduce(
-      (sum, exp) => sum.add(exp.amount),
-      new Prisma.Decimal(0)
-    );
-
-    const totalSalaries = paidSalaries.reduce(
-      (sum, salary) => sum.add(salary.amount),
-      new Prisma.Decimal(0)
-    );
-
-    const totalAdvances = paidAdvances.reduce(
-      (sum, advance) => sum.add(advance.amount),
-      new Prisma.Decimal(0)
-    );
-
-    const totalAllExpenses = totalExpenses.add(totalSalaries).add(totalAdvances);
-
-    // Opening balances - optimized query for open balances only
-    const openingBalances = await prisma.openingBalance.findMany({
-      where: { 
-        scope: 'CASHBOX',
-        isClosed: false 
-      },
-      orderBy: { openedAt: 'desc' },
-    });
-
-    // Calculate total opening balance by payment method
-    const openingBalanceByMethod = {
-      CASH: openingBalances.filter(bal => (bal as any).paymentMethod === 'CASH').reduce((sum, bal) => sum.add(bal.amount), new Prisma.Decimal(0)),
-      BANKAK: openingBalances.filter(bal => (bal as any).paymentMethod === 'BANKAK').reduce((sum, bal) => sum.add(bal.amount), new Prisma.Decimal(0)),
-      BANK_NILE: openingBalances.filter(bal => (bal as any).paymentMethod === 'BANK_NILE').reduce((sum, bal) => sum.add(bal.amount), new Prisma.Decimal(0)),
-    };
-    
-    const totalOpeningBalance = openingBalanceByMethod.CASH.add(openingBalanceByMethod.BANKAK).add(openingBalanceByMethod.BANK_NILE);
-
-    // Get actual procurement payments (not just order totals) - exclude cancelled orders
     const procPayments = await prisma.procOrderPayment.findMany({
       where: {
+        paidAt: { gte: sessionStart, lte: sessionEnd },
         order: {
           status: { not: 'CANCELLED' },
           paymentConfirmed: true,
           ...(inventoryId ? { inventoryId: inventoryId as string } : {}),
           ...(section ? { section: section as any } : {}),
-        }
-      }
+        },
+      },
     });
 
-    // Commission payments don't affect liquid assets (already paid by supplier as gift)
     const totalProcurementPaid = procPayments
       .filter(p => (p.method as string) !== 'COMMISSION')
-      .reduce(
-        (sum, payment) => sum.add(payment.amount),
-        new Prisma.Decimal(0)
-      );
+      .reduce((sum, p) => sum.add(p.amount), new Prisma.Decimal(0));
 
-    // Get cash exchanges impact
-    const cashExchanges = await prisma.cashExchange.findMany();
-    const cashExchangeImpact = {
-      CASH: new Prisma.Decimal(0),
-      BANKAK: new Prisma.Decimal(0),
-      BANK_NILE: new Prisma.Decimal(0)
-    };
-    cashExchanges.forEach((exchange: any) => {
-      const fromM = exchange.fromMethod as 'CASH'|'BANKAK'|'BANK_NILE';
-      const toM = exchange.toMethod as 'CASH'|'BANKAK'|'BANK_NILE';
-      cashExchangeImpact[fromM] = cashExchangeImpact[fromM].sub(exchange.amount);
-      cashExchangeImpact[toM] = cashExchangeImpact[toM].add(exchange.amount);
+    // Commission stock amount = sum of procurement payments where method = COMMISSION (session-scoped)
+    const totalCommission = procPayments
+      .filter(p => (p.method as string) === 'COMMISSION')
+      .reduce((sum, p) => sum.add(p.amount), new Prisma.Decimal(0));
+
+    // ── 3. Expenses (session-scoped) ──────────────────────────────────────────
+    const expensesWhere: any = { createdAt: { gte: sessionStart, lte: sessionEnd } };
+    if (inventoryId) expensesWhere.inventoryId = inventoryId;
+    if (section) expensesWhere.section = section;
+
+    const expenses = await prisma.expense.findMany({ where: expensesWhere });
+    const regularExpenses = expenses.filter(exp => !exp.isDebt);
+    const debtExpenses = expenses.filter(exp => exp.isDebt);
+
+    const totalExpenses = regularExpenses.reduce((sum, exp) => sum.add(exp.amount), new Prisma.Decimal(0));
+    const totalOutboundDebt = debtExpenses.reduce((sum, exp) => sum.add(exp.amount), new Prisma.Decimal(0));
+
+    // ── 4. Income (session-scoped) ────────────────────────────────────────────
+    const incomeWhere: any = { createdAt: { gte: sessionStart, lte: sessionEnd } };
+    if (inventoryId) incomeWhere.inventoryId = inventoryId;
+    if (section) incomeWhere.section = section;
+
+    const income = await prisma.income.findMany({ where: incomeWhere });
+    const regularIncome = income.filter(inc => !inc.isDebt);
+    const debtIncome = income.filter(inc => inc.isDebt);
+
+    const totalIncome = regularIncome.reduce((sum, inc) => sum.add(inc.amount), new Prisma.Decimal(0));
+    const totalInboundDebt = debtIncome.reduce((sum, inc) => sum.add(inc.amount), new Prisma.Decimal(0));
+
+    // ── 5. Salaries & Advances (session-scoped) ───────────────────────────────
+    const paidSalaries = await prisma.salary.findMany({
+      where: { paidAt: { not: null, gte: sessionStart, lte: sessionEnd } },
     });
-    const totalCashExchangeImpact = cashExchangeImpact.CASH.add(cashExchangeImpact.BANKAK).add(cashExchangeImpact.BANK_NILE);
+    const paidAdvances = await prisma.advance.findMany({
+      where: { paidAt: { not: null, gte: sessionStart, lte: sessionEnd } },
+    });
 
-    // Calculate net balance: opening + received + income - procurement payments - expenses + cash exchanges
-    // Note: Cash exchanges between methods cancel out in total, but we include for accuracy
+    const totalSalaries = paidSalaries.reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0));
+    const totalAdvances = paidAdvances.reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0));
+    const totalAllExpenses = totalExpenses.add(totalSalaries).add(totalAdvances);
+
+    // ── 6. Liquid net balance (cash flow view) ────────────────────────────────
+    const cashExchanges = await (prisma as any).cashExchange.findMany({
+      where: { createdAt: { gte: sessionStart, lte: sessionEnd } },
+    });
+    const totalCashExchangeImpact = cashExchanges.reduce((sum: Prisma.Decimal, ce: any) => {
+      // from/to cancel out in totals, but include for completeness
+      return sum.add(ce.amount).sub(ce.amount);
+    }, new Prisma.Decimal(0));
+
     const netBalance = totalOpeningBalance
       .add(totalReceived)
       .add(totalIncome)
@@ -801,7 +733,146 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
       .sub(totalAllExpenses)
       .add(totalCashExchangeImpact);
 
+    // ── 7. Stock cost: initial (at session start) and final (now) ─────────────
+    // For each item across all inventories, get:
+    //   unitCost = latest ProcOrderItem.unitCost for that item (from orders up to the date)
+    //   initialQty = stock quantity at session start (from StockMovement.openingBalance on or before sessionStart)
+    //   finalQty = current InventoryStock.quantity
+
+    // Collect all current stock with item info
+    const allCurrentStock = await prisma.inventoryStock.findMany({
+      include: { item: true },
+    });
+
+    // Collect all proc order items to determine latest unitCost per item at session start and now
+    const allProcItems = await prisma.procOrderItem.findMany({
+      include: {
+        order: {
+          select: { createdAt: true, status: true },
+        },
+      },
+    });
+
+    // Map itemId → latest unitCost (from non-cancelled orders, most recent before now)
+    const latestUnitCostMap = new Map<string, Prisma.Decimal>();
+    const latestUnitCostAtStartMap = new Map<string, Prisma.Decimal>();
+
+    // Sort proc items by order.createdAt ascending so later entries overwrite earlier
+    const sortedProcItems = allProcItems
+      .filter(pi => pi.order.status !== 'CANCELLED')
+      .sort((a, b) => a.order.createdAt.getTime() - b.order.createdAt.getTime());
+
+    for (const pi of sortedProcItems) {
+      latestUnitCostMap.set(pi.itemId, pi.unitCost);
+      if (pi.order.createdAt <= sessionStart) {
+        latestUnitCostAtStartMap.set(pi.itemId, pi.unitCost);
+      }
+    }
+
+    // For initial stock: get StockMovement on or before sessionStart date for each item/inventory
+    const sessionStartDate = new Date(sessionStart);
+    sessionStartDate.setHours(0, 0, 0, 0);
+
+    const stockMovementsAtStart = await prisma.stockMovement.findMany({
+      where: { movementDate: { lte: sessionStartDate } },
+      orderBy: { movementDate: 'desc' },
+    });
+
+    // For each (inventoryId, itemId), find the most recent movement at or before session start
+    const seenInitial = new Set<string>();
+    const initialQtyMap = new Map<string, Prisma.Decimal>(); // key = `${invId}:${itemId}`
+    for (const sm of stockMovementsAtStart) {
+      const key = `${sm.inventoryId}:${sm.itemId}`;
+      if (!seenInitial.has(key)) {
+        seenInitial.add(key);
+        initialQtyMap.set(key, sm.closingBalance);
+      }
+    }
+
+    let initialStockCost = new Prisma.Decimal(0);
+    let finalStockCost = new Prisma.Decimal(0);
+
+    for (const stock of allCurrentStock) {
+      const key = `${stock.inventoryId}:${stock.itemId}`;
+
+      // Final stock cost
+      const unitCostFinal = latestUnitCostMap.get(stock.itemId) || new Prisma.Decimal(0);
+      const finalQty = stock.quantity;
+      finalStockCost = finalStockCost.add(finalQty.mul(unitCostFinal));
+
+      // Initial stock cost
+      const unitCostInitial = latestUnitCostAtStartMap.get(stock.itemId)
+        || latestUnitCostMap.get(stock.itemId)
+        || new Prisma.Decimal(0);
+      const initialQty = initialQtyMap.get(key) || new Prisma.Decimal(0);
+      initialStockCost = initialStockCost.add(initialQty.mul(unitCostInitial));
+    }
+
+    // ── 8. Customer receivables & supplier payables (with treasury) ───────────
+    const [treasuryByCustomer, treasuryPaidBySupplier] = await Promise.all([
+      getTreasurySumsByCustomer(),
+      getTreasuryPaidBySupplier(),
+    ]);
+
+    const allCustomers = await prisma.customer.findMany({
+      include: {
+        salesInvoices: { select: { total: true, paidAmount: true, paymentConfirmationStatus: true } },
+        customerPayments: { select: { amount: true } },
+        salesDeposits: { select: { amount: true } },
+      },
+    });
+
+    let totalReceivables = new Prisma.Decimal(0);
+    for (const c of allCustomers) {
+      const validInvs = c.salesInvoices.filter((i: any) => i.paymentConfirmationStatus !== 'REJECTED');
+      const invTotal = validInvs.reduce((s: Prisma.Decimal, i: any) => s.add(i.total), new Prisma.Decimal(0));
+      const invPaid = validInvs.reduce((s: Prisma.Decimal, i: any) => s.add(i.paidAmount || 0), new Prisma.Decimal(0));
+      const acctPay = (c as any).customerPayments.reduce((s: Prisma.Decimal, p: any) => s.add(p.amount), new Prisma.Decimal(0));
+      const deposits = (c as any).salesDeposits.reduce((s: Prisma.Decimal, d: any) => s.add(d.amount), new Prisma.Decimal(0));
+      const tr = treasuryByCustomer.get(c.id) || { cashIn: new Prisma.Decimal(0), cashOut: new Prisma.Decimal(0) };
+      const remaining = invTotal.sub(invPaid).sub(acctPay).sub(deposits).sub(tr.cashIn).add(tr.cashOut);
+      if (remaining.greaterThan(0)) totalReceivables = totalReceivables.add(remaining);
+    }
+
+    const allSuppliers = await prisma.supplier.findMany({
+      include: {
+        procOrders: {
+          where: { status: { not: 'CANCELLED' } },
+          select: { total: true, paidAmount: true },
+        },
+      },
+    });
+
+    let totalPayables = new Prisma.Decimal(0);
+    for (const s of allSuppliers) {
+      const orderTotal = s.procOrders.reduce((sum: Prisma.Decimal, o: any) => sum.add(o.total), new Prisma.Decimal(0));
+      const orderPaid = s.procOrders.reduce((sum: Prisma.Decimal, o: any) => sum.add(o.paidAmount || 0), new Prisma.Decimal(0));
+      const treasuryPd = treasuryPaidBySupplier.get(s.id) || new Prisma.Decimal(0);
+      const remaining = orderTotal.sub(orderPaid).sub(treasuryPd);
+      if (remaining.greaterThan(0)) totalPayables = totalPayables.add(remaining);
+    }
+
+    // ── 9. Profit formula ─────────────────────────────────────────────────────
+    // profit = sales + commission + finalStockCost - initialStockCost - procurement - expenses
+    const profit = totalSales
+      .add(totalCommission)
+      .add(finalStockCost)
+      .sub(initialStockCost)
+      .sub(totalProcurement)
+      .sub(totalAllExpenses);
+
+    // ── 10. Capital = liquid assets + initial stock cost + receivables - payables
+    const capital = totalOpeningBalance
+      .add(initialStockCost)
+      .add(totalReceivables)
+      .sub(totalPayables);
+
     res.json({
+      session: {
+        start: sessionStart.toISOString(),
+        end: sessionEnd.toISOString(),
+        hasSession: openingBalances.length > 0,
+      },
       sales: {
         total: totalSales.toFixed(2),
         received: totalReceived.toFixed(2),
@@ -818,6 +889,7 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
           count: cancelledProcOrders.length,
         },
       },
+      commission: totalCommission.toFixed(2),
       expenses: {
         total: totalAllExpenses.toFixed(2),
         count: regularExpenses.length + paidSalaries.length + paidAdvances.length,
@@ -836,10 +908,18 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
         inboundCount: debtIncome.length,
         outboundCount: debtExpenses.length,
       },
+      stock: {
+        initialCost: initialStockCost.toFixed(2),
+        finalCost: finalStockCost.toFixed(2),
+      },
+      receivables: totalReceivables.toFixed(2),
+      payables: totalPayables.toFixed(2),
       balance: {
         opening: totalOpeningBalance.toFixed(2),
         net: netBalance.toFixed(2),
       },
+      capital: capital.toFixed(2),
+      profit: profit.toFixed(2),
     });
   } catch (error) {
     console.error('Get balance summary error:', error);
@@ -1573,6 +1653,9 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
     const unpaidSalesByWarehouse: Record<string, { inventoryId: string; inventoryName: string; totalOutstanding: Prisma.Decimal }> = {};
     let totalDeliveredUnpaid = new Prisma.Decimal(0);
 
+    // Track outstanding per customer so we can subtract treasury later
+    const unpaidSalesByCustomer: Record<string, Prisma.Decimal> = {};
+
     for (const inv of deliveredUnpaidInvoices) {
       const outstanding = new Prisma.Decimal(inv.total).sub(inv.paidAmount);
       if (outstanding.greaterThan(0)) {
@@ -1586,8 +1669,35 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
         unpaidSalesByWarehouse[inv.inventoryId].totalOutstanding = 
           unpaidSalesByWarehouse[inv.inventoryId].totalOutstanding.add(outstanding);
         totalDeliveredUnpaid = totalDeliveredUnpaid.add(outstanding);
+
+        if (inv.customerId) {
+          unpaidSalesByCustomer[inv.customerId] = (unpaidSalesByCustomer[inv.customerId] || new Prisma.Decimal(0)).add(outstanding);
+        }
       }
     }
+
+    // Subtract treasury net (cashIn reduces, cashOut increases) from delivered-unpaid totals
+    const [alTreasuryByCustomer, alTreasuryBySupplier] = await Promise.all([
+      getTreasurySumsByCustomer(),
+      getTreasuryPaidBySupplier(),
+    ]);
+
+    let customerTreasuryAdjAL = new Prisma.Decimal(0);
+    for (const cid of Object.keys(unpaidSalesByCustomer)) {
+      const tr = alTreasuryByCustomer.get(cid) || { cashIn: new Prisma.Decimal(0), cashOut: new Prisma.Decimal(0) };
+      customerTreasuryAdjAL = customerTreasuryAdjAL.add(tr.cashIn).sub(tr.cashOut);
+    }
+    // Distribute treasury adjustment proportionally across warehouses
+    if (customerTreasuryAdjAL.greaterThan(0) && totalDeliveredUnpaid.greaterThan(0)) {
+      for (const wKey of Object.keys(unpaidSalesByWarehouse)) {
+        const w = unpaidSalesByWarehouse[wKey];
+        const ratio = w.totalOutstanding.div(totalDeliveredUnpaid);
+        w.totalOutstanding = w.totalOutstanding.sub(customerTreasuryAdjAL.mul(ratio));
+        if (w.totalOutstanding.lessThan(0)) w.totalOutstanding = new Prisma.Decimal(0);
+      }
+    }
+    totalDeliveredUnpaid = totalDeliveredUnpaid.sub(customerTreasuryAdjAL);
+    if (totalDeliveredUnpaid.lessThan(0)) totalDeliveredUnpaid = new Prisma.Decimal(0);
 
     // Calculate total له (Assets)
     const totalAssets = totalStockValue
@@ -1638,6 +1748,18 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
         totalUnpaidProcOrders = totalUnpaidProcOrders.add(outstanding);
       }
     }
+
+    // Subtract treasury payments from each supplier's outstanding
+    for (const sid of Object.keys(unpaidProcOrdersBySupplier)) {
+      const treasuryPaidForSupplier = alTreasuryBySupplier.get(sid) || new Prisma.Decimal(0);
+      unpaidProcOrdersBySupplier[sid].totalOutstanding = unpaidProcOrdersBySupplier[sid].totalOutstanding.sub(treasuryPaidForSupplier);
+      if (unpaidProcOrdersBySupplier[sid].totalOutstanding.lessThan(0)) {
+        unpaidProcOrdersBySupplier[sid].totalOutstanding = new Prisma.Decimal(0);
+      }
+    }
+    totalUnpaidProcOrders = Object.values(unpaidProcOrdersBySupplier).reduce(
+      (sum, s) => sum.add(s.totalOutstanding), new Prisma.Decimal(0)
+    );
 
     // Calculate total عليه (Liabilities)
     const totalLiabilities = totalOutboundDebt.add(totalUnpaidProcOrders);
@@ -2741,11 +2863,36 @@ router.get('/outstanding-fees', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER', 
       })),
     }));
     
-    // Calculate summary
+    // Calculate summary — fold in treasury adjustments
+    const customerIdsInReport = [...new Set(
+      customerInvoicesOutstanding.map(inv => inv.customer?.id).filter(Boolean) as string[]
+    )];
+    const supplierIdsInReport = [...new Set(
+      supplierOrdersOutstanding.map(o => o.supplier?.id).filter(Boolean) as string[]
+    )];
+
+    const [treasuryByCustomerOutstanding, treasuryPaidBySupplierOutstanding] = await Promise.all([
+      getTreasurySumsByCustomer(),
+      getTreasuryPaidBySupplier(),
+    ]);
+
+    // Net treasury per customer: cashIn reduces what customer owes, cashOut increases it
+    let customerTreasuryNet = new Prisma.Decimal(0);
+    for (const cid of customerIdsInReport) {
+      const tr = treasuryByCustomerOutstanding.get(cid) || { cashIn: new Prisma.Decimal(0), cashOut: new Prisma.Decimal(0) };
+      customerTreasuryNet = customerTreasuryNet.add(tr.cashIn).sub(tr.cashOut);
+    }
+
+    // Net treasury per supplier: all payments reduce what we owe
+    let supplierTreasuryNet = new Prisma.Decimal(0);
+    for (const sid of supplierIdsInReport) {
+      supplierTreasuryNet = supplierTreasuryNet.add(treasuryPaidBySupplierOutstanding.get(sid) || new Prisma.Decimal(0));
+    }
+
     const customersOwesUs = customerInvoicesOutstanding.reduce((sum, inv) => 
-      sum.add(new Prisma.Decimal(inv.total).sub(inv.paidAmount)), new Prisma.Decimal(0));
+      sum.add(new Prisma.Decimal(inv.total).sub(inv.paidAmount)), new Prisma.Decimal(0)).sub(customerTreasuryNet);
     const weOweSuppliers = supplierOrdersOutstanding.reduce((sum, order) => 
-      sum.add(new Prisma.Decimal(order.total).sub(order.paidAmount)), new Prisma.Decimal(0));
+      sum.add(new Prisma.Decimal(order.total).sub(order.paidAmount)), new Prisma.Decimal(0)).sub(supplierTreasuryNet);
     
     // Filter by type if specified
     let filteredCustomers = customerReportData;
@@ -2767,8 +2914,10 @@ router.get('/outstanding-fees', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER', 
       customers: filteredCustomers,
       suppliers: filteredSuppliers,
       summary: {
-        customersOwesUs: customersOwesUs.toString(),
-        weOweSuppliers: weOweSuppliers.toString(),
+        customersOwesUs: customersOwesUs.lessThan(0) ? '0' : customersOwesUs.toString(),
+        weOweSuppliers: weOweSuppliers.lessThan(0) ? '0' : weOweSuppliers.toString(),
+        customerTreasuryAdjustment: customerTreasuryNet.toString(),
+        supplierTreasuryAdjustment: supplierTreasuryNet.toString(),
         totalCustomersOutstanding: filteredCustomers.length,
         totalSuppliersOutstanding: filteredSuppliers.length,
       },
@@ -4330,7 +4479,20 @@ router.get('/customer-report', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER', '
     const totalInvoices = filteredInvoices.length;
     const totalSales = filteredInvoices.reduce((sum, inv) => sum.add(inv.total), new Prisma.Decimal(0));
     const totalPaid = filteredInvoices.reduce((sum, inv) => sum.add(inv.paidAmount), new Prisma.Decimal(0));
-    const totalOutstanding = totalSales.sub(totalPaid);
+
+    // Fold in treasury: cashIn reduces what customer owes, cashOut increases it
+    const uniqueCustomerIdsReport = [...new Set(
+      filteredInvoices.map(inv => inv.customerId).filter(Boolean) as string[]
+    )];
+    const treasuryByCustomerReport = await getTreasurySumsByCustomer();
+    let reportTreasuryCashIn = new Prisma.Decimal(0);
+    let reportTreasuryCashOut = new Prisma.Decimal(0);
+    for (const cid of uniqueCustomerIdsReport) {
+      const tr = treasuryByCustomerReport.get(cid) || { cashIn: new Prisma.Decimal(0), cashOut: new Prisma.Decimal(0) };
+      reportTreasuryCashIn = reportTreasuryCashIn.add(tr.cashIn);
+      reportTreasuryCashOut = reportTreasuryCashOut.add(tr.cashOut);
+    }
+    const totalOutstanding = totalSales.sub(totalPaid).sub(reportTreasuryCashIn).add(reportTreasuryCashOut);
     
     // Add initial and final stock for inventory reports
     let stockInfo: any = null;
@@ -4413,7 +4575,9 @@ router.get('/customer-report', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER', '
         totalInvoices,
         totalSales: totalSales.toString(),
         totalPaid: totalPaid.toString(),
-        totalOutstanding: totalOutstanding.toString(),
+        treasuryCashIn: reportTreasuryCashIn.toString(),
+        treasuryCashOut: reportTreasuryCashOut.toString(),
+        totalOutstanding: totalOutstanding.lessThan(0) ? '0' : totalOutstanding.toString(),
       },
       ...(stockInfo && { stockInfo }),
     });
@@ -4528,7 +4692,17 @@ router.get('/supplier-report', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER', '
     const totalOrders = filteredOrders.length;
     const totalPurchases = filteredOrders.reduce((sum, order) => sum.add(order.total), new Prisma.Decimal(0));
     const totalPaid = filteredOrders.reduce((sum, order) => sum.add(order.paidAmount), new Prisma.Decimal(0));
-    const totalOutstanding = totalPurchases.sub(totalPaid);
+
+    // Fold in treasury: treasury payments reduce what we owe to suppliers
+    const uniqueSupplierIdsReport = [...new Set(
+      filteredOrders.map(order => order.supplierId).filter(Boolean) as string[]
+    )];
+    const treasuryBySupplierReport = await getTreasuryPaidBySupplier();
+    let reportTreasuryPaid = new Prisma.Decimal(0);
+    for (const sid of uniqueSupplierIdsReport) {
+      reportTreasuryPaid = reportTreasuryPaid.add(treasuryBySupplierReport.get(sid) || new Prisma.Decimal(0));
+    }
+    const totalOutstanding = totalPurchases.sub(totalPaid).sub(reportTreasuryPaid);
     
     // Add initial and final stock for inventory reports
     let stockInfo: any = null;
@@ -4611,7 +4785,8 @@ router.get('/supplier-report', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER', '
         totalOrders,
         totalPurchases: totalPurchases.toString(),
         totalPaid: totalPaid.toString(),
-        totalOutstanding: totalOutstanding.toString(),
+        treasuryPaid: reportTreasuryPaid.toString(),
+        totalOutstanding: totalOutstanding.lessThan(0) ? '0' : totalOutstanding.toString(),
       },
       ...(stockInfo && { stockInfo }),
     });

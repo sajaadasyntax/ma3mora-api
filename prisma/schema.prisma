@@ -278,14 +278,15 @@ model InventoryStock {
 }
 
 model StockBatch {
-  id          String    @id @default(cuid())
-  inventoryId String
-  itemId      String
-  quantity    Decimal   @db.Decimal(15, 2)
-  expiryDate  DateTime?
-  receivedAt  DateTime  @default(now())
-  receiptId   String?
-  notes       String?
+  id              String    @id @default(cuid())
+  inventoryId     String
+  itemId          String
+  quantity        Decimal   @db.Decimal(15, 2)
+  initialQuantity Decimal?  @db.Decimal(15, 2)
+  expiryDate      DateTime?
+  receivedAt      DateTime  @default(now())
+  receiptId       String?
+  notes           String?
 
   inventory       Inventory                @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
   item            Item                     @relation(fields: [itemId], references: [id], onDelete: Cascade)

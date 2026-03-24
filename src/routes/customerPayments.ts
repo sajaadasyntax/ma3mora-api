@@ -262,10 +262,26 @@ router.get('/customers/:id/statement', async (req: AuthRequest, res) => {
       _sum: { amount: true },
     });
 
+    // Treasury transactions before dateFrom (cashIn reduces balance, cashOut increases it)
+    const treasuryBeforeRows = await prisma.treasuryTransaction.findMany({
+      where: { customerId: id, createdAt: { lt: from } },
+      select: { type: true, amount: true },
+    });
+    const treasuryCashInBefore = treasuryBeforeRows
+      .filter(t => t.type === 'CASH_IN')
+      .reduce((s, t) => s.add(t.amount), new Prisma.Decimal(0));
+    const treasuryCashOutBefore = treasuryBeforeRows
+      .filter(t => t.type === 'CASH_OUT')
+      .reduce((s, t) => s.add(t.amount), new Prisma.Decimal(0));
+
     const totalInvoicesBefore = invoicesBefore._sum.total || new Prisma.Decimal(0);
     const totalSalesPaymentsBefore = salesPaymentsBefore._sum.amount || new Prisma.Decimal(0);
     const totalCustomerPaymentsBefore = customerPaymentsBefore._sum.amount || new Prisma.Decimal(0);
-    const openingBalance = totalInvoicesBefore.sub(totalSalesPaymentsBefore).sub(totalCustomerPaymentsBefore);
+    const openingBalance = totalInvoicesBefore
+      .sub(totalSalesPaymentsBefore)
+      .sub(totalCustomerPaymentsBefore)
+      .sub(treasuryCashInBefore)
+      .add(treasuryCashOutBefore);
 
     // ── Transactions during period ──
 
@@ -326,11 +342,21 @@ router.get('/customers/:id/statement', async (req: AuthRequest, res) => {
       orderBy: { createdAt: 'asc' },
     });
 
+    // 4. Treasury transactions in period
+    const treasuryInPeriod = await prisma.treasuryTransaction.findMany({
+      where: {
+        customerId: id,
+        createdAt: { gte: from, lte: to },
+      },
+      select: { id: true, type: true, amount: true, notes: true, createdAt: true },
+      orderBy: { createdAt: 'asc' },
+    });
+
     // Build unified transactions list
     type Transaction = {
       id: string;
       date: Date;
-      type: 'INVOICE' | 'SALES_PAYMENT' | 'ACCOUNT_PAYMENT';
+      type: 'INVOICE' | 'SALES_PAYMENT' | 'ACCOUNT_PAYMENT' | 'TREASURY_CASH_IN' | 'TREASURY_CASH_OUT';
       description: string;
       debit: string;
       credit: string;
@@ -368,6 +394,21 @@ router.get('/customers/:id/statement', async (req: AuthRequest, res) => {
         description: `دفعة على الحساب${cp.referenceNumber ? ` (${cp.referenceNumber})` : ''}`,
         debit: '0',
         credit: cp.amount.toString(),
+      });
+    }
+
+    for (const tr of treasuryInPeriod) {
+      // CASH_IN = customer paid us → credit (reduces what they owe)
+      // CASH_OUT = we paid customer → debit (increases what they owe)
+      transactions.push({
+        id: tr.id,
+        date: tr.createdAt,
+        type: tr.type === 'CASH_IN' ? 'TREASURY_CASH_IN' : 'TREASURY_CASH_OUT',
+        description: tr.type === 'CASH_IN'
+          ? `إيداع خزينة${tr.notes ? ` - ${tr.notes}` : ''}`
+          : `صرف خزينة${tr.notes ? ` - ${tr.notes}` : ''}`,
+        debit: tr.type === 'CASH_OUT' ? tr.amount.toString() : '0',
+        credit: tr.type === 'CASH_IN' ? tr.amount.toString() : '0',
       });
     }
 

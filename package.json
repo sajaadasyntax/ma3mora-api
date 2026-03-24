@@ -33,6 +33,8 @@
     "script:investigate-stock": "tsx scripts/investigate-stock-movement.ts",
     "script:fix-january-stock": "tsx scripts/fix-january-stock-movement.ts",
     "script:backfill-advance-paid-at": "tsx scripts/backfill-advance-paid-at.ts",
+    "script:backfill-initial-quantity": "tsx scripts/backfill-initial-quantity.ts",
+    "script:backfill-initial-quantity:apply": "tsx scripts/backfill-initial-quantity.ts --apply",
     "postinstall": "prisma generate"
   },
   "dependencies": {

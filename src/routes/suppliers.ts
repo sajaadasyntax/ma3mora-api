@@ -48,6 +48,33 @@ router.post('/', requireRole('PROCUREMENT', 'MANAGER'), createAuditLog('Supplier
   }
 });
 
+router.get('/:id', requireRole('PROCUREMENT', 'ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (req: AuthRequest, res) => {
+  try {
+    const { id } = req.params;
+
+    const supplier = await prisma.supplier.findUnique({
+      where: { id },
+      include: {
+        treasuryTransactions: {
+          select: { type: true, amount: true },
+        },
+        openingBalance: {
+          where: { isClosed: false },
+        },
+      },
+    });
+
+    if (!supplier) {
+      return res.status(404).json({ error: 'المورد غير موجود' });
+    }
+
+    res.json(supplier);
+  } catch (error) {
+    console.error('Get supplier error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
 router.get('/:id/orders', requireRole('PROCUREMENT', 'ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
