@@ -43,7 +43,8 @@ const createIncomeSchema = z.object({
 
 const createOpeningBalanceSchema = z.object({
   scope: z.enum(['CASHBOX', 'CUSTOMER', 'SUPPLIER']),
-  refId: z.string().optional(),
+  customerId: z.string().optional(),
+  supplierId: z.string().optional(),
   amount: z.number(),
   paymentMethod: z.enum(['CASH', 'BANKAK', 'BANK_NILE', 'DEBT', 'OTHERS']).default('CASH'),
   notes: z.string().optional(),

@@ -650,7 +650,8 @@ model Income {
 model OpeningBalance {
   id            String        @id @default(cuid())
   scope         BalanceScope
-  refId         String?
+  customerId    String?
+  supplierId    String?
   amount        Decimal       @db.Decimal(15, 2)
   paymentMethod PaymentMethod @default(CASH)
   openedAt      DateTime      @default(now())
@@ -658,8 +659,8 @@ model OpeningBalance {
   isClosed      Boolean       @default(false)
   notes         String?
 
-  customer Customer? @relation(fields: [refId], references: [id], map: "opening_balance_customer_fkey")
-  supplier Supplier? @relation(fields: [refId], references: [id], map: "opening_balance_supplier_fkey")
+  customer Customer? @relation(fields: [customerId], references: [id])
+  supplier Supplier? @relation(fields: [supplierId], references: [id])
 
   @@index([scope, isClosed, paymentMethod])
   @@map("opening_balances")
