@@ -1840,11 +1840,13 @@ async function getTreasurySumsByCustomer(): Promise<
 }
 
 /**
- * Per-supplier treasury totals toward payables (matches treasury route: both CASH_IN and CASH_OUT add to supplier totalPaid).
+ * Per-supplier treasury totals toward payables.
+ * Only CASH_OUT (we paid the supplier) reduces what we owe.
+ * CASH_IN from a supplier is money they returned to us and does NOT reduce payable.
  */
 async function getTreasuryPaidBySupplier(): Promise<Map<string, Prisma.Decimal>> {
   const rows = await prisma.treasuryTransaction.findMany({
-    where: { supplierId: { not: null } },
+    where: { supplierId: { not: null }, type: 'CASH_OUT' },
     select: { supplierId: true, amount: true },
   });
   const map = new Map<string, Prisma.Decimal>();

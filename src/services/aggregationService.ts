@@ -1358,10 +1358,10 @@ export class AggregationService {
 
     // Treasury transactions calculations
     const treasuryInflowAmount = treasuryTransactions
-      .filter(t => (t as any).type === 'INFLOW')
+      .filter(t => (t as any).type === 'CASH_IN')
       .reduce((sum, t) => sum.add(t.amount), new Prisma.Decimal(0));
     const treasuryOutflowAmount = treasuryTransactions
-      .filter(t => (t as any).type === 'OUTFLOW')
+      .filter(t => (t as any).type === 'CASH_OUT')
       .reduce((sum, t) => sum.add(t.amount), new Prisma.Decimal(0));
 
     // Sales returns calculations: sum line totals from SalesReturnItem records

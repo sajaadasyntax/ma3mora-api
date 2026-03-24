@@ -553,17 +553,8 @@ router.post(
         return created;
       });
 
-      if (supplierId) {
-        try {
-          const buckets = supplierPurchaseBuckets(method, amountDecimal);
-          await aggregationService.updateSupplierCumulativeAggregate(supplierId, new Date(), {
-            totalPaid: amountDecimal,
-            ...buckets,
-          });
-        } catch (supAggErr) {
-          console.error('Supplier aggregate update (treasury cash-in):', supAggErr);
-        }
-      }
+      // CASH_IN from a supplier means they deposited/returned money to us,
+      // so it does NOT count as "we paid the supplier" — no aggregate update here.
 
       try {
         await aggregationService.updateDailyFinancialAggregate(new Date(), {

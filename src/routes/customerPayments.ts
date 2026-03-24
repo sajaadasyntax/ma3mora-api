@@ -549,4 +549,128 @@ router.get('/customers/:id/item-volume', async (req: AuthRequest, res) => {
   }
 });
 
+// ─── GET /items/:itemId/customer-volume — Customers who bought a given item ──
+
+router.get('/items/:itemId/customer-volume', async (req: AuthRequest, res) => {
+  try {
+    const { itemId } = req.params;
+    const { dateFrom, dateTo, section } = req.query;
+
+    // Verify item exists
+    const item = await prisma.item.findUnique({
+      where: { id: itemId },
+      select: { id: true, name: true, section: true },
+    });
+
+    if (!item) {
+      return res.status(404).json({ error: 'الصنف غير موجود' });
+    }
+
+    // Build invoice filter
+    const invoiceWhere: any = {
+      paymentConfirmationStatus: { not: 'REJECTED' },
+    };
+    if (section) {
+      invoiceWhere.section = section;
+    }
+    if (dateFrom || dateTo) {
+      invoiceWhere.createdAt = {};
+      if (dateFrom) {
+        const from = new Date(dateFrom as string);
+        from.setHours(0, 0, 0, 0);
+        invoiceWhere.createdAt.gte = from;
+      }
+      if (dateTo) {
+        const to = new Date(dateTo as string);
+        to.setHours(23, 59, 59, 999);
+        invoiceWhere.createdAt.lte = to;
+      }
+    }
+
+    // Get all sales invoice items for this item across all customers
+    const invoiceItems = await prisma.salesInvoiceItem.findMany({
+      where: {
+        itemId,
+        invoice: invoiceWhere,
+      },
+      select: {
+        quantity: true,
+        lineTotal: true,
+        invoice: {
+          select: {
+            id: true,
+            invoiceNumber: true,
+            createdAt: true,
+            customer: {
+              select: { id: true, name: true },
+            },
+          },
+        },
+      },
+    });
+
+    // Group by customerId
+    const customerMap = new Map<string, {
+      customerId: string;
+      customerName: string;
+      totalQuantity: Prisma.Decimal;
+      totalAmount: Prisma.Decimal;
+      invoiceCount: number;
+    }>();
+
+    for (const entry of invoiceItems) {
+      const customer = entry.invoice.customer;
+      if (!customer) continue;
+
+      const existing = customerMap.get(customer.id);
+      if (existing) {
+        existing.totalQuantity = existing.totalQuantity.add(entry.quantity);
+        existing.totalAmount = existing.totalAmount.add(entry.lineTotal);
+        existing.invoiceCount += 1;
+      } else {
+        customerMap.set(customer.id, {
+          customerId: customer.id,
+          customerName: customer.name,
+          totalQuantity: new Prisma.Decimal(entry.quantity.toString()),
+          totalAmount: new Prisma.Decimal(entry.lineTotal.toString()),
+          invoiceCount: 1,
+        });
+      }
+    }
+
+    // Sort by total quantity descending
+    const customers = Array.from(customerMap.values())
+      .map((v) => ({
+        customerId: v.customerId,
+        customerName: v.customerName,
+        totalQuantity: v.totalQuantity.toString(),
+        totalAmount: v.totalAmount.toString(),
+        invoiceCount: v.invoiceCount,
+      }))
+      .sort((a, b) => parseFloat(b.totalQuantity) - parseFloat(a.totalQuantity));
+
+    const grandTotalQuantity = customers.reduce(
+      (sum, c) => sum.add(new Prisma.Decimal(c.totalQuantity)),
+      new Prisma.Decimal(0)
+    );
+    const grandTotalAmount = customers.reduce(
+      (sum, c) => sum.add(new Prisma.Decimal(c.totalAmount)),
+      new Prisma.Decimal(0)
+    );
+
+    res.json({
+      item,
+      customers,
+      grandTotal: {
+        totalQuantity: grandTotalQuantity.toString(),
+        totalAmount: grandTotalAmount.toString(),
+        customerCount: customers.length,
+      },
+    });
+  } catch (error) {
+    console.error('Item customer volume error:', error);
+    res.status(500).json({ error: 'خطأ في الخادم' });
+  }
+});
+
 export default router;
