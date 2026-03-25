@@ -868,6 +868,7 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
         salesInvoices: { select: { total: true, paidAmount: true, paymentConfirmationStatus: true } },
         customerPayments: { select: { amount: true } },
         salesDeposits: { select: { amount: true } },
+        openingBalance: { where: { isClosed: false }, select: { amount: true } },
       },
     });
 
@@ -879,7 +880,9 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
       const acctPay = (c as any).customerPayments.reduce((s: Prisma.Decimal, p: any) => s.add(p.amount), new Prisma.Decimal(0));
       const deposits = (c as any).salesDeposits.reduce((s: Prisma.Decimal, d: any) => s.add(d.amount), new Prisma.Decimal(0));
       const tr = treasuryByCustomer.get(c.id) || { cashIn: new Prisma.Decimal(0), cashOut: new Prisma.Decimal(0) };
-      const remaining = invTotal.sub(invPaid).sub(acctPay).sub(deposits).sub(tr.cashIn).add(tr.cashOut);
+      // positive openingBalance = customer owes us (old receivable); negative = we owe customer
+      const openingBal = (c as any).openingBalance.reduce((s: Prisma.Decimal, ob: any) => s.add(ob.amount), new Prisma.Decimal(0));
+      const remaining = invTotal.sub(invPaid).sub(acctPay).sub(deposits).sub(tr.cashIn).add(tr.cashOut).add(openingBal);
       if (remaining.greaterThan(0)) totalReceivables = totalReceivables.add(remaining);
     }
 
@@ -889,6 +892,7 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
           where: { status: { not: 'CANCELLED' } },
           select: { total: true, paidAmount: true },
         },
+        openingBalance: { where: { isClosed: false }, select: { amount: true } },
       },
     });
 
@@ -897,7 +901,9 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
       const orderTotal = s.procOrders.reduce((sum: Prisma.Decimal, o: any) => sum.add(o.total), new Prisma.Decimal(0));
       const orderPaid = s.procOrders.reduce((sum: Prisma.Decimal, o: any) => sum.add(o.paidAmount || 0), new Prisma.Decimal(0));
       const treasuryPd = treasuryPaidBySupplier.get(s.id) || new Prisma.Decimal(0);
-      const remaining = orderTotal.sub(orderPaid).sub(treasuryPd);
+      // positive openingBalance = supplier owes us / we pre-paid (reduces payable); negative = we owe supplier (increases payable)
+      const openingBal = (s as any).openingBalance.reduce((sum: Prisma.Decimal, ob: any) => sum.add(ob.amount), new Prisma.Decimal(0));
+      const remaining = orderTotal.sub(orderPaid).sub(treasuryPd).sub(openingBal);
       if (remaining.greaterThan(0)) totalPayables = totalPayables.add(remaining);
     }
 
@@ -1945,6 +1951,7 @@ router.get('/receivables-payables', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGE
           : { where: { paymentConfirmationStatus: { not: 'REJECTED' as any } }, select: { total: true, paidAmount: true } },
         customerPayments: { select: { amount: true } },
         salesDeposits: { select: { amount: true } },
+        openingBalance: { where: { isClosed: false }, select: { amount: true } },
       },
     });
 
@@ -1954,10 +1961,11 @@ router.get('/receivables-payables', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGE
       const accountPayments = (c as any).customerPayments.reduce((sum: Prisma.Decimal, p: any) => sum.add(p.amount), new Prisma.Decimal(0));
       const deposits = (c as any).salesDeposits.reduce((sum: Prisma.Decimal, d: any) => sum.add(d.amount), new Prisma.Decimal(0));
       const tr = treasuryByCustomer.get(c.id) || { cashIn: new Prisma.Decimal(0), cashOut: new Prisma.Decimal(0) };
+      // positive openingBalance = customer owes us (old receivable); negative = we owe customer
+      const openingBal = (c as any).openingBalance.reduce((sum: Prisma.Decimal, ob: any) => sum.add(ob.amount), new Prisma.Decimal(0));
       // Treasury cash-in: like payment; cash-out: increases what customer owes
-      const paid =
-        invoicePaid.add(accountPayments).add(deposits).add(tr.cashIn);
-      const remaining = invoiceTotal.sub(paid).add(tr.cashOut);
+      const paid = invoicePaid.add(accountPayments).add(deposits).add(tr.cashIn);
+      const remaining = invoiceTotal.sub(paid).add(tr.cashOut).add(openingBal);
       return {
         id: c.id,
         name: c.name,
@@ -1965,6 +1973,7 @@ router.get('/receivables-payables', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGE
         total: invoiceTotal.toFixed(2),
         paid: paid.toFixed(2),
         remaining: remaining.toFixed(2),
+        openingBalance: openingBal.toFixed(2),
         treasuryCashIn: tr.cashIn.toFixed(2),
         treasuryCashOut: tr.cashOut.toFixed(2),
       };
@@ -1981,6 +1990,7 @@ router.get('/receivables-payables', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGE
         procOrders: section
           ? { where: { status: { not: 'CANCELLED' }, section: section as any }, select: { total: true, paidAmount: true } }
           : { where: { status: { not: 'CANCELLED' } }, select: { total: true, paidAmount: true } },
+        openingBalance: { where: { isClosed: false }, select: { amount: true } },
       },
     });
 
@@ -1989,14 +1999,17 @@ router.get('/receivables-payables', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGE
         const total = s.procOrders.reduce((sum: Prisma.Decimal, o: any) => sum.add(o.total), new Prisma.Decimal(0));
         const orderPaid = s.procOrders.reduce((sum: Prisma.Decimal, o: any) => sum.add(o.paidAmount || 0), new Prisma.Decimal(0));
         const treasuryPaid = treasuryPaidBySupplier.get(s.id) || new Prisma.Decimal(0);
+        // positive openingBalance = supplier owes us / we pre-paid (reduces payable); negative = we owe supplier (increases payable)
+        const openingBal = (s as any).openingBalance.reduce((sum: Prisma.Decimal, ob: any) => sum.add(ob.amount), new Prisma.Decimal(0));
         const paid = orderPaid.add(treasuryPaid);
-        const remaining = total.sub(paid);
+        const remaining = total.sub(paid).sub(openingBal);
         return {
           id: s.id,
           name: s.name,
           total: total.toFixed(2),
           paid: paid.toFixed(2),
           remaining: remaining.toFixed(2),
+          openingBalance: openingBal.toFixed(2),
           treasuryPaid: treasuryPaid.toFixed(2),
         };
       })
