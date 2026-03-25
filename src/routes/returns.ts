@@ -194,7 +194,7 @@ router.post(
               deliveryItem: { delivery: { invoiceId } },
             },
             include: { batch: { select: { expiryDate: true } } },
-            orderBy: { createdAt: 'desc' },
+            orderBy: { deliveryItem: { delivery: { deliveredAt: 'desc' } } },
           });
 
           const returnedExpiryDate = lastDeliveryBatch?.batch?.expiryDate ?? undefined;
