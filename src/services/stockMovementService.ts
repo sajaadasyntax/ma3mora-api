@@ -1,6 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 
+type MovementType = 'INBOUND' | 'INBOUND_GIFT' | 'OUTBOUND' | 'OUTBOUND_GIFT';
+
 export class StockMovementService {
   /**
    * Update or create stock movement for a specific date
@@ -16,6 +18,7 @@ export class StockMovementService {
       pendingOutgoing?: number;
       incomingGifts?: number;
       outgoingGifts?: number;
+      movementType?: MovementType;
     }
   ): Promise<void> {
     // Normalize date to start of day
@@ -41,6 +44,15 @@ export class StockMovementService {
       const outgoingGifts = changes.outgoingGifts || 0;
       const balanceDelta = incoming + incomingGifts - outgoing - pendingOutgoing - outgoingGifts;
 
+      // Derive movementType from changes if not explicitly provided
+      const derivedMovementType: MovementType | null = changes.movementType || (
+        incomingGifts > 0 ? 'INBOUND_GIFT'
+          : outgoingGifts > 0 ? 'OUTBOUND_GIFT'
+          : incoming > 0 ? 'INBOUND'
+          : outgoing > 0 || pendingOutgoing > 0 ? 'OUTBOUND'
+          : null
+      );
+
       await prisma.stockMovement.update({
         where: { id: existing.id },
         data: {
@@ -50,6 +62,7 @@ export class StockMovementService {
           incomingGifts: { increment: incomingGifts },
           outgoingGifts: { increment: outgoingGifts },
           closingBalance: { increment: balanceDelta },
+          ...(derivedMovementType ? { movementType: derivedMovementType } : {}),
         },
       });
 
@@ -78,6 +91,15 @@ export class StockMovementService {
         .sub(pendingOutgoing)
         .sub(outgoingGifts);
 
+      // Derive movementType from changes if not explicitly provided
+      const derivedMovementType: MovementType | null = changes.movementType || (
+        incomingGifts.gt(0) ? 'INBOUND_GIFT'
+          : outgoingGifts.gt(0) ? 'OUTBOUND_GIFT'
+          : incoming.gt(0) ? 'INBOUND'
+          : outgoing.gt(0) || pendingOutgoing.gt(0) ? 'OUTBOUND'
+          : null
+      );
+
       await prisma.stockMovement.create({
         data: {
           inventoryId,
@@ -90,6 +112,7 @@ export class StockMovementService {
           incomingGifts,
           outgoingGifts,
           closingBalance,
+          ...(derivedMovementType ? { movementType: derivedMovementType } : {}),
         },
       });
 

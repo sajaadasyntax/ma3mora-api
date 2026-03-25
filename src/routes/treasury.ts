@@ -14,7 +14,7 @@ router.use(blockAuditorWrites);
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-const TREASURY_METHODS = ['CASH', 'BANKAK', 'BANK_NILE'] as const;
+const TREASURY_METHODS = ['CASH', 'BANKAK', 'BANK_NILE', 'COMMISSION', 'DEBT', 'OTHERS'] as const;
 type TreasuryMethod = (typeof TREASURY_METHODS)[number];
 
 function emptyBucket(): Record<TreasuryMethod, Prisma.Decimal> {
@@ -22,6 +22,9 @@ function emptyBucket(): Record<TreasuryMethod, Prisma.Decimal> {
     CASH: new Prisma.Decimal(0),
     BANKAK: new Prisma.Decimal(0),
     BANK_NILE: new Prisma.Decimal(0),
+    COMMISSION: new Prisma.Decimal(0),
+    DEBT: new Prisma.Decimal(0),
+    OTHERS: new Prisma.Decimal(0),
   };
 }
 
@@ -30,8 +33,8 @@ function addToBucket(
   method: string,
   amount: Prisma.Decimal,
 ) {
-  if (method === 'CASH' || method === 'BANKAK' || method === 'BANK_NILE') {
-    bucket[method] = bucket[method].add(amount);
+  if (TREASURY_METHODS.includes(method as TreasuryMethod)) {
+    bucket[method as TreasuryMethod] = bucket[method as TreasuryMethod].add(amount);
   }
 }
 
@@ -44,6 +47,9 @@ function bucketToNumbers(bucket: Record<TreasuryMethod, Prisma.Decimal>) {
     cash: toNumber(bucket.CASH),
     bankak: toNumber(bucket.BANKAK),
     bankNile: toNumber(bucket.BANK_NILE),
+    commission: toNumber(bucket.COMMISSION),
+    debt: toNumber(bucket.DEBT),
+    others: toNumber(bucket.OTHERS),
   };
 }
 
@@ -283,10 +289,14 @@ router.get('/daily', async (req: AuthRequest, res) => {
     outflowDetails.push({ label: 'سحب خزينة', ...bucketToNumbers(treasOutBucket) });
 
     // ── 4. Closing = Opening + Inflow − Outflow ──────────────────────────
+    // C4: Include all 6 TreasuryMethod keys to match the full type definition
     const closing: Record<TreasuryMethod, Prisma.Decimal> = {
       CASH: opening.CASH.add(inflow.CASH).sub(outflow.CASH),
       BANKAK: opening.BANKAK.add(inflow.BANKAK).sub(outflow.BANKAK),
       BANK_NILE: opening.BANK_NILE.add(inflow.BANK_NILE).sub(outflow.BANK_NILE),
+      COMMISSION: opening.COMMISSION.add(inflow.COMMISSION).sub(outflow.COMMISSION),
+      DEBT: opening.DEBT.add(inflow.DEBT).sub(outflow.DEBT),
+      OTHERS: opening.OTHERS.add(inflow.OTHERS).sub(outflow.OTHERS),
     };
 
     res.json({

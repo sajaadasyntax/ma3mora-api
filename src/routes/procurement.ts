@@ -608,16 +608,24 @@ router.post('/orders/:id/cancel', requireRole('MANAGER'), createAuditLog('ProcOr
     try {
       const orderTotal = parseFloat(order.total.toString());
       const orderPaid = parseFloat(order.paidAmount.toString());
-      await aggregationService.updateDailyFinancialAggregate(order.createdAt, {
-        procurementTotal: new Prisma.Decimal(-orderTotal),
-        procurementPaid: new Prisma.Decimal(-orderPaid),
-        procurementDebt: new Prisma.Decimal(-(orderTotal - orderPaid)),
-        procurementCount: -1,
-      });
+      // Use cancellation date (now) so reversals appear in the correct daily period
+      const cancellationDate = new Date();
+      // C2: pass inventoryId/section so reversal hits the same aggregate row as creation
+      await aggregationService.updateDailyFinancialAggregate(
+        cancellationDate,
+        {
+          procurementTotal: new Prisma.Decimal(-orderTotal),
+          procurementPaid: new Prisma.Decimal(-orderPaid),
+          procurementDebt: new Prisma.Decimal(-(orderTotal - orderPaid)),
+          procurementCount: -1,
+        },
+        order.inventoryId ?? undefined,
+        (order as any).section ?? undefined
+      );
 
       await aggregationService.updateSupplierCumulativeAggregate(
         order.supplierId,
-        order.createdAt,
+        cancellationDate,
         {
           totalPurchases: new Prisma.Decimal(-orderTotal),
           totalPaid: new Prisma.Decimal(-orderPaid),
@@ -1026,10 +1034,11 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), checkBal
         }
       }
 
-      // Over-receiving guard: ensure received qty doesn't exceed 150% of ordered qty
+      // Over-receiving guard: ensure received qty doesn't exceed 150% of total ordered (including giftQty)
+      // Consistent with the "fully received" check that includes giftQty in the total
       for (const it of freshOrder.items) {
         if ((it as any).isGiftCompensation) continue;
-        const orderedQty = new Prisma.Decimal(it.quantity);
+        const orderedQty = new Prisma.Decimal(it.quantity).add(it.giftQty || 0);
         const totalReceived = receivedByItem[it.itemId] || new Prisma.Decimal(0);
         if (totalReceived.greaterThan(orderedQty.mul(1.5))) {
           throw new Error(`الكمية المستلمة للصنف ${it.item.name} تتجاوز الحد الأقصى المسموح (150%)`);
@@ -1056,6 +1065,11 @@ router.post('/orders/:id/receive', requireRole('INVENTORY', 'MANAGER'), checkBal
           receivedTotals.push(receivedGift);
           if (receivedGift.lessThan(orderedGift)) {
             allFullyReceived = false;
+          }
+          // M5: Apply 150% over-receive cap for new-system gift items (consistent with main items)
+          if (receivedGift.greaterThan(orderedGift.mul(1.5))) {
+            const giftItemName = (it as any).giftItem?.name || it.giftItemId;
+            throw new Error(`الكمية المستلمة للهدية ${giftItemName} تتجاوز الحد الأقصى المسموح (150%)`);
           }
         }
       }
@@ -1503,6 +1517,7 @@ router.post('/orders/:id/return', requireRole('MANAGER'), createAuditLog('ProcOr
 
     const order = await prisma.procOrder.findUnique({
       where: { id },
+      include: { items: { include: { item: true } } },
     });
 
     if (!order) {
@@ -1523,19 +1538,129 @@ router.post('/orders/:id/return', requireRole('MANAGER'), createAuditLog('ProcOr
       return res.status(400).json({ error: 'تم إرجاع هذا الأمر مسبقاً' });
     }
 
-    const orderReturn = await prisma.procOrderReturn.create({
-      data: {
-        orderId: id,
-        reason: returnData.reason,
-        returnedBy: req.user!.id,
-        notes: returnData.notes,
-      },
-      include: {
-        returnedByUser: {
-          select: { id: true, username: true },
+    // Only reverse stock if the order was received
+    const wasReceived = order.status === 'RECEIVED' || order.status === 'PARTIAL';
+
+    // Derive received quantities per itemId from StockBatch.initialQuantity linked via InventoryReceipt
+    // (ProcOrderItem has no receivedQty field — use actual batches received for this order)
+    const receivedQtyByItem = new Map<string, Prisma.Decimal>();
+    if (wasReceived) {
+      const receipts = await prisma.inventoryReceipt.findMany({
+        where: { orderId: id },
+        include: {
+          batches: { select: { itemId: true, initialQuantity: true, quantity: true } },
         },
-      },
+      });
+      for (const receipt of receipts) {
+        for (const batch of receipt.batches) {
+          const qty = new Prisma.Decimal(batch.initialQuantity ?? batch.quantity);
+          const prev = receivedQtyByItem.get(batch.itemId) || new Prisma.Decimal(0);
+          receivedQtyByItem.set(batch.itemId, prev.add(qty));
+        }
+      }
+      // Fallback: if no receipt batches found, use the full ordered quantity per item
+      if (receivedQtyByItem.size === 0) {
+        for (const item of order.items) {
+          receivedQtyByItem.set(item.itemId, new Prisma.Decimal(item.quantity));
+        }
+      }
+    }
+
+    const orderReturn = await prisma.$transaction(async (tx) => {
+      const returnRecord = await tx.procOrderReturn.create({
+        data: {
+          orderId: id,
+          reason: returnData.reason,
+          returnedBy: req.user!.id,
+          notes: returnData.notes,
+        },
+        include: {
+          returnedByUser: { select: { id: true, username: true } },
+        },
+      });
+
+      if (wasReceived) {
+        for (const [itemId, returnQty] of receivedQtyByItem) {
+          if (returnQty.lte(0)) continue;
+
+          await tx.inventoryStock.update({
+            where: {
+              inventoryId_itemId: { inventoryId: order.inventoryId, itemId },
+            },
+            data: { quantity: { decrement: returnQty } },
+          });
+
+          // Consume batches FIFO
+          const batches = await tx.stockBatch.findMany({
+            where: { inventoryId: order.inventoryId, itemId, quantity: { gt: 0 } },
+            orderBy: [{ expiryDate: 'asc' }, { receivedAt: 'asc' }],
+          });
+
+          let remaining = returnQty;
+          for (const batch of batches) {
+            if (remaining.lte(0)) break;
+            const batchQty = new Prisma.Decimal(batch.quantity);
+            const deduct = remaining.gte(batchQty) ? batchQty : remaining;
+            await tx.stockBatch.update({
+              where: { id: batch.id },
+              data: { quantity: batchQty.sub(deduct) },
+            });
+            remaining = remaining.sub(deduct);
+          }
+        }
+      }
+
+      return returnRecord;
     });
+
+    // Update stock movements after transaction commits (non-fatal)
+    if (wasReceived) {
+      try {
+        const { stockMovementService } = await import('../services/stockMovementService');
+        const returnDate = new Date();
+        for (const [itemId, returnQty] of receivedQtyByItem) {
+          const qty = parseFloat(returnQty.toString());
+          if (qty <= 0) continue;
+          await stockMovementService.updateStockMovement(
+            order.inventoryId,
+            itemId,
+            returnDate,
+            { outgoing: qty }
+          );
+        }
+      } catch (moveErr) {
+        console.error('StockMovement update error (proc return):', moveErr);
+      }
+    }
+
+    // Reverse financial aggregates for the returned order (C2: include inventoryId/section)
+    try {
+      const returnDate = new Date();
+      const orderTotal = order.total;
+      const orderPaid = order.paidAmount;
+      await aggregationService.updateDailyFinancialAggregate(
+        returnDate,
+        {
+          procurementTotal: orderTotal.negated(),
+          procurementPaid: orderPaid.negated(),
+          procurementDebt: orderTotal.sub(orderPaid).negated(),
+          procurementCount: -1,
+        },
+        order.inventoryId ?? undefined,
+        (order as any).section ?? undefined
+      );
+      await aggregationService.updateSupplierCumulativeAggregate(
+        order.supplierId,
+        returnDate,
+        {
+          totalPurchases: orderTotal.negated(),
+          totalPaid: orderPaid.negated(),
+          orderCount: -1,
+        }
+      );
+    } catch (aggErr) {
+      console.error('Aggregation reversal error (proc return):', aggErr);
+    }
 
     res.status(201).json(orderReturn);
   } catch (error) {

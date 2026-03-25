@@ -56,10 +56,25 @@ export interface DailyAggregateUpdate {
   cashExchangesOthers?: Prisma.Decimal;
   treasuryInflow?: Prisma.Decimal;
   treasuryOutflow?: Prisma.Decimal;
+  // Per-method treasury amounts for correct net bucket split (M9)
+  treasuryInflowCash?: Prisma.Decimal;
+  treasuryInflowBank?: Prisma.Decimal;
+  treasuryInflowBankNile?: Prisma.Decimal;
+  treasuryOutflowCash?: Prisma.Decimal;
+  treasuryOutflowBank?: Prisma.Decimal;
+  treasuryOutflowBankNile?: Prisma.Decimal;
   customerPaymentsTotal?: Prisma.Decimal;
   customerPaymentsCount?: number;
+  // Per-method customer payment amounts for correct net bucket split (M9)
+  customerPaymentsCash?: Prisma.Decimal;
+  customerPaymentsBank?: Prisma.Decimal;
+  customerPaymentsBankNile?: Prisma.Decimal;
   salesReturnsTotal?: Prisma.Decimal;
   salesReturnsCount?: number;
+  // Per-method sales returns for correct net bucket split (C5)
+  salesReturnsCash?: Prisma.Decimal;
+  salesReturnsBank?: Prisma.Decimal;
+  salesReturnsBankNile?: Prisma.Decimal;
   netDebt?: Prisma.Decimal;
   netOthers?: Prisma.Decimal;
 }
@@ -433,28 +448,47 @@ export class AggregationService {
     const cashExchangesDebtMethodAmount = updateData.cashExchangesDebtMethod || existing?.cashExchangesDebtMethod || new Prisma.Decimal(0);
     const cashExchangesOthersAmount = updateData.cashExchangesOthers || existing?.cashExchangesOthers || new Prisma.Decimal(0);
 
-    // Get opening balances for net calculation
-    const openingBalances = await prisma.openingBalance.findMany({
-      where: {
-        scope: 'CASHBOX',
-        isClosed: false,
-      },
-    });
-
-    const openingCash = openingBalances
-      .filter(b => (b as any).paymentMethod === 'CASH')
-      .reduce((sum, b) => sum.add(b.amount), new Prisma.Decimal(0));
-    const openingBank = openingBalances
-      .filter(b => (b as any).paymentMethod === 'BANKAK')
-      .reduce((sum, b) => sum.add(b.amount), new Prisma.Decimal(0));
-    const openingBankNile = openingBalances
-      .filter(b => (b as any).paymentMethod === 'BANK_NILE')
-      .reduce((sum, b) => sum.add(b.amount), new Prisma.Decimal(0));
+    // M8: Only apply opening balance to the global aggregate (no inventoryId/section)
+    // Per-inventory slices must not include entity-wide opening balance
+    let openingCash = new Prisma.Decimal(0);
+    let openingBank = new Prisma.Decimal(0);
+    let openingBankNile = new Prisma.Decimal(0);
+    if (!inventoryId && !section) {
+      const openingBalances = await prisma.openingBalance.findMany({
+        where: { scope: 'CASHBOX', isClosed: false },
+      });
+      openingCash = openingBalances
+        .filter(b => (b as any).paymentMethod === 'CASH')
+        .reduce((sum, b) => sum.add(b.amount), new Prisma.Decimal(0));
+      openingBank = openingBalances
+        .filter(b => (b as any).paymentMethod === 'BANKAK')
+        .reduce((sum, b) => sum.add(b.amount), new Prisma.Decimal(0));
+      openingBankNile = openingBalances
+        .filter(b => (b as any).paymentMethod === 'BANK_NILE')
+        .reduce((sum, b) => sum.add(b.amount), new Prisma.Decimal(0));
+    }
 
     const customerPaymentsTotalAmount = updateData.customerPaymentsTotal || existing?.customerPaymentsTotal || new Prisma.Decimal(0);
     const treasuryInflowAmount = updateData.treasuryInflow || existing?.treasuryInflow || new Prisma.Decimal(0);
     const treasuryOutflowAmount = updateData.treasuryOutflow || existing?.treasuryOutflow || new Prisma.Decimal(0);
     const salesReturnsTotalAmount = updateData.salesReturnsTotal || existing?.salesReturnsTotal || new Prisma.Decimal(0);
+
+    // M9: Per-method customer payments and treasury for correct net bucket split
+    // Fall back to all going to cash if per-method amounts not provided
+    const custPayCash = updates.customerPaymentsCash ?? customerPaymentsTotalAmount;
+    const custPayBank = updates.customerPaymentsBank ?? new Prisma.Decimal(0);
+    const custPayBankNile = updates.customerPaymentsBankNile ?? new Prisma.Decimal(0);
+    const treasInflowCash = updates.treasuryInflowCash ?? treasuryInflowAmount;
+    const treasInflowBank = updates.treasuryInflowBank ?? new Prisma.Decimal(0);
+    const treasInflowBankNile = updates.treasuryInflowBankNile ?? new Prisma.Decimal(0);
+    const treasOutflowCash = updates.treasuryOutflowCash ?? treasuryOutflowAmount;
+    const treasOutflowBank = updates.treasuryOutflowBank ?? new Prisma.Decimal(0);
+    const treasOutflowBankNile = updates.treasuryOutflowBankNile ?? new Prisma.Decimal(0);
+
+    // C5: Per-method sales returns for correct net bucket split
+    const salesReturnsCashAmount = updates.salesReturnsCash ?? salesReturnsTotalAmount;
+    const salesReturnsBankAmount = updates.salesReturnsBank ?? new Prisma.Decimal(0);
+    const salesReturnsBankNileAmount = updates.salesReturnsBankNile ?? new Prisma.Decimal(0);
 
     // Calculate net balances per payment method
     const netCash = openingCash
@@ -465,10 +499,10 @@ export class AggregationService {
       .sub(salariesCashAmount)
       .sub(advancesCashAmount)
       .add(cashExchangesCashAmount)
-      .add(customerPaymentsTotalAmount)
-      .add(treasuryInflowAmount)
-      .sub(treasuryOutflowAmount)
-      .sub(salesReturnsTotalAmount);
+      .add(custPayCash)
+      .add(treasInflowCash)
+      .sub(treasOutflowCash)
+      .sub(salesReturnsCashAmount);
 
     const netBank = openingBank
       .add(salesBankAmount)
@@ -477,7 +511,11 @@ export class AggregationService {
       .sub(expensesBankAmount)
       .sub(salariesBankAmount)
       .sub(advancesBankAmount)
-      .add(cashExchangesBankAmount);
+      .add(cashExchangesBankAmount)
+      .add(custPayBank)
+      .add(treasInflowBank)
+      .sub(treasOutflowBank)
+      .sub(salesReturnsBankAmount);
 
     const netBankNile = openingBankNile
       .add(salesBankNileAmount)
@@ -486,7 +524,11 @@ export class AggregationService {
       .sub(expensesBankNileAmount)
       .sub(salariesBankNileAmount)
       .sub(advancesBankNileAmount)
-      .add(cashExchangesBankNileAmount);
+      .add(cashExchangesBankNileAmount)
+      .add(custPayBankNile)
+      .add(treasInflowBankNile)
+      .sub(treasOutflowBankNile)
+      .sub(salesReturnsBankNileAmount);
 
     const netDebt = salesDebtMethodAmount
       .add(incomeDebtMethodAmount)
@@ -511,15 +553,15 @@ export class AggregationService {
     updateData.netOthers = netOthers;
     updateData.netTotal = netCash.add(netBank).add(netBankNile).add(netDebt).add(netOthers);
 
-    // Recalculate sales debt if needed
-    if (updateData.salesTotal && updateData.salesReceived) {
-      updateData.salesDebt = updateData.salesTotal.sub(updateData.salesReceived);
-    }
+    // Always recompute debt from merged (existing + update) totals and received amounts
+    // This ensures debt is always consistent regardless of which fields are passed
+    const mergedSalesTotal = updateData.salesTotal !== undefined ? updateData.salesTotal : (existing?.salesTotal || new Prisma.Decimal(0));
+    const mergedSalesReceived = updateData.salesReceived !== undefined ? updateData.salesReceived : (existing?.salesReceived || new Prisma.Decimal(0));
+    updateData.salesDebt = mergedSalesTotal.sub(mergedSalesReceived);
 
-    // Recalculate procurement debt if needed
-    if (updateData.procurementTotal && updateData.procurementPaid) {
-      updateData.procurementDebt = updateData.procurementTotal.sub(updateData.procurementPaid);
-    }
+    const mergedProcurementTotal = updateData.procurementTotal !== undefined ? updateData.procurementTotal : (existing?.procurementTotal || new Prisma.Decimal(0));
+    const mergedProcurementPaid = updateData.procurementPaid !== undefined ? updateData.procurementPaid : (existing?.procurementPaid || new Prisma.Decimal(0));
+    updateData.procurementDebt = mergedProcurementTotal.sub(mergedProcurementPaid);
 
     // Upsert the aggregate
     // Handle null values explicitly for Prisma unique constraint
@@ -543,18 +585,57 @@ export class AggregationService {
     });
 
     // Update monthly aggregate
-    await this.updateMonthlyAggregate(date, updates, inventoryId, section);
+    await this.updateMonthlyAggregate(date, inventoryId, section);
 
     // Update cumulative balance snapshot
+    // M7: Also compute and store receivablesTotal/payablesTotal for global snapshots
     try {
-      await this.updateBalanceSnapshot(date, {
+      const snapshotUpdates: {
+        openingCash: Prisma.Decimal;
+        openingBank: Prisma.Decimal;
+        openingBankNile: Prisma.Decimal;
+        closingCash: Prisma.Decimal;
+        closingBank: Prisma.Decimal;
+        closingBankNile: Prisma.Decimal;
+        receivablesTotal?: Prisma.Decimal;
+        payablesTotal?: Prisma.Decimal;
+        payablesWithExpenses?: Prisma.Decimal;
+      } = {
         openingCash,
         openingBank,
         openingBankNile,
         closingCash: netCash,
         closingBank: netBank,
         closingBankNile: netBankNile,
-      }, inventoryId, section);
+      };
+      if (!inventoryId && !section) {
+        // Compute cumulative outstanding receivables (all unpaid sales)
+        const openSales: any[] = await prisma.salesInvoice.findMany({
+          where: {
+            paymentConfirmationStatus: { not: 'REJECTED' as any },
+          },
+          select: { total: true, paidAmount: true },
+        });
+        const receivablesTotal = openSales.reduce((sum, inv) => {
+          const outstanding = new Prisma.Decimal(inv.total).sub(new Prisma.Decimal(inv.paidAmount));
+          return outstanding.greaterThan(0) ? sum.add(outstanding) : sum;
+        }, new Prisma.Decimal(0));
+
+        // Compute cumulative outstanding payables (all unpaid procurement)
+        const openOrders: any[] = await prisma.procOrder.findMany({
+          where: { status: { not: 'CANCELLED' as any } },
+          select: { total: true, paidAmount: true },
+        });
+        const payablesTotal = openOrders.reduce((sum, ord) => {
+          const outstanding = new Prisma.Decimal(ord.total).sub(new Prisma.Decimal(ord.paidAmount));
+          return outstanding.greaterThan(0) ? sum.add(outstanding) : sum;
+        }, new Prisma.Decimal(0));
+
+        snapshotUpdates.receivablesTotal = receivablesTotal;
+        snapshotUpdates.payablesTotal = payablesTotal;
+        snapshotUpdates.payablesWithExpenses = payablesTotal;
+      }
+      await this.updateBalanceSnapshot(date, snapshotUpdates, inventoryId, section);
     } catch (snapshotError) {
       console.error('Balance snapshot update error:', snapshotError);
     }
@@ -565,24 +646,11 @@ export class AggregationService {
    */
   private async updateMonthlyAggregate(
     date: Date,
-    updates: DailyAggregateUpdate,
     inventoryId?: string,
     section?: Section
   ): Promise<void> {
     const year = date.getFullYear();
     const month = date.getMonth() + 1;
-
-    const monthlyWhereClause: any = {
-      year,
-      month,
-      inventoryId: (inventoryId ?? null) as any,
-      section: (section ?? null) as any,
-    };
-    const existing = await prisma.monthlyFinancialAggregate.findUnique({
-      where: {
-        year_month_inventoryId_section: monthlyWhereClause,
-      },
-    });
 
     // Build update data (similar to daily)
     const updateData: any = {};
@@ -750,7 +818,11 @@ export class AggregationService {
       .sub(monthlyTotals.expensesCash)
       .sub(monthlyTotals.salariesCash)
       .sub(monthlyTotals.advancesCash)
-      .add(monthlyTotals.cashExchangesCash);
+      .add(monthlyTotals.cashExchangesCash)
+      .add(monthlyTotals.customerPaymentsTotal)
+      .add(monthlyTotals.treasuryInflow)
+      .sub(monthlyTotals.treasuryOutflow)
+      .sub(monthlyTotals.salesReturnsTotal);
 
     const netBank = openingBank
       .add(monthlyTotals.salesBank)
@@ -909,6 +981,7 @@ export class AggregationService {
       totalSales?: Prisma.Decimal;
       totalPaid?: Prisma.Decimal;
       invoiceCount?: number;
+      totalAccountPayments?: Prisma.Decimal;
       salesCash?: Prisma.Decimal;
       salesBank?: Prisma.Decimal;
       salesBankNile?: Prisma.Decimal;
@@ -936,6 +1009,9 @@ export class AggregationService {
       : (updates.totalPaid || new Prisma.Decimal(0));
     const totalOutstanding = totalSales.sub(totalPaid);
     const totalInvoices = (previousAggregate?.totalInvoices || 0) + (updates.invoiceCount || 0);
+    const totalAccountPayments = previousAggregate
+      ? (previousAggregate as any).totalAccountPayments.add(updates.totalAccountPayments || 0)
+      : (updates.totalAccountPayments || new Prisma.Decimal(0));
 
     const salesCash = previousAggregate
       ? previousAggregate.salesCash.add(updates.salesCash || 0)
@@ -965,6 +1041,7 @@ export class AggregationService {
         totalSales,
         totalPaid,
         totalOutstanding,
+        totalAccountPayments,
         salesCash,
         salesBank,
         salesBankNile,
@@ -978,6 +1055,7 @@ export class AggregationService {
         totalSales,
         totalPaid,
         totalOutstanding,
+        totalAccountPayments,
         salesCash,
         salesBank,
         salesBankNile,
@@ -1000,16 +1078,18 @@ export class AggregationService {
       purchasesCash?: Prisma.Decimal;
       purchasesBank?: Prisma.Decimal;
       purchasesBankNile?: Prisma.Decimal;
+      purchasesDebtMethod?: Prisma.Decimal;
+      purchasesOthers?: Prisma.Decimal;
     }
   ): Promise<void> {
     const dateOnly = new Date(date);
     dateOnly.setHours(0, 0, 0, 0);
 
-    // Get the latest aggregate before this date
+    // Use lte so that same-day updates chain correctly (matching customer aggregate pattern)
     const previousAggregate = await prisma.supplierCumulativeAggregate.findFirst({
       where: {
         supplierId,
-        date: { lt: dateOnly },
+        date: { lte: dateOnly },
       },
       orderBy: { date: 'desc' },
     });
@@ -1032,6 +1112,12 @@ export class AggregationService {
     const purchasesBankNile = previousAggregate
       ? previousAggregate.purchasesBankNile.add(updates.purchasesBankNile || 0)
       : (updates.purchasesBankNile || new Prisma.Decimal(0));
+    const purchasesDebtMethod = previousAggregate
+      ? (previousAggregate as any).purchasesDebtMethod.add(updates.purchasesDebtMethod || 0)
+      : (updates.purchasesDebtMethod || new Prisma.Decimal(0));
+    const purchasesOthers = previousAggregate
+      ? (previousAggregate as any).purchasesOthers.add(updates.purchasesOthers || 0)
+      : (updates.purchasesOthers || new Prisma.Decimal(0));
 
     await prisma.supplierCumulativeAggregate.upsert({
       where: {
@@ -1048,6 +1134,8 @@ export class AggregationService {
         purchasesCash,
         purchasesBank,
         purchasesBankNile,
+        purchasesDebtMethod,
+        purchasesOthers,
       },
       create: {
         supplierId,
@@ -1059,6 +1147,8 @@ export class AggregationService {
         purchasesCash,
         purchasesBank,
         purchasesBankNile,
+        purchasesDebtMethod,
+        purchasesOthers,
       },
     });
   }
@@ -1244,7 +1334,8 @@ export class AggregationService {
           },
         })
       : [];
-    const incomes = includeGlobal ? await prisma.income.findMany({ where }) : [];
+    // S5: Load incomes even when scoped to inventoryId/section — Income can have these fields
+    const incomes = await prisma.income.findMany({ where });
     const customerPayments: any[] = includeGlobal
       ? await (prisma as any).customerPayment.findMany({
           where: {
@@ -1265,26 +1356,21 @@ export class AggregationService {
           },
         })
       : [];
-    const bankakTransactions: any[] = includeGlobal
-      ? await (prisma as any).bankakTransaction.findMany({
-          where: {
-            createdAt: {
-              gte: dateOnly,
-              lte: dateEnd,
-            },
-          },
-        })
-      : [];
+    // S6: Scope sales returns by invoice inventoryId/section when recalculating a scoped aggregate
     // SalesReturn model uses returnedAt as the date field, not createdAt
+    const salesReturnsWhere: any = {
+      returnedAt: { gte: dateOnly, lte: dateEnd },
+    };
+    if (inventoryId || section) {
+      salesReturnsWhere.invoice = {};
+      if (inventoryId) salesReturnsWhere.invoice.inventoryId = inventoryId;
+      if (section) salesReturnsWhere.invoice.section = section;
+    }
     const salesReturns: any[] = await (prisma as any).salesReturn.findMany({
-      where: {
-        returnedAt: {
-          gte: dateOnly,
-          lte: dateEnd,
-        },
-      },
+      where: salesReturnsWhere,
       include: {
         items: true,
+        invoice: { select: { paymentMethod: true, inventoryId: true, section: true } },
       },
     });
 
@@ -1304,16 +1390,30 @@ export class AggregationService {
     const procurementTotal = orders
       .filter(o => o.status !== 'CANCELLED')
       .reduce((sum, o) => sum.add(o.total), new Prisma.Decimal(0));
-    const procurementPaid = orders.reduce((sum, o) => sum.add(o.paidAmount), new Prisma.Decimal(0));
+    // S8: Exclude cancelled orders from procurementPaid to keep debt computation correct
+    const procurementPaid = orders
+      .filter(o => o.status !== 'CANCELLED')
+      .reduce((sum, o) => sum.add(o.paidAmount), new Prisma.Decimal(0));
     const procurementCancelled = orders
       .filter(o => o.status === 'CANCELLED')
       .reduce((sum, o) => sum.add(o.total), new Prisma.Decimal(0));
+    // C3: ProcOrder has no paymentMethod field — derive method buckets from ProcOrderPayment records
+    const orderIds = orders.filter(o => o.status !== 'CANCELLED').map(o => o.id);
+    const procPayments = orderIds.length > 0
+      ? await prisma.procOrderPayment.findMany({
+          where: {
+            orderId: { in: orderIds },
+            paidAt: { gte: dateOnly, lte: dateEnd },
+          },
+          select: { method: true, amount: true },
+        })
+      : [];
     const procurementByMethod = {
-      CASH: orders.filter(o => (o as any).paymentMethod === 'CASH').reduce((sum, o) => sum.add(o.paidAmount), new Prisma.Decimal(0)),
-      BANKAK: orders.filter(o => (o as any).paymentMethod === 'BANKAK').reduce((sum, o) => sum.add(o.paidAmount), new Prisma.Decimal(0)),
-      BANK_NILE: orders.filter(o => (o as any).paymentMethod === 'BANK_NILE').reduce((sum, o) => sum.add(o.paidAmount), new Prisma.Decimal(0)),
-      DEBT: orders.filter(o => (o as any).paymentMethod === 'DEBT').reduce((sum, o) => sum.add(o.paidAmount), new Prisma.Decimal(0)),
-      OTHERS: orders.filter(o => (o as any).paymentMethod === 'OTHERS').reduce((sum, o) => sum.add(o.paidAmount), new Prisma.Decimal(0)),
+      CASH: procPayments.filter(p => p.method === 'CASH').reduce((sum, p) => sum.add(p.amount), new Prisma.Decimal(0)),
+      BANKAK: procPayments.filter(p => (p.method as string) === 'BANKAK').reduce((sum, p) => sum.add(p.amount), new Prisma.Decimal(0)),
+      BANK_NILE: procPayments.filter(p => p.method === 'BANK_NILE').reduce((sum, p) => sum.add(p.amount), new Prisma.Decimal(0)),
+      DEBT: procPayments.filter(p => (p.method as string) === 'DEBT').reduce((sum, p) => sum.add(p.amount), new Prisma.Decimal(0)),
+      OTHERS: procPayments.filter(p => (p.method as string) === 'OTHERS').reduce((sum, p) => sum.add(p.amount), new Prisma.Decimal(0)),
     };
 
     const expensesTotal = expenses.reduce((sum, e) => sum.add(e.amount), new Prisma.Decimal(0));
@@ -1325,13 +1425,14 @@ export class AggregationService {
       OTHERS: expenses.filter(e => (e.method as string) === 'OTHERS').reduce((sum, e) => sum.add(e.amount), new Prisma.Decimal(0)),
     };
 
-    const salariesTotal = salaries.reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0));
+    // M1: Use netAmount (amount - deductions) consistent with incremental salary handler
+    const salariesTotal = salaries.reduce((sum, s) => sum.add(s.netAmount), new Prisma.Decimal(0));
     const salariesByMethod = {
-      CASH: salaries.filter(s => s.paymentMethod === 'CASH').reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0)),
-      BANKAK: salaries.filter(s => (s.paymentMethod as string) === 'BANKAK').reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0)),
-      BANK_NILE: salaries.filter(s => s.paymentMethod === 'BANK_NILE').reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0)),
-      DEBT: salaries.filter(s => (s.paymentMethod as string) === 'DEBT').reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0)),
-      OTHERS: salaries.filter(s => (s.paymentMethod as string) === 'OTHERS').reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0)),
+      CASH: salaries.filter(s => s.paymentMethod === 'CASH').reduce((sum, s) => sum.add(s.netAmount), new Prisma.Decimal(0)),
+      BANKAK: salaries.filter(s => (s.paymentMethod as string) === 'BANKAK').reduce((sum, s) => sum.add(s.netAmount), new Prisma.Decimal(0)),
+      BANK_NILE: salaries.filter(s => s.paymentMethod === 'BANK_NILE').reduce((sum, s) => sum.add(s.netAmount), new Prisma.Decimal(0)),
+      DEBT: salaries.filter(s => (s.paymentMethod as string) === 'DEBT').reduce((sum, s) => sum.add(s.netAmount), new Prisma.Decimal(0)),
+      OTHERS: salaries.filter(s => (s.paymentMethod as string) === 'OTHERS').reduce((sum, s) => sum.add(s.netAmount), new Prisma.Decimal(0)),
     };
 
     const advancesTotal = advances.reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0));
@@ -1342,6 +1443,28 @@ export class AggregationService {
       DEBT: advances.filter(a => (a.paymentMethod as string) === 'DEBT').reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0)),
       OTHERS: advances.filter(a => (a.paymentMethod as string) === 'OTHERS').reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0)),
     };
+
+    // Cash exchange calculations — net per method (toMethod adds, fromMethod subtracts)
+    const cashExchangesCashAmount = cashExchanges
+      .filter((e: any) => e.toMethod === 'CASH')
+      .reduce((sum: Prisma.Decimal, e: any) => sum.add(e.amount), new Prisma.Decimal(0))
+      .sub(cashExchanges.filter((e: any) => e.fromMethod === 'CASH').reduce((sum: Prisma.Decimal, e: any) => sum.add(e.amount), new Prisma.Decimal(0)));
+    const cashExchangesBankAmount = cashExchanges
+      .filter((e: any) => e.toMethod === 'BANKAK')
+      .reduce((sum: Prisma.Decimal, e: any) => sum.add(e.amount), new Prisma.Decimal(0))
+      .sub(cashExchanges.filter((e: any) => e.fromMethod === 'BANKAK').reduce((sum: Prisma.Decimal, e: any) => sum.add(e.amount), new Prisma.Decimal(0)));
+    const cashExchangesBankNileAmount = cashExchanges
+      .filter((e: any) => e.toMethod === 'BANK_NILE')
+      .reduce((sum: Prisma.Decimal, e: any) => sum.add(e.amount), new Prisma.Decimal(0))
+      .sub(cashExchanges.filter((e: any) => e.fromMethod === 'BANK_NILE').reduce((sum: Prisma.Decimal, e: any) => sum.add(e.amount), new Prisma.Decimal(0)));
+    const cashExchangesDebtAmount = cashExchanges
+      .filter((e: any) => e.toMethod === 'DEBT')
+      .reduce((sum: Prisma.Decimal, e: any) => sum.add(e.amount), new Prisma.Decimal(0))
+      .sub(cashExchanges.filter((e: any) => e.fromMethod === 'DEBT').reduce((sum: Prisma.Decimal, e: any) => sum.add(e.amount), new Prisma.Decimal(0)));
+    const cashExchangesOthersAmount = cashExchanges
+      .filter((e: any) => e.toMethod === 'OTHERS')
+      .reduce((sum: Prisma.Decimal, e: any) => sum.add(e.amount), new Prisma.Decimal(0))
+      .sub(cashExchanges.filter((e: any) => e.fromMethod === 'OTHERS').reduce((sum: Prisma.Decimal, e: any) => sum.add(e.amount), new Prisma.Decimal(0)));
 
     // Income calculations
     const incomeTotalAmount = incomes.reduce((sum, i) => sum.add(i.amount), new Prisma.Decimal(0));
@@ -1364,14 +1487,32 @@ export class AggregationService {
       .filter(t => (t as any).type === 'CASH_OUT')
       .reduce((sum, t) => sum.add(t.amount), new Prisma.Decimal(0));
 
-    // Sales returns calculations: sum line totals from SalesReturnItem records
+    // C5: Sales returns — sum line totals per invoice payment method for correct net bucket split
+    const salesReturnsAmountByMethod = { CASH: new Prisma.Decimal(0), BANKAK: new Prisma.Decimal(0), BANK_NILE: new Prisma.Decimal(0) };
     const salesReturnsTotalAmount = salesReturns.reduce((sum, sr) => {
       const itemsTotal = (sr.items || []).reduce(
         (itemSum: Prisma.Decimal, item: any) => itemSum.add(item.lineTotal),
         new Prisma.Decimal(0)
       );
+      const method = sr.invoice?.paymentMethod || 'CASH';
+      if (method === 'BANKAK') salesReturnsAmountByMethod.BANKAK = salesReturnsAmountByMethod.BANKAK.add(itemsTotal);
+      else if (method === 'BANK_NILE') salesReturnsAmountByMethod.BANK_NILE = salesReturnsAmountByMethod.BANK_NILE.add(itemsTotal);
+      else salesReturnsAmountByMethod.CASH = salesReturnsAmountByMethod.CASH.add(itemsTotal);
       return sum.add(itemsTotal);
     }, new Prisma.Decimal(0));
+
+    // M9: Customer payments per method for correct net bucket split
+    const custPayCashAmount = customerPayments.filter(cp => (cp.method || cp.paymentMethod) === 'CASH').reduce((sum, cp) => sum.add(cp.amount), new Prisma.Decimal(0));
+    const custPayBankAmount = customerPayments.filter(cp => (cp.method || cp.paymentMethod) === 'BANKAK').reduce((sum, cp) => sum.add(cp.amount), new Prisma.Decimal(0));
+    const custPayBankNileAmount = customerPayments.filter(cp => (cp.method || cp.paymentMethod) === 'BANK_NILE').reduce((sum, cp) => sum.add(cp.amount), new Prisma.Decimal(0));
+
+    // M9: Treasury per method
+    const treasInflowCashAmount = treasuryTransactions.filter(t => t.type === 'CASH_IN' && t.method === 'CASH').reduce((sum, t) => sum.add(t.amount), new Prisma.Decimal(0));
+    const treasInflowBankAmount = treasuryTransactions.filter(t => t.type === 'CASH_IN' && (t.method as string) === 'BANKAK').reduce((sum, t) => sum.add(t.amount), new Prisma.Decimal(0));
+    const treasInflowBankNileAmount = treasuryTransactions.filter(t => t.type === 'CASH_IN' && t.method === 'BANK_NILE').reduce((sum, t) => sum.add(t.amount), new Prisma.Decimal(0));
+    const treasOutflowCashAmount = treasuryTransactions.filter(t => t.type === 'CASH_OUT' && t.method === 'CASH').reduce((sum, t) => sum.add(t.amount), new Prisma.Decimal(0));
+    const treasOutflowBankAmount = treasuryTransactions.filter(t => t.type === 'CASH_OUT' && (t.method as string) === 'BANKAK').reduce((sum, t) => sum.add(t.amount), new Prisma.Decimal(0));
+    const treasOutflowBankNileAmount = treasuryTransactions.filter(t => t.type === 'CASH_OUT' && t.method === 'BANK_NILE').reduce((sum, t) => sum.add(t.amount), new Prisma.Decimal(0));
 
     // Update aggregate - use absolute values instead of increments for recalculation
     // First, get existing aggregate to clear it
@@ -1446,12 +1587,29 @@ export class AggregationService {
       advancesBankNile: advancesByMethod.BANK_NILE,
       advancesDebtMethod: advancesByMethod.DEBT,
       advancesOthers: advancesByMethod.OTHERS,
+      cashExchangesCash: cashExchangesCashAmount,
+      cashExchangesBank: cashExchangesBankAmount,
+      cashExchangesBankNile: cashExchangesBankNileAmount,
+      cashExchangesDebtMethod: cashExchangesDebtAmount,
+      cashExchangesOthers: cashExchangesOthersAmount,
       treasuryInflow: treasuryInflowAmount,
       treasuryOutflow: treasuryOutflowAmount,
+      treasuryInflowCash: treasInflowCashAmount,
+      treasuryInflowBank: treasInflowBankAmount,
+      treasuryInflowBankNile: treasInflowBankNileAmount,
+      treasuryOutflowCash: treasOutflowCashAmount,
+      treasuryOutflowBank: treasOutflowBankAmount,
+      treasuryOutflowBankNile: treasOutflowBankNileAmount,
       customerPaymentsTotal: customerPaymentsTotalAmount,
       customerPaymentsCount: customerPayments.length,
+      customerPaymentsCash: custPayCashAmount,
+      customerPaymentsBank: custPayBankAmount,
+      customerPaymentsBankNile: custPayBankNileAmount,
       salesReturnsTotal: salesReturnsTotalAmount,
       salesReturnsCount: salesReturns.length,
+      salesReturnsCash: salesReturnsAmountByMethod.CASH,
+      salesReturnsBank: salesReturnsAmountByMethod.BANKAK,
+      salesReturnsBankNile: salesReturnsAmountByMethod.BANK_NILE,
     }, inventoryId, section);
   }
 }

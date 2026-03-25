@@ -35,6 +35,7 @@ const ledgerEntrySchema = z.object({
   description: z.string().optional(),
   referenceId: z.string().optional(),
   referenceType: z.string().optional(),
+  inventoryId: z.string().optional(), // Required for deductions to know where to put received stock
 });
 
 // ─── POST /gift-accrual/rules — Create a gift accrual rule ──────────────────
@@ -226,27 +227,86 @@ router.post(
     try {
       const data = ledgerEntrySchema.parse(req.body);
 
-      const entry = await prisma.supplierGiftLedger.create({
-        data: {
-          supplierId: data.supplierId,
-          ruleId: data.ruleId || null,
-          entryType: 'DEDUCTION',
-          itemId: data.itemId,
-          quantity: data.quantity,
-          description: data.description || null,
-          referenceId: data.referenceId || null,
-          referenceType: data.referenceType || null,
-          createdById: req.user!.id,
-        },
-        include: {
-          supplier: true,
-          rule: true,
-          item: true,
-          createdBy: {
-            select: { id: true, username: true, role: true },
-          },
-        },
+      // Issue 20: Validate outstanding balance before allowing deduction
+      const ledgerEntries = await prisma.supplierGiftLedger.findMany({
+        where: { supplierId: data.supplierId, itemId: data.itemId },
+        select: { entryType: true, quantity: true },
       });
+
+      const outstandingBalance = ledgerEntries.reduce((balance, entry) => {
+        return entry.entryType === 'ACCRUAL'
+          ? balance.add(entry.quantity)
+          : balance.sub(entry.quantity);
+      }, new Prisma.Decimal(0));
+
+      if (outstandingBalance.lt(data.quantity)) {
+        return res.status(400).json({
+          error: `الرصيد المتاح (${outstandingBalance}) أقل من كمية الخصم المطلوبة (${data.quantity})`,
+          outstandingBalance: outstandingBalance.toString(),
+        });
+      }
+
+      const entry = await prisma.$transaction(async (tx) => {
+        const ledgerEntry = await tx.supplierGiftLedger.create({
+          data: {
+            supplierId: data.supplierId,
+            ruleId: data.ruleId || null,
+            entryType: 'DEDUCTION',
+            itemId: data.itemId,
+            quantity: data.quantity,
+            description: data.description || null,
+            referenceId: data.referenceId || null,
+            referenceType: data.referenceType || null,
+            createdById: req.user!.id,
+          },
+          include: {
+            supplier: true,
+            rule: true,
+            item: true,
+            createdBy: { select: { id: true, username: true, role: true } },
+          },
+        });
+
+        // Issue 19: Update physical inventory stock when gift is received (deduction = physically received)
+        if (data.inventoryId) {
+          await tx.inventoryStock.upsert({
+            where: { inventoryId_itemId: { inventoryId: data.inventoryId, itemId: data.itemId } },
+            update: { quantity: { increment: new Prisma.Decimal(data.quantity) } },
+            create: {
+              inventoryId: data.inventoryId,
+              itemId: data.itemId,
+              quantity: new Prisma.Decimal(data.quantity),
+            },
+          });
+
+          await tx.stockBatch.create({
+            data: {
+              inventoryId: data.inventoryId,
+              itemId: data.itemId,
+              quantity: new Prisma.Decimal(data.quantity),
+              receivedAt: new Date(),
+              notes: `هدية من المورد - ${data.description || ''}`.trim(),
+            },
+          });
+        }
+
+        return ledgerEntry;
+      });
+
+      // M3: Record StockMovement for the gift receipt so stock movement reports include it
+      if (data.inventoryId) {
+        try {
+          const { stockMovementService } = await import('../services/stockMovementService');
+          await stockMovementService.updateStockMovement(
+            data.inventoryId,
+            data.itemId,
+            new Date(),
+            { incomingGifts: data.quantity, movementType: 'INBOUND_GIFT' }
+          );
+        } catch (moveErr) {
+          console.error('StockMovement update error (gift deduction):', moveErr);
+        }
+      }
 
       res.status(201).json(entry);
     } catch (error) {

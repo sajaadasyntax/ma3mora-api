@@ -16,11 +16,13 @@ export class JournalService {
     method?: PaymentMethod;
     description: string;
     createdBy: string;
+    tx?: Omit<typeof prisma, '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'>;
   }): Promise<JournalEntry> {
     const dateOnly = new Date(params.date);
     dateOnly.setHours(0, 0, 0, 0);
+    const client = (params.tx as any) ?? prisma;
 
-    const entry = await prisma.journalEntry.create({
+    const entry = await client.journalEntry.create({
       data: {
         date: dateOnly,
         entryType: params.entryType,

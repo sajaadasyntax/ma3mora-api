@@ -405,9 +405,33 @@ router.post('/expenses/:id/pay-debt', requireRole('ACCOUNTANT', 'MANAGER'), chec
       where: { id },
       data: {
         isDebt: false,
-        method: data.method, // Update payment method to the one used
+        method: data.method,
       },
     });
+
+    // Update daily aggregate: swap from debtMethod to actual paid method
+    try {
+      const method = data.method;
+      const amount = new Prisma.Decimal(expense.amount);
+      const methodField: Record<string, Partial<{ expensesCash: Prisma.Decimal; expensesBank: Prisma.Decimal; expensesBankNile: Prisma.Decimal; expensesOthers: Prisma.Decimal }>> = {
+        CASH: { expensesCash: amount },
+        BANKAK: { expensesBank: amount },
+        BANK_NILE: { expensesBankNile: amount },
+        OTHERS: { expensesOthers: amount },
+      };
+      // S3: Use original expense creation date so the reclassification hits the correct historical aggregate
+      await aggregationService.updateDailyFinancialAggregate(
+        expense.createdAt,
+        {
+          expensesDebtMethod: amount.negated(),
+          ...(methodField[method] || {}),
+        },
+        updatedExpense.inventoryId ?? undefined,
+        (updatedExpense as any).section ?? undefined
+      );
+    } catch (aggError) {
+      console.error('Aggregation update error (pay-debt expense):', aggError);
+    }
 
     res.json({ message: 'تم سداد الدين بنجاح', expense: updatedExpense });
   } catch (error) {
@@ -532,14 +556,37 @@ router.post('/income/:id/pay-debt', requireRole('ACCOUNTANT', 'MANAGER'), checkB
       return res.status(400).json({ error: 'هذا الإيراد ليس دينًا' });
     }
 
-    // Update the income to mark it as paid (no longer a debt)
+    // Update the income to mark it as received (no longer a debt)
     const updatedIncome = await prisma.income.update({
       where: { id },
       data: {
         isDebt: false,
-        method: data.method, // Update payment method to the one used
+        method: data.method,
       },
     });
+
+    // Update daily aggregate: reclassify from debtMethod to the actual payment method
+    try {
+      const amount = new Prisma.Decimal(income.amount);
+      const methodField: Record<string, Partial<{ incomeCash: Prisma.Decimal; incomeBank: Prisma.Decimal; incomeBankNile: Prisma.Decimal; incomeOthers: Prisma.Decimal }>> = {
+        CASH: { incomeCash: amount },
+        BANKAK: { incomeBank: amount },
+        BANK_NILE: { incomeBankNile: amount },
+        OTHERS: { incomeOthers: amount },
+      };
+      // S3: Use original income creation date so the reclassification hits the correct historical aggregate
+      await aggregationService.updateDailyFinancialAggregate(
+        income.createdAt,
+        {
+          incomeDebtMethod: amount.negated(),
+          ...(methodField[data.method] || {}),
+        },
+        updatedIncome.inventoryId ?? undefined,
+        (updatedIncome as any).section ?? undefined
+      );
+    } catch (aggError) {
+      console.error('Aggregation update error (pay-debt income):', aggError);
+    }
 
     res.json({ message: 'تم تسديد الدين بنجاح', income: updatedIncome });
   } catch (error) {
@@ -749,12 +796,12 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
     const allProcItems = await prisma.procOrderItem.findMany({
       include: {
         order: {
-          select: { createdAt: true, status: true },
+          select: { createdAt: true, status: true, inventoryId: true },
         },
       },
     });
 
-    // Map itemId → latest unitCost (from non-cancelled orders, most recent before now)
+    // Map (inventoryId, itemId) → latest unitCost, keyed per warehouse to avoid cross-warehouse cost bleed
     const latestUnitCostMap = new Map<string, Prisma.Decimal>();
     const latestUnitCostAtStartMap = new Map<string, Prisma.Decimal>();
 
@@ -764,9 +811,10 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
       .sort((a, b) => a.order.createdAt.getTime() - b.order.createdAt.getTime());
 
     for (const pi of sortedProcItems) {
-      latestUnitCostMap.set(pi.itemId, pi.unitCost);
+      const costKey = `${pi.order.inventoryId}:${pi.itemId}`;
+      latestUnitCostMap.set(costKey, pi.unitCost);
       if (pi.order.createdAt <= sessionStart) {
-        latestUnitCostAtStartMap.set(pi.itemId, pi.unitCost);
+        latestUnitCostAtStartMap.set(costKey, pi.unitCost);
       }
     }
 
@@ -797,13 +845,13 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
       const key = `${stock.inventoryId}:${stock.itemId}`;
 
       // Final stock cost
-      const unitCostFinal = latestUnitCostMap.get(stock.itemId) || new Prisma.Decimal(0);
+      const unitCostFinal = latestUnitCostMap.get(key) || new Prisma.Decimal(0);
       const finalQty = stock.quantity;
       finalStockCost = finalStockCost.add(finalQty.mul(unitCostFinal));
 
-      // Initial stock cost
-      const unitCostInitial = latestUnitCostAtStartMap.get(stock.itemId)
-        || latestUnitCostMap.get(stock.itemId)
+      // Initial stock cost (use per-warehouse key for accuracy)
+      const unitCostInitial = latestUnitCostAtStartMap.get(key)
+        || latestUnitCostMap.get(key)
         || new Prisma.Decimal(0);
       const initialQty = initialQtyMap.get(key) || new Prisma.Decimal(0);
       initialStockCost = initialStockCost.add(initialQty.mul(unitCostInitial));
@@ -1765,6 +1813,23 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
     // Calculate total عليه (Liabilities)
     const totalLiabilities = totalOutboundDebt.add(totalUnpaidProcOrders);
 
+    // Stock valuation at procurement cost (matching balance/summary)
+    const procItemsForAL = await prisma.procOrderItem.findMany({
+      where: { order: { status: { not: 'CANCELLED' } } },
+      include: { order: { select: { inventoryId: true, createdAt: true } } },
+      orderBy: { order: { createdAt: 'asc' } },
+    });
+    const costUnitMap = new Map<string, Prisma.Decimal>(); // key = `inventoryId:itemId`
+    for (const pi of procItemsForAL) {
+      costUnitMap.set(`${pi.order.inventoryId}:${pi.itemId}`, pi.unitCost);
+    }
+    const allCurrentStockAL = await prisma.inventoryStock.findMany();
+    let totalStockAtCost = new Prisma.Decimal(0);
+    for (const s of allCurrentStockAL) {
+      const uc = costUnitMap.get(`${s.inventoryId}:${s.itemId}`) || new Prisma.Decimal(0);
+      totalStockAtCost = totalStockAtCost.add(s.quantity.mul(uc));
+    }
+
     res.json({
       assets: {
         stockValues: {
@@ -1774,6 +1839,9 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
             totalValue: w.totalValue.toFixed(2),
           })),
           total: totalStockValue.toFixed(2),
+          valuationBasis: 'WHOLESALE',
+          totalAtCost: totalStockAtCost.toFixed(2),
+          costBasisNote: 'totalAtCost uses latest procurement unitCost (matches balance/summary profit formula)',
         },
         liquidCash: {
           CASH: liquidCash.CASH.toFixed(2),
@@ -1847,7 +1915,7 @@ async function getTreasurySumsByCustomer(): Promise<
  */
 async function getTreasuryPaidBySupplier(): Promise<Map<string, Prisma.Decimal>> {
   const rows = await prisma.treasuryTransaction.findMany({
-    where: { supplierId: { not: null } },
+    where: { supplierId: { not: null }, type: 'CASH_OUT' },
     select: { supplierId: true, amount: true },
   });
   const map = new Map<string, Prisma.Decimal>();
@@ -1869,12 +1937,12 @@ router.get('/receivables-payables', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGE
       getTreasuryPaidBySupplier(),
     ]);
 
-    // Customers receivables: invoices (total - paid) minus account-level payments, folded with treasury
+    // S4: Exclude REJECTED invoices from customer receivables to prevent inflation
     const customers = await prisma.customer.findMany({
       include: {
         salesInvoices: section
-          ? { where: { section: section as any }, select: { total: true, paidAmount: true } }
-          : { select: { total: true, paidAmount: true } },
+          ? { where: { section: section as any, paymentConfirmationStatus: { not: 'REJECTED' as any } }, select: { total: true, paidAmount: true } }
+          : { where: { paymentConfirmationStatus: { not: 'REJECTED' as any } }, select: { total: true, paidAmount: true } },
         customerPayments: { select: { amount: true } },
         salesDeposits: { select: { amount: true } },
       },
@@ -1934,9 +2002,14 @@ router.get('/receivables-payables', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGE
       })
       .filter((p) => new Prisma.Decimal(p.remaining).greaterThan(0));
 
-    // Expenses (regular + salaries + advances) should be counted toward liabilities ("عليه")
-    // Regular expenses - optionally filter by section if present
-    const expensesWhere: any = {};
+    // Expenses (regular + salaries + advances) within the current open session only
+    const openSession = await prisma.openingBalance.findFirst({
+      where: { scope: 'CASHBOX', isClosed: false },
+      orderBy: { openedAt: 'asc' },
+    });
+    const sessionStart = openSession?.openedAt || new Date(0);
+
+    const expensesWhere: any = { createdAt: { gte: sessionStart } };
     if (section) expensesWhere.section = section;
     const expenses = await prisma.expense.findMany({ where: expensesWhere });
     const totalExpenses = expenses.reduce(
@@ -1944,15 +2017,17 @@ router.get('/receivables-payables', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGE
       new Prisma.Decimal(0)
     );
 
-    // Paid salaries (no section association)
-    const paidSalaries = await prisma.salary.findMany({ where: { paidAt: { not: null } } });
+    const paidSalaries = await prisma.salary.findMany({
+      where: { paidAt: { not: null, gte: sessionStart } },
+    });
     const totalSalaries = paidSalaries.reduce(
       (sum: Prisma.Decimal, s: any) => sum.add(s.amount),
       new Prisma.Decimal(0)
     );
 
-    // Paid advances (no section association)
-    const paidAdvances = await prisma.advance.findMany({ where: { paidAt: { not: null } } });
+    const paidAdvances = await prisma.advance.findMany({
+      where: { paidAt: { not: null, gte: sessionStart } },
+    });
     const totalAdvances = paidAdvances.reduce(
       (sum: Prisma.Decimal, a: any) => sum.add(a.amount),
       new Prisma.Decimal(0)
@@ -2266,9 +2341,10 @@ router.get('/balance/sessions', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'),
           }
         });
 
-        const totalExpenses = expenses.reduce((sum, exp) => 
-          sum.add(exp.amount), new Prisma.Decimal(0)
-        );
+        // S7: Exclude debt expenses from profit calculation to match /balance/summary formula
+        const totalExpenses = expenses
+          .filter(exp => !exp.isDebt)
+          .reduce((sum, exp) => sum.add(exp.amount), new Prisma.Decimal(0));
 
         // Get income data for this session (using createdAt)
         const income = await prisma.income.findMany({
@@ -2315,7 +2391,82 @@ router.get('/balance/sessions', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'),
         // Total expenses includes regular expenses, salaries, and advances
         const totalAllExpenses = totalExpenses.add(totalSalaries).add(totalAdvances);
 
-        const profit = totalReceived.add(totalIncome).sub(totalProcurement).sub(totalAllExpenses);
+        // Commission payments (proc payments with method COMMISSION)
+        const commissionPayments = await prisma.procOrderPayment.findMany({
+          where: {
+            paidAt: { gte: sessionStart, lte: sessionEnd },
+            method: 'COMMISSION' as any,
+            order: { status: { not: 'CANCELLED' }, paymentConfirmed: true },
+          },
+        });
+        const totalCommission = commissionPayments.reduce(
+          (sum: Prisma.Decimal, p: any) => sum.add(p.amount), new Prisma.Decimal(0)
+        );
+
+        // Stock cost bridge: use StockMovement closing balances at session boundaries × latest unitCost
+        const procItemsForSession = await prisma.procOrderItem.findMany({
+          where: { order: { status: { not: 'CANCELLED' } } },
+          include: { order: { select: { inventoryId: true, createdAt: true } } },
+          orderBy: { order: { createdAt: 'asc' } },
+        });
+
+        const sessionUnitCostMap = new Map<string, Prisma.Decimal>();
+        const sessionUnitCostAtStartMap = new Map<string, Prisma.Decimal>();
+        for (const pi of procItemsForSession) {
+          const k = `${pi.order.inventoryId}:${pi.itemId}`;
+          sessionUnitCostMap.set(k, pi.unitCost);
+          if (pi.order.createdAt <= sessionStart) {
+            sessionUnitCostAtStartMap.set(k, pi.unitCost);
+          }
+        }
+
+        const sessionStartDate = new Date(sessionStart);
+        sessionStartDate.setHours(0, 0, 0, 0);
+        const sessionEndDate = new Date(sessionEnd);
+        sessionEndDate.setHours(0, 0, 0, 0);
+
+        const smAtStart = await prisma.stockMovement.findMany({
+          where: { movementDate: { lte: sessionStartDate } },
+          orderBy: { movementDate: 'desc' },
+        });
+        const smAtEnd = await prisma.stockMovement.findMany({
+          where: { movementDate: { lte: sessionEndDate } },
+          orderBy: { movementDate: 'desc' },
+        });
+
+        const seenStart = new Set<string>();
+        const initialQtyMap = new Map<string, Prisma.Decimal>();
+        for (const sm of smAtStart) {
+          const k = `${sm.inventoryId}:${sm.itemId}`;
+          if (!seenStart.has(k)) { seenStart.add(k); initialQtyMap.set(k, sm.closingBalance); }
+        }
+        const seenEnd = new Set<string>();
+        const finalQtyMap = new Map<string, Prisma.Decimal>();
+        for (const sm of smAtEnd) {
+          const k = `${sm.inventoryId}:${sm.itemId}`;
+          if (!seenEnd.has(k)) { seenEnd.add(k); finalQtyMap.set(k, sm.closingBalance); }
+        }
+
+        const allKeys = new Set([...initialQtyMap.keys(), ...finalQtyMap.keys()]);
+        let sessionInitialStock = new Prisma.Decimal(0);
+        let sessionFinalStock = new Prisma.Decimal(0);
+        for (const k of allKeys) {
+          const uc = sessionUnitCostMap.get(k) || new Prisma.Decimal(0);
+          const ucStart = sessionUnitCostAtStartMap.get(k) || uc;
+          sessionInitialStock = sessionInitialStock.add((initialQtyMap.get(k) || new Prisma.Decimal(0)).mul(ucStart));
+          sessionFinalStock = sessionFinalStock.add((finalQtyMap.get(k) || new Prisma.Decimal(0)).mul(uc));
+        }
+
+        // Use totalSales (not totalReceived) and include commission + stock bridge (enhanced formula)
+        const totalProcOrders = procurementOrders.reduce(
+          (sum: Prisma.Decimal, o: any) => sum.add(o.total), new Prisma.Decimal(0)
+        );
+        const profit = totalSales
+          .add(totalCommission)
+          .add(sessionFinalStock)
+          .sub(sessionInitialStock)
+          .sub(totalProcOrders)
+          .sub(totalAllExpenses);
 
         return {
           ...session,
@@ -2806,8 +2957,8 @@ router.get('/outstanding-fees', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER', 
       };
     });
     
-    // Get suppliers orders with outstanding balances
-    const supplierOrderWhere: any = {};
+    // Get suppliers orders with outstanding balances (exclude cancelled orders)
+    const supplierOrderWhere: any = { status: { not: 'CANCELLED' } };
     if (startDateFilter) {
       supplierOrderWhere.createdAt = { gte: startDateFilter, lte: endDateFilter };
     }
@@ -2992,6 +3143,19 @@ router.get('/bank-transactions', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER')
       orderBy: { paidAt: 'desc' },
     });
 
+    // Get miscellaneous income (BANKAK or BANK_NILE)
+    const miscBankIncomes = await prisma.income.findMany({
+      where: {
+        method: { in: methodFilter as any[] },
+        ...(Object.keys(dateFilter).length > 0 ? { createdAt: dateFilter } : {}),
+      },
+      include: {
+        inventory: { select: { name: true } },
+        creator: { select: { id: true, username: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
     // Get cash exchanges involving banks
     const cashExchanges = await (prisma as any).cashExchange.findMany({
       where: {
@@ -3076,6 +3240,23 @@ router.get('/bank-transactions', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER')
           receiptNumber: payment.receiptNumber || null,
           receiptUrl: payment.receiptUrl || null,
           notes: payment.notes || null,
+        },
+      });
+    });
+
+    // Miscellaneous income (bank methods)
+    miscBankIncomes.forEach((inc: any) => {
+      transactions.push({
+        id: inc.id,
+        type: 'MISC_INCOME',
+        typeLabel: 'إيراد متنوع',
+        amount: inc.amount.toString(),
+        method: inc.method,
+        date: inc.createdAt,
+        recordedBy: inc.creator?.username || 'غير محدد',
+        details: {
+          description: (inc as any).description || null,
+          inventory: inc.inventory?.name || null,
         },
       });
     });
@@ -3198,14 +3379,16 @@ router.get('/bank-transactions', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER')
       .filter(b => (b as any).paymentMethod === 'BANK_NILE')
       .reduce((sum, b) => sum.add(b.amount), new Prisma.Decimal(0));
 
-    // Calculate income (sales payments only) by method
+    // Calculate income (sales payments + misc income) by method
     const bankIncome = salesPayments
       .filter(p => p.method === 'BANKAK')
-      .reduce((sum, p) => sum.add(p.amount), new Prisma.Decimal(0));
+      .reduce((sum, p) => sum.add(p.amount), new Prisma.Decimal(0))
+      .add(miscBankIncomes.filter((i: any) => i.method === 'BANKAK').reduce((sum: Prisma.Decimal, i: any) => sum.add(i.amount), new Prisma.Decimal(0)));
     
     const bankNileIncome = salesPayments
       .filter(p => p.method === 'BANK_NILE')
-      .reduce((sum, p) => sum.add(p.amount), new Prisma.Decimal(0));
+      .reduce((sum, p) => sum.add(p.amount), new Prisma.Decimal(0))
+      .add(miscBankIncomes.filter((i: any) => i.method === 'BANK_NILE').reduce((sum: Prisma.Decimal, i: any) => sum.add(i.amount), new Prisma.Decimal(0)));
 
     // Calculate expenses (procurement payments, regular expenses, salaries, advances) by method
     const bankProcPayments = procPayments
@@ -3513,6 +3696,22 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER')
       orderBy: { createdAt: 'asc' },
     });
 
+    // Miscellaneous income entries
+    const miscIncomes = await prisma.income.findMany({
+      where: {
+        createdAt: {
+          gte: startOfDay,
+          lte: endOfDay,
+        },
+        method: method ? (method as any) : undefined,
+      },
+      include: {
+        inventory: { select: { name: true } },
+        creator: { select: { id: true, username: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
     // Sales returns (refunds) — grouped by returnedAt date
     const salesReturnsInPeriod = await prisma.salesReturn.findMany({
       where: {
@@ -3595,6 +3794,27 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER')
       });
     });
     
+    // Process miscellaneous incomes
+    miscIncomes.forEach((inc) => {
+      const dateKey = new Date(inc.createdAt).toISOString().split('T')[0];
+      if (!transactionsByDate[dateKey]) {
+        transactionsByDate[dateKey] = { date: dateKey, income: [], losses: [], transfers: [] };
+      }
+      transactionsByDate[dateKey].income.push({
+        type: 'MISC_INCOME',
+        typeLabel: 'إيراد متنوع',
+        id: inc.id,
+        amount: inc.amount.toString(),
+        method: inc.method,
+        date: inc.createdAt,
+        recordedBy: (inc as any).creator?.username || 'غير محدد',
+        details: {
+          description: (inc as any).description || null,
+          inventory: (inc as any).inventory?.name || null,
+        },
+      });
+    });
+
     // Process procurement payments (loss)
     procPayments.forEach((payment) => {
       const dateKey = new Date(payment.paidAt).toISOString().split('T')[0];
@@ -3987,6 +4207,20 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER')
       }
       if (isValidMethod(toM)) {
         prePeriodImpact[toM] = prePeriodImpact[toM].add(e.amount);
+      }
+    });
+
+    const prePeriodMiscIncomes = await prisma.income.findMany({
+      where: {
+        createdAt: { lt: startOfDay },
+        ...(method ? { method: method as any } : {}),
+      },
+    });
+
+    prePeriodMiscIncomes.forEach((inc: any) => {
+      const m = inc.method;
+      if (isValidMethod(m)) {
+        prePeriodImpact[m] = prePeriodImpact[m].add(inc.amount);
       }
     });
 

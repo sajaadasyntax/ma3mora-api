@@ -134,6 +134,18 @@ router.post('/:inventoryId/adjust-stock', requireRole('MANAGER', 'ACCOUNTANT'), 
             remaining = new Prisma.Decimal(0);
           }
         }
+
+        // Validate batch coverage: if remaining > 0, batch totals were insufficient
+        // This prevents inventoryStock and batch totals from diverging
+        if (remaining.greaterThan(0)) {
+          throw Object.assign(
+            new Error('INSUFFICIENT_BATCH_STOCK'),
+            {
+              code: 'INSUFFICIENT_BATCH_STOCK',
+              message: `إجمالي الدفعات (${qty.abs().sub(remaining)}) أقل من كمية التعديل (${qty.abs()}). الرصيد في الدفعات غير كافٍ.`,
+            }
+          );
+        }
       }
 
       await tx.auditLog.create({
@@ -182,6 +194,9 @@ router.post('/:inventoryId/adjust-stock', requireRole('MANAGER', 'ACCOUNTANT'), 
         error: 'الكمية المتاحة غير كافية',
         available: (error as any).available,
       });
+    }
+    if ((error as any)?.code === 'INSUFFICIENT_BATCH_STOCK') {
+      return res.status(400).json({ error: (error as any).message });
     }
     console.error('Adjust stock error:', error);
     res.status(500).json({ error: 'خطأ في الخادم' });

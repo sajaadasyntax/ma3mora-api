@@ -391,11 +391,12 @@ router.post('/salaries/:id/pay', requireRole('ACCOUNTANT', 'MANAGER'), createAud
       return updatedSalary;
     });
 
-    // Update aggregates (async, don't block response)
+    // Update aggregates using netAmount (actual cash outflow after loan deductions)
     try {
       if (salary.paidAt) {
         const paymentDate = salary.paidAt;
-        const salaryAmount = salary.amount;
+        // Use netAmount (actual cash paid) rather than gross amount to avoid overstating outflows
+        const salaryAmount = salary.netAmount ?? salary.amount;
         const paymentMethod = (salary as any).paymentMethod || 'CASH';
         const salariesByMethod = {
           CASH: paymentMethod === 'CASH' ? salaryAmount : new Prisma.Decimal(0),
@@ -567,6 +568,11 @@ router.post('/advances', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('A
 router.post('/advances/:id/pay', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('Advance'), async (req: AuthRequest, res) => {
   try {
     const { id } = req.params;
+
+    // Check if already paid before updating — POST /advances sets paidAt immediately,
+    // so if paidAt is already set, do NOT update aggregates again to avoid double-counting.
+    const existingAdvance = await prisma.advance.findUnique({ where: { id } });
+    const wasAlreadyPaid = existingAdvance?.paidAt != null;
     
     const advance = await prisma.advance.update({
       where: { id },
@@ -581,35 +587,37 @@ router.post('/advances/:id/pay', requireRole('ACCOUNTANT', 'MANAGER'), createAud
       },
     });
 
-    // Update aggregates (async, don't block response)
-    try {
-      if (advance.paidAt) {
-        const paymentDate = advance.paidAt;
-        const advanceAmount = advance.amount;
-        const paymentMethod = (advance as any).paymentMethod || 'CASH';
-        const advancesByMethod = {
-          CASH: paymentMethod === 'CASH' ? advanceAmount : new Prisma.Decimal(0),
-          BANKAK: paymentMethod === 'BANKAK' ? advanceAmount : new Prisma.Decimal(0),
-          BANK_NILE: paymentMethod === 'BANK_NILE' ? advanceAmount : new Prisma.Decimal(0),
-          DEBT: paymentMethod === 'DEBT' ? advanceAmount : new Prisma.Decimal(0),
-          OTHERS: (paymentMethod === 'OTHERS' || paymentMethod === 'COMMISSION') ? advanceAmount : new Prisma.Decimal(0),
-        };
+    // Update aggregates only if not already paid (POST /advances sets paidAt + aggregates at creation)
+    if (!wasAlreadyPaid) {
+      try {
+        if (advance.paidAt) {
+          const paymentDate = advance.paidAt;
+          const advanceAmount = advance.amount;
+          const paymentMethod = (advance as any).paymentMethod || 'CASH';
+          const advancesByMethod = {
+            CASH: paymentMethod === 'CASH' ? advanceAmount : new Prisma.Decimal(0),
+            BANKAK: paymentMethod === 'BANKAK' ? advanceAmount : new Prisma.Decimal(0),
+            BANK_NILE: paymentMethod === 'BANK_NILE' ? advanceAmount : new Prisma.Decimal(0),
+            DEBT: paymentMethod === 'DEBT' ? advanceAmount : new Prisma.Decimal(0),
+            OTHERS: (paymentMethod === 'OTHERS' || paymentMethod === 'COMMISSION') ? advanceAmount : new Prisma.Decimal(0),
+          };
 
-        await aggregationService.updateDailyFinancialAggregate(
-          paymentDate,
-          {
-            advancesTotal: advanceAmount,
-            advancesCount: 1,
-            advancesCash: advancesByMethod.CASH,
-            advancesBank: advancesByMethod.BANKAK,
-            advancesBankNile: advancesByMethod.BANK_NILE,
-            advancesDebtMethod: advancesByMethod.DEBT,
-            advancesOthers: advancesByMethod.OTHERS,
-          }
-        );
+          await aggregationService.updateDailyFinancialAggregate(
+            paymentDate,
+            {
+              advancesTotal: advanceAmount,
+              advancesCount: 1,
+              advancesCash: advancesByMethod.CASH,
+              advancesBank: advancesByMethod.BANKAK,
+              advancesBankNile: advancesByMethod.BANK_NILE,
+              advancesDebtMethod: advancesByMethod.DEBT,
+              advancesOthers: advancesByMethod.OTHERS,
+            }
+          );
+        }
+      } catch (aggError) {
+        console.error('Aggregation update error (non-blocking):', aggError);
       }
-    } catch (aggError) {
-      console.error('Aggregation update error (non-blocking):', aggError);
     }
     
     res.json(advance);

@@ -890,6 +890,7 @@ router.post('/invoices/:id/reject', requireRole('ACCOUNTANT', 'MANAGER'), create
 
     const invoice = await prisma.salesInvoice.findUnique({
       where: { id },
+      include: { items: true },
     });
 
     if (!invoice) {
@@ -924,6 +925,72 @@ router.post('/invoices/:id/reject', requireRole('ACCOUNTANT', 'MANAGER'), create
         },
       },
     });
+
+    // Reverse daily aggregate for the invoice total that was recorded on creation
+    try {
+      const invoiceTotal = invoice.total;
+      const paidAmount = invoice.paidAmount || new Prisma.Decimal(0);
+      const debtAmount = invoiceTotal.sub(paidAmount);
+      const paymentMethod = invoice.paymentMethod as string;
+
+      // S2: Include COMMISSION (maps to salesOthers, same as creation)
+      const methodMap: Record<string, string> = {
+        CASH: 'salesCash', BANKAK: 'salesBank', BANK_NILE: 'salesBankNile',
+        DEBT: 'salesDebtMethod', OTHERS: 'salesOthers', COMMISSION: 'salesOthers',
+      };
+
+      await aggregationService.updateDailyFinancialAggregate(
+        invoice.createdAt,
+        {
+          salesTotal: invoiceTotal.negated(),
+          salesReceived: paidAmount.negated(),
+          salesDebt: debtAmount.negated(),
+          salesCount: -1,
+          ...(methodMap[paymentMethod] ? { [methodMap[paymentMethod]]: invoiceTotal.negated() } : {}),
+        },
+        invoice.inventoryId ?? undefined,
+        (invoice as any).section ?? undefined
+      );
+
+      // S1: Reverse item-level daily sales aggregates to prevent inflated per-item stats
+      for (const item of invoice.items) {
+        try {
+          await aggregationService.updateDailyItemSalesAggregate(
+            invoice.createdAt,
+            item.itemId,
+            {
+              quantity: new Prisma.Decimal(item.quantity).negated(),
+              giftQty: item.giftQuantity ? new Prisma.Decimal(item.giftQuantity).negated() : new Prisma.Decimal(0),
+              amount: new Prisma.Decimal(item.lineTotal).negated(),
+              invoiceCount: -1,
+            },
+            invoice.inventoryId ?? undefined,
+            (invoice as any).section ?? undefined
+          );
+        } catch (itemAggErr) {
+          console.error(`Item aggregate reversal error (reject invoice, item ${item.itemId}):`, itemAggErr);
+        }
+      }
+    } catch (aggErr) {
+      console.error('Aggregate reversal error (reject invoice):', aggErr);
+    }
+
+    // Reverse customer cumulative aggregate if applicable
+    if (invoice.customerId) {
+      try {
+        await aggregationService.updateCustomerCumulativeAggregate(
+          invoice.customerId,
+          invoice.createdAt,
+          {
+            totalSales: invoice.total.negated(),
+            totalPaid: (invoice.paidAmount || new Prisma.Decimal(0)).negated(),
+            invoiceCount: -1,
+          }
+        );
+      } catch (custErr) {
+        console.error('Customer aggregate reversal error (reject invoice):', custErr);
+      }
+    }
 
     res.json(updatedInvoice);
   } catch (error) {
@@ -1127,9 +1194,10 @@ router.post('/invoices/:id/deliver', requireRole('INVENTORY', 'MANAGER'), create
           });
         }
 
-        // Store consumed batches for this item
+        // M4: Accumulate consumed batches — don't overwrite if multiple invoice lines share the same itemId
         if (itemConsumedBatches.length > 0) {
-          consumedBatches.set(item.itemId, itemConsumedBatches);
+          const existing = consumedBatches.get(item.itemId);
+          consumedBatches.set(item.itemId, existing ? [...existing, ...itemConsumedBatches] : itemConsumedBatches);
         }
 
         // BUG 2: FIFO batch coverage - ensure we had enough in batches
@@ -1502,15 +1570,23 @@ router.post('/invoices/:id/partial-deliver', requireRole('INVENTORY', 'MANAGER')
         },
       });
 
-      // Build a map of ordered quantities per item (including new gift system)
+      // M4: Build a map of ordered quantities per item (accumulate if multiple lines share the same itemId)
       const orderedByItem: Record<string, { qty: Prisma.Decimal; gift: Prisma.Decimal; giftItemId?: string; giftQuantity?: Prisma.Decimal }> = {};
       for (const it of invoice.items) {
-        orderedByItem[it.itemId] = {
-          qty: new Prisma.Decimal(it.quantity),
-          gift: new Prisma.Decimal(it.giftQty),
-          giftItemId: it.giftItemId || undefined,
-          giftQuantity: it.giftQuantity ? new Prisma.Decimal(it.giftQuantity) : undefined,
-        };
+        if (orderedByItem[it.itemId]) {
+          orderedByItem[it.itemId].qty = orderedByItem[it.itemId].qty.add(new Prisma.Decimal(it.quantity));
+          orderedByItem[it.itemId].gift = orderedByItem[it.itemId].gift.add(new Prisma.Decimal(it.giftQty));
+          if (it.giftQuantity) {
+            orderedByItem[it.itemId].giftQuantity = (orderedByItem[it.itemId].giftQuantity || new Prisma.Decimal(0)).add(new Prisma.Decimal(it.giftQuantity));
+          }
+        } else {
+          orderedByItem[it.itemId] = {
+            qty: new Prisma.Decimal(it.quantity),
+            gift: new Prisma.Decimal(it.giftQty),
+            giftItemId: it.giftItemId || undefined,
+            giftQuantity: it.giftQuantity ? new Prisma.Decimal(it.giftQuantity) : undefined,
+          };
+        }
       }
 
       // Compute already delivered per item from previous deliveries
@@ -1648,6 +1724,15 @@ router.post('/invoices/:id/partial-deliver', requireRole('INVENTORY', 'MANAGER')
               data: { quantity: batchQty.sub(deductQty) },
             });
 
+            // Record batch traceability for old gift system (FIFO consumed)
+            await tx.inventoryDeliveryBatch.create({
+              data: {
+                deliveryItemId: deliveryItem.id,
+                batchId: batch.id,
+                quantity: deductQty,
+              },
+            });
+
             remainingGiftQty = remainingGiftQty.sub(deductQty);
           }
 
@@ -1671,6 +1756,15 @@ router.post('/invoices/:id/partial-deliver', requireRole('INVENTORY', 'MANAGER')
             await tx.stockBatch.update({
               where: { id: giftAlloc.batchId },
               data: { quantity: new Prisma.Decimal(giftBatch.quantity).sub(giftAllocQty) },
+            });
+
+            // Record batch traceability for new gift system allocations
+            await tx.inventoryDeliveryBatch.create({
+              data: {
+                deliveryItemId: deliveryItem.id,
+                batchId: giftAlloc.batchId,
+                quantity: giftAllocQty,
+              },
             });
           }
 

@@ -170,10 +170,10 @@ router.post(
           },
         });
 
-        // 2. For each returned item: restore stock and record movement
+        // 2. For each returned item: restore stock and create traceable batch
         for (const returnItem of data.items) {
           // Add quantity back to InventoryStock
-          const stockRecord = await tx.inventoryStock.update({
+          await tx.inventoryStock.update({
             where: {
               inventoryId_itemId: {
                 inventoryId: invoice.inventoryId,
@@ -187,23 +187,28 @@ router.post(
             },
           });
 
+          // Attempt to recover expiry date from the most recent delivery batch for this item
+          const lastDeliveryBatch = await tx.inventoryDeliveryBatch.findFirst({
+            where: {
+              batch: { inventoryId: invoice.inventoryId, itemId: returnItem.itemId },
+              deliveryItem: { delivery: { invoiceId } },
+            },
+            include: { batch: { select: { expiryDate: true } } },
+            orderBy: { createdAt: 'desc' },
+          });
+
+          const returnedExpiryDate = lastDeliveryBatch?.batch?.expiryDate ?? undefined;
+
           await tx.stockBatch.create({
             data: {
               inventoryId: invoice.inventoryId,
               itemId: returnItem.itemId,
               quantity: new Prisma.Decimal(returnItem.quantity),
               receivedAt: new Date(),
+              expiryDate: returnedExpiryDate,
               notes: `مرتجع مبيعات - فاتورة ${invoice.invoiceNumber}`,
             },
           });
-
-          // Record stock movement (incoming for returned items)
-          await stockMovementService.updateStockMovement(
-            invoice.inventoryId,
-            returnItem.itemId,
-            new Date(),
-            { incoming: returnItem.quantity }
-          );
         }
 
         // 3. Adjust invoice: reduce paidAmount and update paymentStatus
@@ -223,7 +228,6 @@ router.post(
 
         // 4. Adjust CustomerCumulativeAggregate if customer exists
         if (invoice.customerId) {
-          // Reduce totalSales and totalPaid by the return amount
           const latestAggregate = await tx.customerCumulativeAggregate.findFirst({
             where: { customerId: invoice.customerId },
             orderBy: { date: 'desc' },
@@ -233,6 +237,11 @@ router.post(
             const dateOnly = new Date();
             dateOnly.setHours(0, 0, 0, 0);
 
+            const newTotalSales = latestAggregate.totalSales.sub(returnTotal);
+            const newTotalPaid = latestAggregate.totalPaid.sub(returnTotal);
+            // Recompute outstanding from adjusted totals
+            const newTotalOutstanding = newTotalSales.sub(newTotalPaid);
+
             await tx.customerCumulativeAggregate.upsert({
               where: {
                 customerId_date: {
@@ -241,17 +250,17 @@ router.post(
                 },
               },
               update: {
-                totalSales: latestAggregate.totalSales.sub(returnTotal),
-                totalPaid: latestAggregate.totalPaid.sub(returnTotal),
-                totalOutstanding: latestAggregate.totalOutstanding,
+                totalSales: newTotalSales,
+                totalPaid: newTotalPaid,
+                totalOutstanding: newTotalOutstanding,
               },
               create: {
                 customerId: invoice.customerId,
                 date: dateOnly,
                 totalInvoices: latestAggregate.totalInvoices,
-                totalSales: latestAggregate.totalSales.sub(returnTotal),
-                totalPaid: latestAggregate.totalPaid.sub(returnTotal),
-                totalOutstanding: latestAggregate.totalOutstanding,
+                totalSales: newTotalSales,
+                totalPaid: newTotalPaid,
+                totalOutstanding: newTotalOutstanding,
                 salesCash: latestAggregate.salesCash,
                 salesBank: latestAggregate.salesBank,
                 salesBankNile: latestAggregate.salesBankNile,
@@ -260,7 +269,7 @@ router.post(
           }
         }
 
-        // 5. Create journal entry for the return
+        // 5. Create journal entry for the return (M2: use transaction client for atomicity)
         await journalService.createJournalEntry({
           date: new Date(),
           entryType: 'RETURN',
@@ -271,6 +280,7 @@ router.post(
           method: invoice.paymentMethod,
           description: `مرتجع مبيعات - فاتورة ${invoice.invoiceNumber} - ${data.reason}`,
           createdBy: req.user!.id,
+          tx,
         });
 
         // 6. Create audit log entry
@@ -288,11 +298,31 @@ router.post(
         return salesReturn;
       });
 
+      // Update stock movements AFTER the transaction commits (non-fatal, consistent with other routes)
       try {
-        await aggregationService.updateDailyFinancialAggregate(new Date(), {
+        for (const returnItem of data.items) {
+          await stockMovementService.updateStockMovement(
+            invoice.inventoryId,
+            returnItem.itemId,
+            new Date(),
+            { incoming: returnItem.quantity }
+          );
+        }
+      } catch (moveError) {
+        console.error('StockMovement update error (sales return):', moveError);
+      }
+
+      try {
+        // C5: Reduce the correct net bucket based on invoice payment method
+        const method = invoice.paymentMethod as string;
+        const returnAggUpdate: any = {
           salesReturnsTotal: returnTotal,
           salesReturnsCount: 1,
-        });
+          salesReturnsCash: method === 'BANKAK' || method === 'BANK_NILE' ? undefined : returnTotal,
+          salesReturnsBank: method === 'BANKAK' ? returnTotal : undefined,
+          salesReturnsBankNile: method === 'BANK_NILE' ? returnTotal : undefined,
+        };
+        await aggregationService.updateDailyFinancialAggregate(new Date(), returnAggUpdate);
       } catch (aggError) {
         console.error('Aggregation update error (sales return):', aggError);
       }
