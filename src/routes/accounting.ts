@@ -1754,13 +1754,39 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
     totalDeliveredUnpaid = totalDeliveredUnpaid.sub(customerTreasuryAdjAL);
     if (totalDeliveredUnpaid.lessThan(0)) totalDeliveredUnpaid = new Prisma.Decimal(0);
 
+    // 5. Customer opening balances — split into asset (positive) vs liability (negative)
+    const customerOpeningBals = await prisma.openingBalance.findMany({
+      where: { scope: 'CUSTOMER', isClosed: false },
+    });
+    let customerOBAssets = new Prisma.Decimal(0);
+    let customerOBLiabilities = new Prisma.Decimal(0);
+    for (const ob of customerOpeningBals) {
+      const amt = new Prisma.Decimal(ob.amount);
+      if (amt.greaterThan(0)) customerOBAssets = customerOBAssets.add(amt);
+      else customerOBLiabilities = customerOBLiabilities.add(amt.abs());
+    }
+
+    // 6. Supplier opening balances — split into asset (positive) vs liability (negative)
+    const supplierOpeningBals = await prisma.openingBalance.findMany({
+      where: { scope: 'SUPPLIER', isClosed: false },
+    });
+    let supplierOBAssets = new Prisma.Decimal(0);
+    let supplierOBLiabilities = new Prisma.Decimal(0);
+    for (const ob of supplierOpeningBals) {
+      const amt = new Prisma.Decimal(ob.amount);
+      if (amt.greaterThan(0)) supplierOBAssets = supplierOBAssets.add(amt);
+      else supplierOBLiabilities = supplierOBLiabilities.add(amt.abs());
+    }
+
     // Calculate total له (Assets)
     const totalAssets = totalStockValue
       .add(liquidCash.CASH)
       .add(liquidCash.BANKAK)
       .add(liquidCash.BANK_NILE)
       .add(totalInboundDebt)
-      .add(totalDeliveredUnpaid);
+      .add(totalDeliveredUnpaid)
+      .add(customerOBAssets)
+      .add(supplierOBAssets);
 
     // ========== عليه (Liabilities) ==========
     
@@ -1816,8 +1842,31 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
       (sum, s) => sum.add(s.totalOutstanding), new Prisma.Decimal(0)
     );
 
+    // 3. Unpaid salaries (recorded but paidAt = null)
+    const unpaidSalaryRecords = await prisma.salary.findMany({
+      where: { paidAt: null },
+    });
+    const totalUnpaidSalaries = unpaidSalaryRecords.reduce(
+      (sum, s) => sum.add(s.netAmount.greaterThan(0) ? s.netAmount : s.amount),
+      new Prisma.Decimal(0)
+    );
+
+    // 4. Unpaid advances (committed but paidAt = null)
+    const unpaidAdvanceRecords = await prisma.advance.findMany({
+      where: { paidAt: null },
+    });
+    const totalUnpaidAdvances = unpaidAdvanceRecords.reduce(
+      (sum, a) => sum.add(a.amount),
+      new Prisma.Decimal(0)
+    );
+
     // Calculate total عليه (Liabilities)
-    const totalLiabilities = totalOutboundDebt.add(totalUnpaidProcOrders);
+    const totalLiabilities = totalOutboundDebt
+      .add(totalUnpaidProcOrders)
+      .add(customerOBLiabilities)
+      .add(supplierOBLiabilities)
+      .add(totalUnpaidSalaries)
+      .add(totalUnpaidAdvances);
 
     // Stock valuation at procurement cost (matching balance/summary)
     const procItemsForAL = await prisma.procOrderItem.findMany({
@@ -1847,7 +1896,6 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
           total: totalStockValue.toFixed(2),
           valuationBasis: 'WHOLESALE',
           totalAtCost: totalStockAtCost.toFixed(2),
-          costBasisNote: 'totalAtCost uses latest procurement unitCost (matches balance/summary profit formula)',
         },
         liquidCash: {
           CASH: liquidCash.CASH.toFixed(2),
@@ -1867,6 +1915,12 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
           })),
           total: totalDeliveredUnpaid.toFixed(2),
         },
+        customerOpeningBalances: {
+          total: customerOBAssets.toFixed(2),
+        },
+        supplierOpeningBalances: {
+          total: supplierOBAssets.toFixed(2),
+        },
         total: totalAssets.toFixed(2),
       },
       liabilities: {
@@ -1881,6 +1935,20 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
             totalOutstanding: s.totalOutstanding.toFixed(2),
           })),
           total: totalUnpaidProcOrders.toFixed(2),
+        },
+        customerOpeningBalances: {
+          total: customerOBLiabilities.toFixed(2),
+        },
+        supplierOpeningBalances: {
+          total: supplierOBLiabilities.toFixed(2),
+        },
+        unpaidSalaries: {
+          total: totalUnpaidSalaries.toFixed(2),
+          count: unpaidSalaryRecords.length,
+        },
+        unpaidAdvances: {
+          total: totalUnpaidAdvances.toFixed(2),
+          count: unpaidAdvanceRecords.length,
         },
         total: totalLiabilities.toFixed(2),
       },
