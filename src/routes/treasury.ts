@@ -42,6 +42,10 @@ function toNumber(d: Prisma.Decimal): number {
   return parseFloat(d.toFixed(2));
 }
 
+function salaryCashOut(s: { netAmount: Prisma.Decimal; amount: Prisma.Decimal }): Prisma.Decimal {
+  return s.netAmount.greaterThan(0) ? s.netAmount : s.amount;
+}
+
 function bucketToNumbers(bucket: Record<TreasuryMethod, Prisma.Decimal>) {
   return {
     cash: toNumber(bucket.CASH),
@@ -184,7 +188,7 @@ router.get('/daily', async (req: AuthRequest, res) => {
         });
         for (const s of missedSalaries) {
           const m = s.paymentMethod as TreasuryMethod;
-          if (TREASURY_METHODS.includes(m)) opening[m] = opening[m].sub(s.netAmount);
+          if (TREASURY_METHODS.includes(m)) opening[m] = opening[m].sub(salaryCashOut(s));
         }
 
         // Advances paid between snapshot+1 and today
@@ -234,6 +238,14 @@ router.get('/daily', async (req: AuthRequest, res) => {
           const m = (i as any).method as TreasuryMethod;
           if (TREASURY_METHODS.includes(m)) addToBucket(opening, m, i.amount);
         }
+
+        // Customer account payments between snapshot+1 and today
+        const missedCustomerPayments = await prisma.customerPayment.findMany({
+          where: { createdAt: { gte: snapshotEnd, lt: dayStart } },
+        });
+        for (const cp of missedCustomerPayments) {
+          addToBucket(opening, cp.method, cp.amount);
+        }
       }
     } else {
       // No snapshot at all — compute opening from raw OpeningBalance records
@@ -263,7 +275,7 @@ router.get('/daily', async (req: AuthRequest, res) => {
       const allSalaries = await prisma.salary.findMany({ where: { paidAt: { lt: dayStart } } });
       for (const s of allSalaries) {
         const m = s.paymentMethod as TreasuryMethod;
-        if (TREASURY_METHODS.includes(m)) opening[m] = opening[m].sub(s.netAmount);
+        if (TREASURY_METHODS.includes(m)) opening[m] = opening[m].sub(salaryCashOut(s));
       }
 
       const allAdvances = await prisma.advance.findMany({ where: { paidAt: { lt: dayStart } } });
@@ -302,6 +314,13 @@ router.get('/daily', async (req: AuthRequest, res) => {
       for (const i of allIncome) {
         const m = (i as any).method as TreasuryMethod;
         if (TREASURY_METHODS.includes(m)) addToBucket(opening, m, i.amount);
+      }
+
+      const allCustomerPayments = await prisma.customerPayment.findMany({
+        where: { createdAt: { lt: dayStart } },
+      });
+      for (const cp of allCustomerPayments) {
+        addToBucket(opening, cp.method, cp.amount);
       }
     }
 
@@ -401,8 +420,9 @@ router.get('/daily', async (req: AuthRequest, res) => {
     });
     const salBucket = emptyBucket();
     for (const sal of salaries) {
-      addToBucket(outflow, sal.paymentMethod, sal.netAmount);
-      addToBucket(salBucket, sal.paymentMethod, sal.netAmount);
+      const paid = salaryCashOut(sal);
+      addToBucket(outflow, sal.paymentMethod, paid);
+      addToBucket(salBucket, sal.paymentMethod, paid);
     }
     outflowDetails.push({ label: 'رواتب', ...bucketToNumbers(salBucket) });
 

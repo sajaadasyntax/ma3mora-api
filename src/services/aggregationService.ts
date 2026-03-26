@@ -811,6 +811,84 @@ export class AggregationService {
       .filter(b => (b as any).paymentMethod === 'BANK_NILE')
       .reduce((sum, b) => sum.add(b.amount), new Prisma.Decimal(0));
 
+    // Global monthly nets: daily rows store customer/treasury/returns as totals only; split by method from source (matches daily net logic).
+    const z = new Prisma.Decimal(0);
+    let monthCustPayCash = z;
+    let monthCustPayBank = z;
+    let monthCustPayBankNile = z;
+    let monthTreasInCash = z;
+    let monthTreasInBank = z;
+    let monthTreasInBankNile = z;
+    let monthTreasOutCash = z;
+    let monthTreasOutBank = z;
+    let monthTreasOutBankNile = z;
+    let monthReturnsCash = z;
+    let monthReturnsBank = z;
+    let monthReturnsBankNile = z;
+    const globalMonthly = !inventoryId && !section;
+
+    if (globalMonthly) {
+      const monthCustPayments = await prisma.customerPayment.findMany({
+        where: { createdAt: { gte: startOfMonth, lte: endOfMonth } },
+        select: { method: true, amount: true },
+      });
+      for (const cp of monthCustPayments) {
+        if (cp.method === 'CASH') monthCustPayCash = monthCustPayCash.add(cp.amount);
+        else if (cp.method === 'BANKAK') monthCustPayBank = monthCustPayBank.add(cp.amount);
+        else if (cp.method === 'BANK_NILE') monthCustPayBankNile = monthCustPayBankNile.add(cp.amount);
+      }
+
+      const monthTreas = await prisma.treasuryTransaction.findMany({
+        where: { createdAt: { gte: startOfMonth, lte: endOfMonth } },
+        select: { type: true, method: true, amount: true },
+      });
+      for (const t of monthTreas) {
+        if (t.method !== 'CASH' && t.method !== 'BANKAK' && t.method !== 'BANK_NILE') continue;
+        const addIn = t.type === 'CASH_IN';
+        if (t.method === 'CASH') {
+          if (addIn) monthTreasInCash = monthTreasInCash.add(t.amount);
+          else monthTreasOutCash = monthTreasOutCash.add(t.amount);
+        } else if (t.method === 'BANKAK') {
+          if (addIn) monthTreasInBank = monthTreasInBank.add(t.amount);
+          else monthTreasOutBank = monthTreasOutBank.add(t.amount);
+        } else {
+          if (addIn) monthTreasInBankNile = monthTreasInBankNile.add(t.amount);
+          else monthTreasOutBankNile = monthTreasOutBankNile.add(t.amount);
+        }
+      }
+
+      const monthReturns = await prisma.salesReturn.findMany({
+        where: { returnedAt: { gte: startOfMonth, lte: endOfMonth } },
+        include: {
+          items: true,
+          invoice: { select: { paymentMethod: true } },
+        },
+      });
+      for (const sr of monthReturns) {
+        const lineTotal = sr.items.reduce(
+          (sum, it) => sum.add(it.lineTotal),
+          new Prisma.Decimal(0),
+        );
+        const pm = sr.invoice?.paymentMethod;
+        if (pm === 'BANKAK') monthReturnsBank = monthReturnsBank.add(lineTotal);
+        else if (pm === 'BANK_NILE') monthReturnsBankNile = monthReturnsBankNile.add(lineTotal);
+        else monthReturnsCash = monthReturnsCash.add(lineTotal);
+      }
+    }
+
+    const custPayCashAdj = globalMonthly ? monthCustPayCash : monthlyTotals.customerPaymentsTotal;
+    const custPayBankAdj = globalMonthly ? monthCustPayBank : z;
+    const custPayBankNileAdj = globalMonthly ? monthCustPayBankNile : z;
+    const treasInCashAdj = globalMonthly ? monthTreasInCash : monthlyTotals.treasuryInflow;
+    const treasInBankAdj = globalMonthly ? monthTreasInBank : z;
+    const treasInBankNileAdj = globalMonthly ? monthTreasInBankNile : z;
+    const treasOutCashAdj = globalMonthly ? monthTreasOutCash : monthlyTotals.treasuryOutflow;
+    const treasOutBankAdj = globalMonthly ? monthTreasOutBank : z;
+    const treasOutBankNileAdj = globalMonthly ? monthTreasOutBankNile : z;
+    const retCashAdj = globalMonthly ? monthReturnsCash : monthlyTotals.salesReturnsTotal;
+    const retBankAdj = globalMonthly ? monthReturnsBank : z;
+    const retBankNileAdj = globalMonthly ? monthReturnsBankNile : z;
+
     const netCash = openingCash
       .add(monthlyTotals.salesCash)
       .add(monthlyTotals.incomeCash)
@@ -819,10 +897,10 @@ export class AggregationService {
       .sub(monthlyTotals.salariesCash)
       .sub(monthlyTotals.advancesCash)
       .add(monthlyTotals.cashExchangesCash)
-      .add(monthlyTotals.customerPaymentsTotal)
-      .add(monthlyTotals.treasuryInflow)
-      .sub(monthlyTotals.treasuryOutflow)
-      .sub(monthlyTotals.salesReturnsTotal);
+      .add(custPayCashAdj)
+      .add(treasInCashAdj)
+      .sub(treasOutCashAdj)
+      .sub(retCashAdj);
 
     const netBank = openingBank
       .add(monthlyTotals.salesBank)
@@ -831,7 +909,11 @@ export class AggregationService {
       .sub(monthlyTotals.expensesBank)
       .sub(monthlyTotals.salariesBank)
       .sub(monthlyTotals.advancesBank)
-      .add(monthlyTotals.cashExchangesBank);
+      .add(monthlyTotals.cashExchangesBank)
+      .add(custPayBankAdj)
+      .add(treasInBankAdj)
+      .sub(treasOutBankAdj)
+      .sub(retBankAdj);
 
     const netBankNile = openingBankNile
       .add(monthlyTotals.salesBankNile)
@@ -840,7 +922,11 @@ export class AggregationService {
       .sub(monthlyTotals.expensesBankNile)
       .sub(monthlyTotals.salariesBankNile)
       .sub(monthlyTotals.advancesBankNile)
-      .add(monthlyTotals.cashExchangesBankNile);
+      .add(monthlyTotals.cashExchangesBankNile)
+      .add(custPayBankNileAdj)
+      .add(treasInBankNileAdj)
+      .sub(treasOutBankNileAdj)
+      .sub(retBankNileAdj);
 
     const netDebt = monthlyTotals.salesDebtMethod
       .add(monthlyTotals.incomeDebtMethod)
