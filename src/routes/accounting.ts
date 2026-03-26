@@ -677,8 +677,12 @@ router.post('/opening-balances', requireRole('ACCOUNTANT', 'MANAGER'), createAud
       },
     });
 
-    // For CUSTOMER/SUPPLIER scopes, create a treasury transaction so the
-    // cash movement is reflected in liquid-cash calculations going forward.
+    // For CUSTOMER/SUPPLIER scopes, always mirror the OB into a treasury
+    // transaction so liquid-cash stays consistent:
+    //   CUSTOMER positive (they owe us)      → CASH_OUT
+    //   CUSTOMER negative (they paid us)     → CASH_IN
+    //   SUPPLIER positive (we paid them)     → CASH_IN
+    //   SUPPLIER negative (we owe them)      → CASH_OUT
     if (
       (data.scope === 'CUSTOMER' || data.scope === 'SUPPLIER') &&
       (data.paymentMethod === 'CASH' || data.paymentMethod === 'BANKAK' || data.paymentMethod === 'BANK_NILE')
@@ -690,9 +694,16 @@ router.post('/opening-balances', requireRole('ACCOUNTANT', 'MANAGER'), createAud
         const name =
           (data.scope === 'CUSTOMER' ? balance.customer?.name : balance.supplier?.name) || scopeLabel;
 
+        // CUSTOMER: positive → CASH_OUT, negative → CASH_IN
+        // SUPPLIER: positive → CASH_IN,  negative → CASH_OUT
+        const txType =
+          data.scope === 'CUSTOMER'
+            ? isPositive ? 'CASH_OUT' : 'CASH_IN'
+            : isPositive ? 'CASH_IN'  : 'CASH_OUT';
+
         await prisma.treasuryTransaction.create({
           data: {
-            type: isPositive ? 'CASH_IN' : 'CASH_OUT',
+            type: txType,
             amount: amt.abs(),
             method: data.paymentMethod,
             description: `رصيد افتتاحي — ${scopeLabel}: ${name}`,
