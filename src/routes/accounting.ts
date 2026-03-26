@@ -47,6 +47,7 @@ const createOpeningBalanceSchema = z.object({
   supplierId: z.string().optional(),
   amount: z.number(),
   paymentMethod: z.enum(['CASH', 'BANKAK', 'BANK_NILE', 'DEBT', 'OTHERS']).default('CASH'),
+  receiptNumber: z.string().optional(),
   notes: z.string().optional(),
 });
 
@@ -294,10 +295,22 @@ async function getAvailableByMethod() {
     exImpact[toM] = exImpact[toM].add(e.amount);
   });
 
+  // Customer/Supplier opening balances by payment method
+  const custSuppOBsAvail = await prisma.openingBalance.findMany({
+    where: { scope: { in: ['CUSTOMER', 'SUPPLIER'] }, isClosed: false },
+  });
+  const obAvail = { CASH: new Prisma.Decimal(0), BANKAK: new Prisma.Decimal(0), BANK_NILE: new Prisma.Decimal(0) } as Record<'CASH'|'BANKAK'|'BANK_NILE', Prisma.Decimal>;
+  custSuppOBsAvail.forEach((ob) => {
+    const m = ob.paymentMethod as string;
+    if (m === 'CASH' || m === 'BANKAK' || m === 'BANK_NILE') {
+      obAvail[m] = obAvail[m].add(ob.amount);
+    }
+  });
+
   return {
-    CASH: opening.CASH.add(salesIn.CASH).add(incomeIn.CASH).add(exImpact.CASH).sub(expOut.CASH).sub(salOut.CASH).sub(advOut.CASH).sub(procOut.CASH),
-    BANKAK: opening.BANKAK.add(salesIn.BANKAK).add(incomeIn.BANKAK).add(exImpact.BANKAK).sub(expOut.BANKAK).sub(salOut.BANKAK).sub(advOut.BANKAK).sub(procOut.BANKAK),
-    BANK_NILE: opening.BANK_NILE.add(salesIn.BANK_NILE).add(incomeIn.BANK_NILE).add(exImpact.BANK_NILE).sub(expOut.BANK_NILE).sub(salOut.BANK_NILE).sub(advOut.BANK_NILE).sub(procOut.BANK_NILE),
+    CASH: opening.CASH.add(salesIn.CASH).add(incomeIn.CASH).add(exImpact.CASH).add(obAvail.CASH).sub(expOut.CASH).sub(salOut.CASH).sub(advOut.CASH).sub(procOut.CASH),
+    BANKAK: opening.BANKAK.add(salesIn.BANKAK).add(incomeIn.BANKAK).add(exImpact.BANKAK).add(obAvail.BANKAK).sub(expOut.BANKAK).sub(salOut.BANKAK).sub(advOut.BANKAK).sub(procOut.BANKAK),
+    BANK_NILE: opening.BANK_NILE.add(salesIn.BANK_NILE).add(incomeIn.BANK_NILE).add(exImpact.BANK_NILE).add(obAvail.BANK_NILE).sub(expOut.BANK_NILE).sub(salOut.BANK_NILE).sub(advOut.BANK_NILE).sub(procOut.BANK_NILE),
   };
 }
 
@@ -1674,10 +1687,22 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
       exImpact[toM] = exImpact[toM].add(e.amount);
     });
 
+    // Customer/Supplier opening balances by payment method (positive = money came in, negative = money went out)
+    const custSuppOBs = await prisma.openingBalance.findMany({
+      where: { scope: { in: ['CUSTOMER', 'SUPPLIER'] }, isClosed: false },
+    });
+    const obImpact = { CASH: new Prisma.Decimal(0), BANKAK: new Prisma.Decimal(0), BANK_NILE: new Prisma.Decimal(0) } as Record<'CASH'|'BANKAK'|'BANK_NILE', Prisma.Decimal>;
+    custSuppOBs.forEach((ob) => {
+      const m = ob.paymentMethod as string;
+      if (m === 'CASH' || m === 'BANKAK' || m === 'BANK_NILE') {
+        obImpact[m] = obImpact[m].add(ob.amount);
+      }
+    });
+
     const liquidCash = {
-      CASH: opening.CASH.add(salesIn.CASH).add(incomeIn.CASH).add(exImpact.CASH).sub(expOut.CASH).sub(salOut.CASH).sub(advOut.CASH).sub(procOut.CASH),
-      BANKAK: opening.BANKAK.add(salesIn.BANKAK).add(incomeIn.BANKAK).add(exImpact.BANKAK).sub(expOut.BANKAK).sub(salOut.BANKAK).sub(advOut.BANKAK).sub(procOut.BANKAK),
-      BANK_NILE: opening.BANK_NILE.add(salesIn.BANK_NILE).add(incomeIn.BANK_NILE).add(exImpact.BANK_NILE).sub(expOut.BANK_NILE).sub(salOut.BANK_NILE).sub(advOut.BANK_NILE).sub(procOut.BANK_NILE),
+      CASH: opening.CASH.add(salesIn.CASH).add(incomeIn.CASH).add(exImpact.CASH).add(obImpact.CASH).sub(expOut.CASH).sub(salOut.CASH).sub(advOut.CASH).sub(procOut.CASH),
+      BANKAK: opening.BANKAK.add(salesIn.BANKAK).add(incomeIn.BANKAK).add(exImpact.BANKAK).add(obImpact.BANKAK).sub(expOut.BANKAK).sub(salOut.BANKAK).sub(advOut.BANKAK).sub(procOut.BANKAK),
+      BANK_NILE: opening.BANK_NILE.add(salesIn.BANK_NILE).add(incomeIn.BANK_NILE).add(exImpact.BANK_NILE).add(obImpact.BANK_NILE).sub(expOut.BANK_NILE).sub(salOut.BANK_NILE).sub(advOut.BANK_NILE).sub(procOut.BANK_NILE),
     };
 
     const liquidCashTotal = liquidCash.CASH.add(liquidCash.BANKAK).add(liquidCash.BANK_NILE);

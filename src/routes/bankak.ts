@@ -229,6 +229,21 @@ router.get('/daily', async (req: AuthRequest, res) => {
       opening = opening.sub(e.amount);
     });
 
+    // Pre-day CUSTOMER/SUPPLIER opening balances with method=BANKAK
+    const preDayOBBankak = await prisma.openingBalance.findMany({
+      where: {
+        scope: { in: ['CUSTOMER', 'SUPPLIER'] },
+        paymentMethod: 'BANKAK',
+        isClosed: false,
+        openedAt: { lt: startOfDay },
+      },
+    });
+    preDayOBBankak.forEach((ob) => {
+      const amt = new Prisma.Decimal(ob.amount);
+      if (amt.greaterThan(0)) opening = opening.add(amt);
+      else opening = opening.sub(amt.abs());
+    });
+
     // ---- Today's IN ----
     // Bankak transactions IN
     const todayBankakIn = await prisma.bankakTransaction.findMany({
@@ -318,10 +333,27 @@ router.get('/daily', async (req: AuthRequest, res) => {
       .filter((e: any) => e.fromMethod === 'BANKAK')
       .reduce((sum: Prisma.Decimal, e: any) => sum.add(e.amount), new Prisma.Decimal(0));
 
-    const totalOut = bankakOutTotal.add(procBankakOut).add(expensesBankakOut).add(exchangeOut);
+    // Today's opening balance entries with method=BANKAK
+    const todayOBBankak = await prisma.openingBalance.findMany({
+      where: {
+        scope: { in: ['CUSTOMER', 'SUPPLIER'] },
+        paymentMethod: 'BANKAK',
+        isClosed: false,
+        openedAt: { gte: startOfDay, lte: endOfDay },
+      },
+      include: { customer: true, supplier: true },
+    });
+    const obBankakIn = todayOBBankak
+      .filter(ob => new Prisma.Decimal(ob.amount).greaterThan(0))
+      .reduce((sum, ob) => sum.add(ob.amount), new Prisma.Decimal(0));
+    const obBankakOut = todayOBBankak
+      .filter(ob => new Prisma.Decimal(ob.amount).lessThan(0))
+      .reduce((sum, ob) => sum.add(new Prisma.Decimal(ob.amount).abs()), new Prisma.Decimal(0));
+
+    const totalOut = bankakOutTotal.add(procBankakOut).add(expensesBankakOut).add(exchangeOut).add(obBankakOut);
 
     // ---- Closing ----
-    const closing = opening.add(totalIn).sub(totalOut);
+    const closing = opening.add(totalIn).add(obBankakIn).sub(totalOut);
 
     // Combine all today's transactions for the response
     const transactions = [
@@ -387,12 +419,28 @@ router.get('/daily', async (req: AuthRequest, res) => {
           creator: null,
           date: e.createdAt,
         })),
+      ...todayOBBankak.map((ob) => {
+        const amt = new Prisma.Decimal(ob.amount);
+        const name = ob.customer?.name || ob.supplier?.name || '';
+        const scopeLabel = ob.scope === 'CUSTOMER' ? 'عميل' : 'مورد';
+        return {
+          id: ob.id,
+          type: amt.greaterThan(0) ? ('OB_IN' as const) : ('OB_OUT' as const),
+          direction: amt.greaterThan(0) ? 'IN' : 'OUT',
+          amount: amt.abs().toString(),
+          description: `رصيد افتتاحي ${scopeLabel}: ${name}`,
+          referenceNumber: ob.receiptNumber,
+          customer: ob.customer,
+          creator: null,
+          date: ob.openedAt,
+        };
+      }),
     ].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
     res.json({
       date: startOfDay.toISOString().split('T')[0],
       opening: opening.toFixed(2),
-      totalIn: totalIn.toFixed(2),
+      totalIn: totalIn.add(obBankakIn).toFixed(2),
       totalOut: totalOut.toFixed(2),
       closing: closing.toFixed(2),
       transactions,
@@ -489,6 +537,21 @@ router.get('/nile-daily', async (req: AuthRequest, res) => {
       opening = opening.sub(e.amount);
     });
 
+    // Pre-day CUSTOMER/SUPPLIER opening balances with method=BANK_NILE
+    const preDayOBNile = await prisma.openingBalance.findMany({
+      where: {
+        scope: { in: ['CUSTOMER', 'SUPPLIER'] },
+        paymentMethod: METHOD,
+        isClosed: false,
+        openedAt: { lt: startOfDay },
+      },
+    });
+    preDayOBNile.forEach((ob) => {
+      const amt = new Prisma.Decimal(ob.amount);
+      if (amt.greaterThan(0)) opening = opening.add(amt);
+      else opening = opening.sub(amt.abs());
+    });
+
     // ---- Today's IN ----
     // Sales payments with method=BANK_NILE today
     const todaySalesPayments = await prisma.salesPayment.findMany({
@@ -565,10 +628,27 @@ router.get('/nile-daily', async (req: AuthRequest, res) => {
       .filter((e: any) => e.fromMethod === METHOD)
       .reduce((sum: Prisma.Decimal, e: any) => sum.add(e.amount), new Prisma.Decimal(0));
 
-    const totalOut = procNileOut.add(expensesNileOut).add(exchangeOut);
+    // Today's opening balance entries with method=BANK_NILE
+    const todayOBNile = await prisma.openingBalance.findMany({
+      where: {
+        scope: { in: ['CUSTOMER', 'SUPPLIER'] },
+        paymentMethod: METHOD,
+        isClosed: false,
+        openedAt: { gte: startOfDay, lte: endOfDay },
+      },
+      include: { customer: true, supplier: true },
+    });
+    const obNileIn = todayOBNile
+      .filter(ob => new Prisma.Decimal(ob.amount).greaterThan(0))
+      .reduce((sum, ob) => sum.add(ob.amount), new Prisma.Decimal(0));
+    const obNileOut = todayOBNile
+      .filter(ob => new Prisma.Decimal(ob.amount).lessThan(0))
+      .reduce((sum, ob) => sum.add(new Prisma.Decimal(ob.amount).abs()), new Prisma.Decimal(0));
+
+    const totalOut = procNileOut.add(expensesNileOut).add(exchangeOut).add(obNileOut);
 
     // ---- Closing ----
-    const closing = opening.add(totalIn).sub(totalOut);
+    const closing = opening.add(totalIn).add(obNileIn).sub(totalOut);
 
     // Combine all today's transactions
     const transactions = [
@@ -624,12 +704,28 @@ router.get('/nile-daily', async (req: AuthRequest, res) => {
           creator: null,
           date: e.createdAt,
         })),
+      ...todayOBNile.map((ob) => {
+        const amt = new Prisma.Decimal(ob.amount);
+        const name = ob.customer?.name || ob.supplier?.name || '';
+        const scopeLabel = ob.scope === 'CUSTOMER' ? 'عميل' : 'مورد';
+        return {
+          id: ob.id,
+          type: amt.greaterThan(0) ? ('OB_IN' as const) : ('OB_OUT' as const),
+          direction: amt.greaterThan(0) ? 'IN' : 'OUT',
+          amount: amt.abs().toString(),
+          description: `رصيد افتتاحي ${scopeLabel}: ${name}`,
+          referenceNumber: ob.receiptNumber,
+          customer: ob.customer,
+          creator: null,
+          date: ob.openedAt,
+        };
+      }),
     ].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
     res.json({
       date: startOfDay.toISOString().split('T')[0],
       opening: opening.toFixed(2),
-      totalIn: totalIn.toFixed(2),
+      totalIn: totalIn.add(obNileIn).toFixed(2),
       totalOut: totalOut.toFixed(2),
       closing: closing.toFixed(2),
       transactions,
@@ -790,7 +886,37 @@ router.get('/nile-transactions', async (req: AuthRequest, res) => {
         user: e.createdByUser,
         date: e.createdAt,
       })),
-    ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    ];
+
+    // Opening balances with BANK_NILE
+    const obNile = await prisma.openingBalance.findMany({
+      where: {
+        scope: { in: ['CUSTOMER', 'SUPPLIER'] },
+        paymentMethod: METHOD,
+        isClosed: false,
+        ...dateFilter('openedAt'),
+        ...(refFilter ? { receiptNumber: refFilter } : {}),
+      },
+      include: { customer: true, supplier: true },
+    });
+    obNile.forEach((ob) => {
+      const amt = new Prisma.Decimal(ob.amount);
+      const name = ob.customer?.name || ob.supplier?.name || '';
+      const scopeLabel = ob.scope === 'CUSTOMER' ? 'عميل' : 'مورد';
+      results.push({
+        id: ob.id,
+        type: amt.greaterThan(0) ? ('OB_IN' as const) : ('OB_OUT' as const),
+        amount: amt.abs().toString(),
+        direction: amt.greaterThan(0) ? ('IN' as const) : ('OUT' as const),
+        referenceNumber: ob.receiptNumber,
+        description: `رصيد افتتاحي ${scopeLabel}: ${name}`,
+        customer: ob.customer || null,
+        user: null,
+        date: ob.openedAt,
+      });
+    });
+
+    results.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
     const totalIn = results
       .filter((r) => r.direction === 'IN')
@@ -921,7 +1047,36 @@ router.get('/search', async (req: AuthRequest, res) => {
         user: e.createdByUser,
         date: e.createdAt,
       })),
-    ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    ];
+
+    // Search opening balances with BANKAK and matching receipt number
+    const obBankakSearch = await prisma.openingBalance.findMany({
+      where: {
+        scope: { in: ['CUSTOMER', 'SUPPLIER'] },
+        paymentMethod: 'BANKAK',
+        isClosed: false,
+        receiptNumber: refFilter,
+      },
+      include: { customer: true, supplier: true },
+    });
+    obBankakSearch.forEach((ob) => {
+      const amt = new Prisma.Decimal(ob.amount);
+      const name = ob.customer?.name || ob.supplier?.name || '';
+      const scopeLabel = ob.scope === 'CUSTOMER' ? 'عميل' : 'مورد';
+      results.push({
+        id: ob.id,
+        type: amt.greaterThan(0) ? ('OB_IN' as const) : ('OB_OUT' as const),
+        amount: amt.abs().toString(),
+        direction: amt.greaterThan(0) ? ('IN' as const) : ('OUT' as const),
+        referenceNumber: ob.receiptNumber,
+        description: `رصيد افتتاحي ${scopeLabel}: ${name}`,
+        customer: ob.customer || null,
+        user: null,
+        date: ob.openedAt,
+      });
+    });
+
+    results.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
     res.json({ results, total: results.length });
   } catch (error) {

@@ -654,6 +654,7 @@ model OpeningBalance {
   supplierId    String?
   amount        Decimal       @db.Decimal(15, 2)
   paymentMethod PaymentMethod @default(CASH)
+  receiptNumber String?
   openedAt      DateTime      @default(now())
   closedAt      DateTime?
   isClosed      Boolean       @default(false)

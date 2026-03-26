@@ -131,29 +131,177 @@ router.get('/daily', async (req: AuthRequest, res) => {
     // ── 1. Opening balance ────────────────────────────────────────────────
     const opening = emptyBucket();
 
-    // Try CumulativeBalanceSnapshot for the previous day (global, no inventory)
+    // Find the most recent CumulativeBalanceSnapshot on or before the previous day.
+    // Using lte (not eq) handles gaps: days with no transactions produce no snapshot,
+    // so we walk back to the nearest recorded closing balance.
     const snapshot = await prisma.cumulativeBalanceSnapshot.findFirst({
       where: {
-        date: prevDay,
+        date: { lte: prevDay },
         inventoryId: null,
         section: null,
       },
+      orderBy: { date: 'desc' },
     });
 
     if (snapshot) {
+      // Use the snapshot's closing balance as opening.
+      // If the snapshot is from before yesterday, we need to add any transactions
+      // that occurred between that snapshot date and today's start.
+      const snapshotDate = new Date(snapshot.date);
+      snapshotDate.setHours(0, 0, 0, 0);
+      const snapshotEnd = new Date(snapshotDate);
+      snapshotEnd.setDate(snapshotEnd.getDate() + 1); // day after snapshot
+
       opening.CASH = snapshot.closingCash;
       opening.BANKAK = snapshot.closingBank;
       opening.BANK_NILE = snapshot.closingBankNile;
+
+      // If the snapshot is not from yesterday, catch up missing days' transactions
+      if (snapshotEnd < dayStart) {
+        // Sales payments between snapshot+1 and today
+        const missedSalesPayments = await prisma.salesPayment.findMany({
+          where: {
+            paidAt: { gte: snapshotEnd, lt: dayStart },
+            invoice: { paymentConfirmationStatus: 'CONFIRMED' },
+          },
+        });
+        for (const sp of missedSalesPayments) {
+          addToBucket(opening, sp.method, sp.amount);
+        }
+
+        // Expenses between snapshot+1 and today
+        const missedExpenses = await prisma.expense.findMany({
+          where: { createdAt: { gte: snapshotEnd, lt: dayStart }, isDebt: false },
+        });
+        for (const e of missedExpenses) {
+          const m = e.method as TreasuryMethod;
+          if (TREASURY_METHODS.includes(m)) opening[m] = opening[m].sub(e.amount);
+        }
+
+        // Salaries paid between snapshot+1 and today
+        const missedSalaries = await prisma.salary.findMany({
+          where: { paidAt: { gte: snapshotEnd, lt: dayStart } },
+        });
+        for (const s of missedSalaries) {
+          const m = s.paymentMethod as TreasuryMethod;
+          if (TREASURY_METHODS.includes(m)) opening[m] = opening[m].sub(s.netAmount);
+        }
+
+        // Advances paid between snapshot+1 and today
+        const missedAdvances = await prisma.advance.findMany({
+          where: { paidAt: { gte: snapshotEnd, lt: dayStart } },
+        });
+        for (const a of missedAdvances) {
+          const m = a.paymentMethod as TreasuryMethod;
+          if (TREASURY_METHODS.includes(m)) opening[m] = opening[m].sub(a.amount);
+        }
+
+        // Procurement payments between snapshot+1 and today
+        const missedProcPayments = await prisma.procOrderPayment.findMany({
+          where: {
+            paidAt: { gte: snapshotEnd, lt: dayStart },
+            order: { status: { not: 'CANCELLED' } },
+          },
+        });
+        for (const p of missedProcPayments) {
+          const m = p.method as TreasuryMethod;
+          if (TREASURY_METHODS.includes(m)) opening[m] = opening[m].sub(p.amount);
+        }
+
+        // Cash exchanges between snapshot+1 and today
+        const missedExchanges = await (prisma as any).cashExchange.findMany({
+          where: { createdAt: { gte: snapshotEnd, lt: dayStart } },
+        });
+        for (const ce of missedExchanges) {
+          addToBucket(opening, ce.toMethod, ce.amount);
+          opening[ce.fromMethod as TreasuryMethod] = opening[ce.fromMethod as TreasuryMethod].sub(ce.amount);
+        }
+
+        // Treasury transactions (CASH_IN/CASH_OUT) between snapshot+1 and today
+        const missedTreasury = await (prisma as any).treasuryTransaction.findMany({
+          where: { createdAt: { gte: snapshotEnd, lt: dayStart } },
+        });
+        for (const t of missedTreasury) {
+          if (t.type === 'CASH_IN') addToBucket(opening, t.method, t.amount);
+          else if (t.type === 'CASH_OUT') opening[t.method as TreasuryMethod] = opening[t.method as TreasuryMethod].sub(t.amount);
+        }
+
+        // Income between snapshot+1 and today
+        const missedIncome = await prisma.income.findMany({
+          where: { createdAt: { gte: snapshotEnd, lt: dayStart }, isDebt: false },
+        });
+        for (const i of missedIncome) {
+          const m = (i as any).method as TreasuryMethod;
+          if (TREASURY_METHODS.includes(m)) addToBucket(opening, m, i.amount);
+        }
+      }
     } else {
-      // Fallback: aggregate OpeningBalance records for CASHBOX scope
+      // No snapshot at all — compute opening from raw OpeningBalance records
+      // then add all transactions before today
       const openingBalances = await prisma.openingBalance.findMany({
-        where: {
-          scope: 'CASHBOX',
-          isClosed: false,
-        },
+        where: { scope: 'CASHBOX', isClosed: false },
       });
       for (const ob of openingBalances) {
         addToBucket(opening, ob.paymentMethod, ob.amount);
+      }
+
+      // Add all transactions up to (but not including) today
+      const allSalesPayments = await prisma.salesPayment.findMany({
+        where: { paidAt: { lt: dayStart }, invoice: { paymentConfirmationStatus: 'CONFIRMED' } },
+      });
+      for (const sp of allSalesPayments) addToBucket(opening, sp.method, sp.amount);
+
+      const allExpenses = await prisma.expense.findMany({
+        where: { createdAt: { lt: dayStart }, isDebt: false },
+      });
+      for (const e of allExpenses) {
+        const m = e.method as TreasuryMethod;
+        if (TREASURY_METHODS.includes(m)) opening[m] = opening[m].sub(e.amount);
+      }
+
+
+      const allSalaries = await prisma.salary.findMany({ where: { paidAt: { lt: dayStart } } });
+      for (const s of allSalaries) {
+        const m = s.paymentMethod as TreasuryMethod;
+        if (TREASURY_METHODS.includes(m)) opening[m] = opening[m].sub(s.netAmount);
+      }
+
+      const allAdvances = await prisma.advance.findMany({ where: { paidAt: { lt: dayStart } } });
+      for (const a of allAdvances) {
+        const m = a.paymentMethod as TreasuryMethod;
+        if (TREASURY_METHODS.includes(m)) opening[m] = opening[m].sub(a.amount);
+      }
+
+      const allProcPayments = await prisma.procOrderPayment.findMany({
+        where: { paidAt: { lt: dayStart }, order: { status: { not: 'CANCELLED' } } },
+      });
+      for (const p of allProcPayments) {
+        const m = p.method as TreasuryMethod;
+        if (TREASURY_METHODS.includes(m)) opening[m] = opening[m].sub(p.amount);
+      }
+
+      const allExchanges = await (prisma as any).cashExchange.findMany({
+        where: { createdAt: { lt: dayStart } },
+      });
+      for (const ce of allExchanges) {
+        addToBucket(opening, ce.toMethod, ce.amount);
+        opening[ce.fromMethod as TreasuryMethod] = opening[ce.fromMethod as TreasuryMethod].sub(ce.amount);
+      }
+
+      const allTreasury = await (prisma as any).treasuryTransaction.findMany({
+        where: { createdAt: { lt: dayStart } },
+      });
+      for (const t of allTreasury) {
+        if (t.type === 'CASH_IN') addToBucket(opening, t.method, t.amount);
+        else if (t.type === 'CASH_OUT') opening[t.method as TreasuryMethod] = opening[t.method as TreasuryMethod].sub(t.amount);
+      }
+
+      const allIncome = await prisma.income.findMany({
+        where: { createdAt: { lt: dayStart }, isDebt: false },
+      });
+      for (const i of allIncome) {
+        const m = (i as any).method as TreasuryMethod;
+        if (TREASURY_METHODS.includes(m)) addToBucket(opening, m, i.amount);
       }
     }
 
