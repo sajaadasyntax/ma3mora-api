@@ -677,6 +677,31 @@ router.post('/opening-balances', requireRole('ACCOUNTANT', 'MANAGER'), createAud
       },
     });
 
+    // For CUSTOMER/SUPPLIER scopes, create a treasury transaction so the
+    // cash movement is reflected in liquid-cash calculations going forward.
+    if (
+      (data.scope === 'CUSTOMER' || data.scope === 'SUPPLIER') &&
+      (data.paymentMethod === 'CASH' || data.paymentMethod === 'BANKAK' || data.paymentMethod === 'BANK_NILE')
+    ) {
+      const amt = new Prisma.Decimal(data.amount);
+      if (!amt.isZero()) {
+        const isPositive = amt.greaterThan(0);
+        const scopeLabel = data.scope === 'CUSTOMER' ? 'عميل' : 'مورد';
+        const name =
+          (data.scope === 'CUSTOMER' ? balance.customer?.name : balance.supplier?.name) || scopeLabel;
+
+        await prisma.treasuryTransaction.create({
+          data: {
+            type: isPositive ? 'CASH_IN' : 'CASH_OUT',
+            amount: amt.abs(),
+            method: data.paymentMethod,
+            description: `رصيد افتتاحي — ${scopeLabel}: ${name}`,
+            createdBy: req.user!.id,
+          },
+        });
+      }
+    }
+
     res.status(201).json(balance);
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -1202,18 +1227,6 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), asyn
         cashExchangeImpact[exchange.toMethod as keyof typeof cashExchangeImpact].add(exchange.amount);
     });
 
-    // Customer/supplier opening balances impact on liquid cash
-    const custSuppOBsForLiquid = await prisma.openingBalance.findMany({
-      where: { scope: { in: ['CUSTOMER', 'SUPPLIER'] }, isClosed: false },
-    });
-    const obImpactLiquid = { CASH: new Prisma.Decimal(0), BANKAK: new Prisma.Decimal(0), BANK_NILE: new Prisma.Decimal(0) } as Record<'CASH'|'BANKAK'|'BANK_NILE', Prisma.Decimal>;
-    custSuppOBsForLiquid.forEach((ob) => {
-      const m = ob.paymentMethod as string;
-      if (m === 'CASH' || m === 'BANKAK' || m === 'BANK_NILE') {
-        obImpactLiquid[m] = obImpactLiquid[m].add(ob.amount);
-      }
-    });
-
     // Sales returns (refunds reduce liquid cash)
     const salesReturnsForLiquid = await prisma.salesReturn.findMany({
       include: {
@@ -1373,7 +1386,6 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), asyn
       .sub(cashAdvances)
       .sub(cashProcPayments)
       .add(cashExchangeImpact.CASH)
-      .add(obImpactLiquid.CASH)
       .sub(salesReturnImpact.CASH);
     
     const netBank = openingBank
@@ -1384,7 +1396,6 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), asyn
       .sub(bankAdvances)
       .sub(bankProcPayments)
       .add(cashExchangeImpact.BANKAK)
-      .add(obImpactLiquid.BANKAK)
       .sub(salesReturnImpact.BANKAK);
     
     const netBankNile = openingBankNile
@@ -1395,7 +1406,6 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), asyn
       .sub(bankNileAdvances)
       .sub(bankNileProcPayments)
       .add(cashExchangeImpact.BANK_NILE)
-      .add(obImpactLiquid.BANK_NILE)
       .sub(salesReturnImpact.BANK_NILE);
     
     const netTotal = netCash.add(netBank).add(netBankNile);
@@ -1796,23 +1806,10 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
       }
     });
 
-    // Customer/supplier opening balances impact on liquid cash
-    // Positive OB = money received into that method; negative = money paid out
-    const custSuppOBsAL = await prisma.openingBalance.findMany({
-      where: { scope: { in: ['CUSTOMER', 'SUPPLIER'] }, isClosed: false },
-    });
-    const obImpact = { CASH: new Prisma.Decimal(0), BANKAK: new Prisma.Decimal(0), BANK_NILE: new Prisma.Decimal(0) } as Record<'CASH'|'BANKAK'|'BANK_NILE', Prisma.Decimal>;
-    custSuppOBsAL.forEach((ob) => {
-      const m = ob.paymentMethod as string;
-      if (m === 'CASH' || m === 'BANKAK' || m === 'BANK_NILE') {
-        obImpact[m] = obImpact[m].add(ob.amount);
-      }
-    });
-
     const liquidCash = {
-      CASH: opening.CASH.add(salesIn.CASH).add(incomeIn.CASH).add(custPayIn.CASH).add(depIn.CASH).add(exImpact.CASH).add(trImpact.CASH).add(obImpact.CASH).sub(expOut.CASH).sub(salOut.CASH).sub(advOut.CASH).sub(procOut.CASH).sub(srOut.CASH),
-      BANKAK: opening.BANKAK.add(salesIn.BANKAK).add(incomeIn.BANKAK).add(custPayIn.BANKAK).add(depIn.BANKAK).add(exImpact.BANKAK).add(trImpact.BANKAK).add(obImpact.BANKAK).sub(expOut.BANKAK).sub(salOut.BANKAK).sub(advOut.BANKAK).sub(procOut.BANKAK).sub(srOut.BANKAK),
-      BANK_NILE: opening.BANK_NILE.add(salesIn.BANK_NILE).add(incomeIn.BANK_NILE).add(custPayIn.BANK_NILE).add(depIn.BANK_NILE).add(exImpact.BANK_NILE).add(trImpact.BANK_NILE).add(obImpact.BANK_NILE).sub(expOut.BANK_NILE).sub(salOut.BANK_NILE).sub(advOut.BANK_NILE).sub(procOut.BANK_NILE).sub(srOut.BANK_NILE),
+      CASH: opening.CASH.add(salesIn.CASH).add(incomeIn.CASH).add(custPayIn.CASH).add(depIn.CASH).add(exImpact.CASH).add(trImpact.CASH).sub(expOut.CASH).sub(salOut.CASH).sub(advOut.CASH).sub(procOut.CASH).sub(srOut.CASH),
+      BANKAK: opening.BANKAK.add(salesIn.BANKAK).add(incomeIn.BANKAK).add(custPayIn.BANKAK).add(depIn.BANKAK).add(exImpact.BANKAK).add(trImpact.BANKAK).sub(expOut.BANKAK).sub(salOut.BANKAK).sub(advOut.BANKAK).sub(procOut.BANKAK).sub(srOut.BANKAK),
+      BANK_NILE: opening.BANK_NILE.add(salesIn.BANK_NILE).add(incomeIn.BANK_NILE).add(custPayIn.BANK_NILE).add(depIn.BANK_NILE).add(exImpact.BANK_NILE).add(trImpact.BANK_NILE).sub(expOut.BANK_NILE).sub(salOut.BANK_NILE).sub(advOut.BANK_NILE).sub(procOut.BANK_NILE).sub(srOut.BANK_NILE),
     };
 
     const liquidCashTotal = liquidCash.CASH.add(liquidCash.BANKAK).add(liquidCash.BANK_NILE);
