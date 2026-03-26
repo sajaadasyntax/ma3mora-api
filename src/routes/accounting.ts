@@ -1876,64 +1876,77 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
     totalDeliveredUnpaid = totalDeliveredUnpaid.sub(customerTreasuryAdjAL);
     if (totalDeliveredUnpaid.lessThan(0)) totalDeliveredUnpaid = new Prisma.Decimal(0);
 
-    // 5. Customer opening balances — split into asset (positive) vs liability (negative)
+    // 5. Customer opening balances — net per customer, then classify
     const customerOpeningBals = await prisma.openingBalance.findMany({
       where: { scope: 'CUSTOMER', isClosed: false },
       include: { customer: { select: { id: true, name: true } } },
     });
+    const customerNetMap = new Map<string, { customerId: string | null; customerName: string; net: Prisma.Decimal }>();
+    for (const ob of customerOpeningBals) {
+      const cid = ob.customer?.id ?? null;
+      const key = cid ?? '__null__';
+      const existing = customerNetMap.get(key);
+      if (existing) {
+        existing.net = existing.net.add(new Prisma.Decimal(ob.amount));
+      } else {
+        customerNetMap.set(key, {
+          customerId: cid,
+          customerName: ob.customer?.name || 'عميل',
+          net: new Prisma.Decimal(ob.amount),
+        });
+      }
+    }
     let customerOBAssets = new Prisma.Decimal(0);
     let customerOBLiabilities = new Prisma.Decimal(0);
     const customerOpeningAssetItems: { customerId: string | null; customerName: string; amount: string }[] = [];
     const customerOpeningLiabilityItems: { customerId: string | null; customerName: string; amount: string }[] = [];
-    for (const ob of customerOpeningBals) {
-      const amt = new Prisma.Decimal(ob.amount);
-      const name = ob.customer?.name || 'عميل';
-      if (amt.greaterThan(0)) {
-        customerOBAssets = customerOBAssets.add(amt);
-        customerOpeningAssetItems.push({
-          customerId: ob.customerId,
-          customerName: name,
-          amount: amt.toFixed(2),
-        });
-      } else if (amt.lessThan(0)) {
-        const liabilityAmt = amt.abs();
+    for (const { customerId, customerName, net } of customerNetMap.values()) {
+      if (net.greaterThan(0)) {
+        customerOBAssets = customerOBAssets.add(net);
+        customerOpeningAssetItems.push({ customerId, customerName, amount: net.toFixed(2) });
+      } else if (net.lessThan(0)) {
+        const liabilityAmt = net.abs();
         customerOBLiabilities = customerOBLiabilities.add(liabilityAmt);
-        customerOpeningLiabilityItems.push({
-          customerId: ob.customerId,
-          customerName: name,
-          amount: liabilityAmt.toFixed(2),
-        });
+        customerOpeningLiabilityItems.push({ customerId, customerName, amount: liabilityAmt.toFixed(2) });
       }
+      // net === 0 → cancel out, skip
     }
 
-    // 6. Supplier opening balances — split into asset (positive) vs liability (negative)
+    // 6. Supplier opening balances — net per supplier, then classify
     const supplierOpeningBals = await prisma.openingBalance.findMany({
       where: { scope: 'SUPPLIER', isClosed: false },
       include: { supplier: { select: { id: true, name: true } } },
     });
+    // Aggregate all rows for the same supplier into a single net amount
+    const supplierNetMap = new Map<string, { supplierId: string | null; supplierName: string; net: Prisma.Decimal }>();
+    for (const ob of supplierOpeningBals) {
+      const sid = ob.supplier?.id ?? null;
+      const key = sid ?? '__null__';
+      const existing = supplierNetMap.get(key);
+      if (existing) {
+        existing.net = existing.net.add(new Prisma.Decimal(ob.amount));
+      } else {
+        supplierNetMap.set(key, {
+          supplierId: sid,
+          supplierName: ob.supplier?.name || 'مورد',
+          net: new Prisma.Decimal(ob.amount),
+        });
+      }
+    }
     let supplierOBAssets = new Prisma.Decimal(0);
     let supplierOBLiabilities = new Prisma.Decimal(0);
     const supplierOpeningAssetItems: { supplierId: string | null; supplierName: string; amount: string }[] = [];
     const supplierOpeningLiabilityItems: { supplierId: string | null; supplierName: string; amount: string }[] = [];
-    for (const ob of supplierOpeningBals) {
-      const amt = new Prisma.Decimal(ob.amount);
-      const name = ob.supplier?.name || 'مورد';
-      if (amt.greaterThan(0)) {
-        supplierOBAssets = supplierOBAssets.add(amt);
-        supplierOpeningAssetItems.push({
-          supplierId: ob.supplierId,
-          supplierName: name,
-          amount: amt.toFixed(2),
-        });
-      } else if (amt.lessThan(0)) {
-        const liabilityAmt = amt.abs();
+    for (const { supplierId, supplierName, net } of supplierNetMap.values()) {
+      if (net.greaterThan(0)) {
+        supplierOBAssets = supplierOBAssets.add(net);
+        supplierOpeningAssetItems.push({ supplierId, supplierName, amount: net.toFixed(2) });
+      } else if (net.lessThan(0)) {
+        const liabilityAmt = net.abs();
         supplierOBLiabilities = supplierOBLiabilities.add(liabilityAmt);
-        supplierOpeningLiabilityItems.push({
-          supplierId: ob.supplierId,
-          supplierName: name,
-          amount: liabilityAmt.toFixed(2),
-        });
+        supplierOpeningLiabilityItems.push({ supplierId, supplierName, amount: liabilityAmt.toFixed(2) });
       }
+      // net === 0 → they cancel out, skip entirely
     }
 
     // Calculate total له (Assets)
