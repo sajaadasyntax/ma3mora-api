@@ -46,15 +46,24 @@ const createIncomeSchema = z.object({
   isDebt: z.boolean().optional().default(false),
 });
 
-const createOpeningBalanceSchema = z.object({
-  scope: z.enum(['CASHBOX', 'CUSTOMER', 'SUPPLIER']),
-  customerId: z.string().optional(),
-  supplierId: z.string().optional(),
-  amount: z.number(),
-  paymentMethod: z.enum(['CASH', 'BANKAK', 'BANK_NILE', 'DEBT', 'OTHERS']).default('CASH'),
-  receiptNumber: z.string().optional(),
-  notes: z.string().optional(),
-});
+const createOpeningBalanceSchema = z
+  .object({
+    scope: z.enum(['CASHBOX', 'CUSTOMER', 'SUPPLIER']),
+    customerId: z.string().optional(),
+    supplierId: z.string().optional(),
+    amount: z.number(),
+    paymentMethod: z.enum(['CASH', 'BANKAK', 'BANK_NILE', 'DEBT', 'OTHERS']).default('CASH'),
+    receiptNumber: z.string().optional(),
+    notes: z.string().optional(),
+  })
+  .refine((d) => d.scope !== 'CUSTOMER' || !!d.customerId, {
+    message: 'معرّف العميل مطلوب لرصيد افتتاحي عميل',
+    path: ['customerId'],
+  })
+  .refine((d) => d.scope !== 'SUPPLIER' || !!d.supplierId, {
+    message: 'معرّف المورد مطلوب لرصيد افتتاحي مورد',
+    path: ['supplierId'],
+  });
 
 const createCashExchangeSchema = z.object({
   amount: z.number().positive(),
@@ -1870,25 +1879,61 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
     // 5. Customer opening balances — split into asset (positive) vs liability (negative)
     const customerOpeningBals = await prisma.openingBalance.findMany({
       where: { scope: 'CUSTOMER', isClosed: false },
+      include: { customer: { select: { id: true, name: true } } },
     });
     let customerOBAssets = new Prisma.Decimal(0);
     let customerOBLiabilities = new Prisma.Decimal(0);
+    const customerOpeningAssetItems: { customerId: string | null; customerName: string; amount: string }[] = [];
+    const customerOpeningLiabilityItems: { customerId: string | null; customerName: string; amount: string }[] = [];
     for (const ob of customerOpeningBals) {
       const amt = new Prisma.Decimal(ob.amount);
-      if (amt.greaterThan(0)) customerOBAssets = customerOBAssets.add(amt);
-      else customerOBLiabilities = customerOBLiabilities.add(amt.abs());
+      const name = ob.customer?.name || 'عميل';
+      if (amt.greaterThan(0)) {
+        customerOBAssets = customerOBAssets.add(amt);
+        customerOpeningAssetItems.push({
+          customerId: ob.customerId,
+          customerName: name,
+          amount: amt.toFixed(2),
+        });
+      } else if (amt.lessThan(0)) {
+        const liabilityAmt = amt.abs();
+        customerOBLiabilities = customerOBLiabilities.add(liabilityAmt);
+        customerOpeningLiabilityItems.push({
+          customerId: ob.customerId,
+          customerName: name,
+          amount: liabilityAmt.toFixed(2),
+        });
+      }
     }
 
     // 6. Supplier opening balances — split into asset (positive) vs liability (negative)
     const supplierOpeningBals = await prisma.openingBalance.findMany({
       where: { scope: 'SUPPLIER', isClosed: false },
+      include: { supplier: { select: { id: true, name: true } } },
     });
     let supplierOBAssets = new Prisma.Decimal(0);
     let supplierOBLiabilities = new Prisma.Decimal(0);
+    const supplierOpeningAssetItems: { supplierId: string | null; supplierName: string; amount: string }[] = [];
+    const supplierOpeningLiabilityItems: { supplierId: string | null; supplierName: string; amount: string }[] = [];
     for (const ob of supplierOpeningBals) {
       const amt = new Prisma.Decimal(ob.amount);
-      if (amt.greaterThan(0)) supplierOBAssets = supplierOBAssets.add(amt);
-      else supplierOBLiabilities = supplierOBLiabilities.add(amt.abs());
+      const name = ob.supplier?.name || 'مورد';
+      if (amt.greaterThan(0)) {
+        supplierOBAssets = supplierOBAssets.add(amt);
+        supplierOpeningAssetItems.push({
+          supplierId: ob.supplierId,
+          supplierName: name,
+          amount: amt.toFixed(2),
+        });
+      } else if (amt.lessThan(0)) {
+        const liabilityAmt = amt.abs();
+        supplierOBLiabilities = supplierOBLiabilities.add(liabilityAmt);
+        supplierOpeningLiabilityItems.push({
+          supplierId: ob.supplierId,
+          supplierName: name,
+          amount: liabilityAmt.toFixed(2),
+        });
+      }
     }
 
     // Calculate total له (Assets)
@@ -2030,9 +2075,11 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
         },
         customerOpeningBalances: {
           total: customerOBAssets.toFixed(2),
+          items: customerOpeningAssetItems,
         },
         supplierOpeningBalances: {
           total: supplierOBAssets.toFixed(2),
+          items: supplierOpeningAssetItems,
         },
         total: totalAssets.toFixed(2),
       },
@@ -2051,9 +2098,11 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
         },
         customerOpeningBalances: {
           total: customerOBLiabilities.toFixed(2),
+          items: customerOpeningLiabilityItems,
         },
         supplierOpeningBalances: {
           total: supplierOBLiabilities.toFixed(2),
+          items: supplierOpeningLiabilityItems,
         },
         unpaidSalaries: {
           total: totalUnpaidSalaries.toFixed(2),
