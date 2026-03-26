@@ -295,22 +295,39 @@ async function getAvailableByMethod() {
     exImpact[toM] = exImpact[toM].add(e.amount);
   });
 
-  // Customer/Supplier opening balances by payment method
-  const custSuppOBsAvail = await prisma.openingBalance.findMany({
-    where: { scope: { in: ['CUSTOMER', 'SUPPLIER'] }, isClosed: false },
-  });
-  const obAvail = { CASH: new Prisma.Decimal(0), BANKAK: new Prisma.Decimal(0), BANK_NILE: new Prisma.Decimal(0) } as Record<'CASH'|'BANKAK'|'BANK_NILE', Prisma.Decimal>;
-  custSuppOBsAvail.forEach((ob) => {
-    const m = ob.paymentMethod as string;
+  // Customer payments (direct payments not tied to invoices)
+  const custPays = await prisma.customerPayment.findMany();
+  const custPayIn = {
+    CASH: custPays.filter(p => p.method === 'CASH').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
+    BANKAK: custPays.filter(p => p.method === 'BANKAK').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
+    BANK_NILE: custPays.filter(p => p.method === 'BANK_NILE').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
+  } as const;
+
+  // Sales deposits (advance payments from customers)
+  const salesDeps = await (prisma as any).salesDeposit.findMany();
+  const depIn = { CASH: new Prisma.Decimal(0), BANKAK: new Prisma.Decimal(0), BANK_NILE: new Prisma.Decimal(0) } as Record<'CASH'|'BANKAK'|'BANK_NILE', Prisma.Decimal>;
+  salesDeps.forEach((d: any) => {
+    const m = d.method as string;
     if (m === 'CASH' || m === 'BANKAK' || m === 'BANK_NILE') {
-      obAvail[m] = obAvail[m].add(ob.amount);
+      depIn[m] = depIn[m].add(d.amount);
+    }
+  });
+
+  // Treasury transactions (CASH_IN = money in, CASH_OUT = money out)
+  const treasuryTxns = await prisma.treasuryTransaction.findMany();
+  const trImpact = { CASH: new Prisma.Decimal(0), BANKAK: new Prisma.Decimal(0), BANK_NILE: new Prisma.Decimal(0) } as Record<'CASH'|'BANKAK'|'BANK_NILE', Prisma.Decimal>;
+  treasuryTxns.forEach((t) => {
+    const m = t.method as string;
+    if (m === 'CASH' || m === 'BANKAK' || m === 'BANK_NILE') {
+      if (t.type === 'CASH_IN') trImpact[m] = trImpact[m].add(t.amount);
+      else if (t.type === 'CASH_OUT') trImpact[m] = trImpact[m].sub(t.amount);
     }
   });
 
   return {
-    CASH: opening.CASH.add(salesIn.CASH).add(incomeIn.CASH).add(exImpact.CASH).add(obAvail.CASH).sub(expOut.CASH).sub(salOut.CASH).sub(advOut.CASH).sub(procOut.CASH),
-    BANKAK: opening.BANKAK.add(salesIn.BANKAK).add(incomeIn.BANKAK).add(exImpact.BANKAK).add(obAvail.BANKAK).sub(expOut.BANKAK).sub(salOut.BANKAK).sub(advOut.BANKAK).sub(procOut.BANKAK),
-    BANK_NILE: opening.BANK_NILE.add(salesIn.BANK_NILE).add(incomeIn.BANK_NILE).add(exImpact.BANK_NILE).add(obAvail.BANK_NILE).sub(expOut.BANK_NILE).sub(salOut.BANK_NILE).sub(advOut.BANK_NILE).sub(procOut.BANK_NILE),
+    CASH: opening.CASH.add(salesIn.CASH).add(incomeIn.CASH).add(custPayIn.CASH).add(depIn.CASH).add(exImpact.CASH).add(trImpact.CASH).sub(expOut.CASH).sub(salOut.CASH).sub(advOut.CASH).sub(procOut.CASH),
+    BANKAK: opening.BANKAK.add(salesIn.BANKAK).add(incomeIn.BANKAK).add(custPayIn.BANKAK).add(depIn.BANKAK).add(exImpact.BANKAK).add(trImpact.BANKAK).sub(expOut.BANKAK).sub(salOut.BANKAK).sub(advOut.BANKAK).sub(procOut.BANKAK),
+    BANK_NILE: opening.BANK_NILE.add(salesIn.BANK_NILE).add(incomeIn.BANK_NILE).add(custPayIn.BANK_NILE).add(depIn.BANK_NILE).add(exImpact.BANK_NILE).add(trImpact.BANK_NILE).sub(expOut.BANK_NILE).sub(salOut.BANK_NILE).sub(advOut.BANK_NILE).sub(procOut.BANK_NILE),
   };
 }
 
@@ -1079,15 +1096,15 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), asyn
 
     const cashSalaries = paidSalaries
       .filter(s => s.paymentMethod === 'CASH')
-      .reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0));
+      .reduce((sum, s) => sum.add(s.netAmount), new Prisma.Decimal(0));
 
     const bankSalaries = paidSalaries
       .filter(s => s.paymentMethod === 'BANKAK')
-      .reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0));
+      .reduce((sum, s) => sum.add(s.netAmount), new Prisma.Decimal(0));
 
     const bankNileSalaries = paidSalaries
       .filter(s => s.paymentMethod === 'BANK_NILE')
-      .reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0));
+      .reduce((sum, s) => sum.add(s.netAmount), new Prisma.Decimal(0));
 
     // Get paid advances (only where paidAt is not null)
     const paidAdvances = await prisma.advance.findMany({
@@ -1169,6 +1186,34 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), asyn
       // Add to toMethod
       cashExchangeImpact[exchange.toMethod as keyof typeof cashExchangeImpact] = 
         cashExchangeImpact[exchange.toMethod as keyof typeof cashExchangeImpact].add(exchange.amount);
+    });
+
+    // Customer/supplier opening balances impact on liquid cash
+    const custSuppOBsForLiquid = await prisma.openingBalance.findMany({
+      where: { scope: { in: ['CUSTOMER', 'SUPPLIER'] }, isClosed: false },
+    });
+    const obImpactLiquid = { CASH: new Prisma.Decimal(0), BANKAK: new Prisma.Decimal(0), BANK_NILE: new Prisma.Decimal(0) } as Record<'CASH'|'BANKAK'|'BANK_NILE', Prisma.Decimal>;
+    custSuppOBsForLiquid.forEach((ob) => {
+      const m = ob.paymentMethod as string;
+      if (m === 'CASH' || m === 'BANKAK' || m === 'BANK_NILE') {
+        obImpactLiquid[m] = obImpactLiquid[m].add(ob.amount);
+      }
+    });
+
+    // Sales returns (refunds reduce liquid cash)
+    const salesReturnsForLiquid = await prisma.salesReturn.findMany({
+      include: {
+        invoice: { select: { paymentMethod: true } },
+        items: { select: { lineTotal: true } },
+      },
+    });
+    const salesReturnImpact = { CASH: new Prisma.Decimal(0), BANKAK: new Prisma.Decimal(0), BANK_NILE: new Prisma.Decimal(0) } as Record<'CASH'|'BANKAK'|'BANK_NILE', Prisma.Decimal>;
+    salesReturnsForLiquid.forEach((sr) => {
+      const m = sr.invoice.paymentMethod as string;
+      if (m === 'CASH' || m === 'BANKAK' || m === 'BANK_NILE') {
+        const total = sr.items.reduce((sum, it) => sum.add(it.lineTotal), new Prisma.Decimal(0));
+        salesReturnImpact[m] = salesReturnImpact[m].add(total);
+      }
     });
 
     // Get procurement payments
@@ -1306,7 +1351,6 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), asyn
       .filter(b => (b as any).paymentMethod === 'BANK_NILE')
       .reduce((sum, b) => sum.add(b.amount), new Prisma.Decimal(0));
 
-    // Calculate net liquid cash (opening balance + payments + income - expenses - salaries - advances - proc payments + cash exchanges)
     const netCash = openingCash
       .add(cashTotal)
       .add(cashIncome)
@@ -1314,7 +1358,9 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), asyn
       .sub(cashSalaries)
       .sub(cashAdvances)
       .sub(cashProcPayments)
-      .add(cashExchangeImpact.CASH);
+      .add(cashExchangeImpact.CASH)
+      .add(obImpactLiquid.CASH)
+      .sub(salesReturnImpact.CASH);
     
     const netBank = openingBank
       .add(bankTotal)
@@ -1323,7 +1369,9 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), asyn
       .sub(bankSalaries)
       .sub(bankAdvances)
       .sub(bankProcPayments)
-      .add(cashExchangeImpact.BANKAK);
+      .add(cashExchangeImpact.BANKAK)
+      .add(obImpactLiquid.BANKAK)
+      .sub(salesReturnImpact.BANKAK);
     
     const netBankNile = openingBankNile
       .add(bankNileTotal)
@@ -1332,7 +1380,9 @@ router.get('/liquid-cash', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), asyn
       .sub(bankNileSalaries)
       .sub(bankNileAdvances)
       .sub(bankNileProcPayments)
-      .add(cashExchangeImpact.BANK_NILE);
+      .add(cashExchangeImpact.BANK_NILE)
+      .add(obImpactLiquid.BANK_NILE)
+      .sub(salesReturnImpact.BANK_NILE);
     
     const netTotal = netCash.add(netBank).add(netBankNile);
 
@@ -1635,12 +1685,12 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
       BANK_NILE: expenses.filter(e => e.method === 'BANK_NILE' && !e.isDebt).reduce((s, e) => s.add(e.amount), new Prisma.Decimal(0)),
     };
 
-    // Salaries (paid)
+    // Salaries (paid — use netAmount for cash flow)
     const paidSalaries = await prisma.salary.findMany({ where: { paidAt: { not: null } } });
     const salOut = {
-      CASH: paidSalaries.filter((s: any) => s.paymentMethod === 'CASH').reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0)),
-      BANKAK: paidSalaries.filter((s: any) => s.paymentMethod === 'BANKAK').reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0)),
-      BANK_NILE: paidSalaries.filter((s: any) => s.paymentMethod === 'BANK_NILE').reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0)),
+      CASH: paidSalaries.filter((s: any) => s.paymentMethod === 'CASH').reduce((sum, s) => sum.add(s.netAmount), new Prisma.Decimal(0)),
+      BANKAK: paidSalaries.filter((s: any) => s.paymentMethod === 'BANKAK').reduce((sum, s) => sum.add(s.netAmount), new Prisma.Decimal(0)),
+      BANK_NILE: paidSalaries.filter((s: any) => s.paymentMethod === 'BANK_NILE').reduce((sum, s) => sum.add(s.netAmount), new Prisma.Decimal(0)),
     };
 
     // Advances (paid)
@@ -1687,22 +1737,55 @@ router.get('/assets-liabilities', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'
       exImpact[toM] = exImpact[toM].add(e.amount);
     });
 
-    // Customer/Supplier opening balances by payment method (positive = money came in, negative = money went out)
-    const custSuppOBs = await prisma.openingBalance.findMany({
-      where: { scope: { in: ['CUSTOMER', 'SUPPLIER'] }, isClosed: false },
-    });
-    const obImpact = { CASH: new Prisma.Decimal(0), BANKAK: new Prisma.Decimal(0), BANK_NILE: new Prisma.Decimal(0) } as Record<'CASH'|'BANKAK'|'BANK_NILE', Prisma.Decimal>;
-    custSuppOBs.forEach((ob) => {
-      const m = ob.paymentMethod as string;
+    // Customer payments (direct payments not tied to invoices)
+    const custPays = await prisma.customerPayment.findMany();
+    const custPayIn = {
+      CASH: custPays.filter(p => p.method === 'CASH').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
+      BANKAK: custPays.filter(p => p.method === 'BANKAK').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
+      BANK_NILE: custPays.filter(p => p.method === 'BANK_NILE').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
+    } as const;
+
+    // Sales deposits (advance payments from customers)
+    const salesDeps = await (prisma as any).salesDeposit.findMany();
+    const depIn = { CASH: new Prisma.Decimal(0), BANKAK: new Prisma.Decimal(0), BANK_NILE: new Prisma.Decimal(0) } as Record<'CASH'|'BANKAK'|'BANK_NILE', Prisma.Decimal>;
+    salesDeps.forEach((d: any) => {
+      const m = d.method as string;
       if (m === 'CASH' || m === 'BANKAK' || m === 'BANK_NILE') {
-        obImpact[m] = obImpact[m].add(ob.amount);
+        depIn[m] = depIn[m].add(d.amount);
+      }
+    });
+
+    // Treasury transactions (CASH_IN = money in, CASH_OUT = money out)
+    const treasuryTxns = await prisma.treasuryTransaction.findMany();
+    const trImpact = { CASH: new Prisma.Decimal(0), BANKAK: new Prisma.Decimal(0), BANK_NILE: new Prisma.Decimal(0) } as Record<'CASH'|'BANKAK'|'BANK_NILE', Prisma.Decimal>;
+    treasuryTxns.forEach((t) => {
+      const m = t.method as string;
+      if (m === 'CASH' || m === 'BANKAK' || m === 'BANK_NILE') {
+        if (t.type === 'CASH_IN') trImpact[m] = trImpact[m].add(t.amount);
+        else if (t.type === 'CASH_OUT') trImpact[m] = trImpact[m].sub(t.amount);
+      }
+    });
+
+    // Sales returns (refunds reduce liquid cash)
+    const alSalesReturns = await prisma.salesReturn.findMany({
+      include: {
+        invoice: { select: { paymentMethod: true } },
+        items: { select: { lineTotal: true } },
+      },
+    });
+    const srOut = { CASH: new Prisma.Decimal(0), BANKAK: new Prisma.Decimal(0), BANK_NILE: new Prisma.Decimal(0) } as Record<'CASH'|'BANKAK'|'BANK_NILE', Prisma.Decimal>;
+    alSalesReturns.forEach((sr) => {
+      const m = sr.invoice.paymentMethod as string;
+      if (m === 'CASH' || m === 'BANKAK' || m === 'BANK_NILE') {
+        const total = sr.items.reduce((sum, it) => sum.add(it.lineTotal), new Prisma.Decimal(0));
+        srOut[m] = srOut[m].add(total);
       }
     });
 
     const liquidCash = {
-      CASH: opening.CASH.add(salesIn.CASH).add(incomeIn.CASH).add(exImpact.CASH).add(obImpact.CASH).sub(expOut.CASH).sub(salOut.CASH).sub(advOut.CASH).sub(procOut.CASH),
-      BANKAK: opening.BANKAK.add(salesIn.BANKAK).add(incomeIn.BANKAK).add(exImpact.BANKAK).add(obImpact.BANKAK).sub(expOut.BANKAK).sub(salOut.BANKAK).sub(advOut.BANKAK).sub(procOut.BANKAK),
-      BANK_NILE: opening.BANK_NILE.add(salesIn.BANK_NILE).add(incomeIn.BANK_NILE).add(exImpact.BANK_NILE).add(obImpact.BANK_NILE).sub(expOut.BANK_NILE).sub(salOut.BANK_NILE).sub(advOut.BANK_NILE).sub(procOut.BANK_NILE),
+      CASH: opening.CASH.add(salesIn.CASH).add(incomeIn.CASH).add(custPayIn.CASH).add(depIn.CASH).add(exImpact.CASH).add(trImpact.CASH).sub(expOut.CASH).sub(salOut.CASH).sub(advOut.CASH).sub(procOut.CASH).sub(srOut.CASH),
+      BANKAK: opening.BANKAK.add(salesIn.BANKAK).add(incomeIn.BANKAK).add(custPayIn.BANKAK).add(depIn.BANKAK).add(exImpact.BANKAK).add(trImpact.BANKAK).sub(expOut.BANKAK).sub(salOut.BANKAK).sub(advOut.BANKAK).sub(procOut.BANKAK).sub(srOut.BANKAK),
+      BANK_NILE: opening.BANK_NILE.add(salesIn.BANK_NILE).add(incomeIn.BANK_NILE).add(custPayIn.BANK_NILE).add(depIn.BANK_NILE).add(exImpact.BANK_NILE).add(trImpact.BANK_NILE).sub(expOut.BANK_NILE).sub(salOut.BANK_NILE).sub(advOut.BANK_NILE).sub(procOut.BANK_NILE).sub(srOut.BANK_NILE),
     };
 
     const liquidCashTotal = liquidCash.CASH.add(liquidCash.BANKAK).add(liquidCash.BANK_NILE);
@@ -2462,9 +2545,9 @@ router.get('/balance/sessions', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'),
           }
         });
 
-        const totalIncome = income.reduce((sum, inc) => 
-          sum.add(inc.amount), new Prisma.Decimal(0)
-        );
+        const totalIncome = income
+          .filter(inc => !inc.isDebt)
+          .reduce((sum, inc) => sum.add(inc.amount), new Prisma.Decimal(0));
 
         // Get salaries paid during this session period (using paidAt)
         const salaries = await prisma.salary.findMany({
@@ -3485,18 +3568,57 @@ router.get('/bank-transactions', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER')
       .filter(b => (b as any).paymentMethod === 'BANK_NILE')
       .reduce((sum, b) => sum.add(b.amount), new Prisma.Decimal(0));
 
-    // Calculate income (sales payments + misc income) by method
+    // Calculate income (sales payments + misc non-debt income) by method
     const bankIncome = salesPayments
       .filter(p => p.method === 'BANKAK')
       .reduce((sum, p) => sum.add(p.amount), new Prisma.Decimal(0))
-      .add(miscBankIncomes.filter((i: any) => i.method === 'BANKAK').reduce((sum: Prisma.Decimal, i: any) => sum.add(i.amount), new Prisma.Decimal(0)));
+      .add(miscBankIncomes.filter((i: any) => i.method === 'BANKAK' && !i.isDebt).reduce((sum: Prisma.Decimal, i: any) => sum.add(i.amount), new Prisma.Decimal(0)));
     
     const bankNileIncome = salesPayments
       .filter(p => p.method === 'BANK_NILE')
       .reduce((sum, p) => sum.add(p.amount), new Prisma.Decimal(0))
-      .add(miscBankIncomes.filter((i: any) => i.method === 'BANK_NILE').reduce((sum: Prisma.Decimal, i: any) => sum.add(i.amount), new Prisma.Decimal(0)));
+      .add(miscBankIncomes.filter((i: any) => i.method === 'BANK_NILE' && !i.isDebt).reduce((sum: Prisma.Decimal, i: any) => sum.add(i.amount), new Prisma.Decimal(0)));
 
-    // Calculate expenses (procurement payments, regular expenses, salaries, advances) by method
+    // Sales returns for bank methods (refunds reduce net)
+    const bankReturns = await prisma.salesReturn.findMany({
+      where: {
+        ...(Object.keys(dateFilter).length > 0 ? { returnedAt: dateFilter } : {}),
+        invoice: { paymentMethod: { in: methodFilter as any } },
+      },
+      include: {
+        invoice: { select: { paymentMethod: true, invoiceNumber: true, customer: { select: { name: true } }, inventory: { select: { name: true } } } },
+        items: { select: { lineTotal: true } },
+        returnedByUser: { select: { id: true, username: true } },
+      },
+      orderBy: { returnedAt: 'desc' },
+    });
+
+    bankReturns.forEach((sr: any) => {
+      const returnTotal = sr.items.reduce((sum: Prisma.Decimal, it: any) => sum.add(it.lineTotal), new Prisma.Decimal(0));
+      transactions.push({
+        id: sr.id,
+        type: 'SALES_RETURN',
+        typeLabel: 'مرتجع مبيعات',
+        amount: returnTotal.toString(),
+        method: sr.invoice.paymentMethod,
+        date: sr.returnedAt,
+        recordedBy: sr.returnedByUser?.username || 'غير محدد',
+        details: {
+          invoiceNumber: sr.invoice.invoiceNumber || 'غير محدد',
+          customer: sr.invoice.customer?.name || 'غير محدد',
+          inventory: sr.invoice.inventory?.name || 'غير محدد',
+        },
+      });
+    });
+
+    const bankReturnTotal = bankReturns
+      .filter((sr: any) => sr.invoice.paymentMethod === 'BANKAK')
+      .reduce((sum: Prisma.Decimal, sr: any) => sum.add(sr.items.reduce((s: Prisma.Decimal, it: any) => s.add(it.lineTotal), new Prisma.Decimal(0))), new Prisma.Decimal(0));
+    const bankNileReturnTotal = bankReturns
+      .filter((sr: any) => sr.invoice.paymentMethod === 'BANK_NILE')
+      .reduce((sum: Prisma.Decimal, sr: any) => sum.add(sr.items.reduce((s: Prisma.Decimal, it: any) => s.add(it.lineTotal), new Prisma.Decimal(0))), new Prisma.Decimal(0));
+
+    // Calculate expenses (procurement payments, regular non-debt expenses, salaries, advances) by method
     const bankProcPayments = procPayments
       .filter(p => p.method === 'BANKAK')
       .reduce((sum, p) => sum.add(p.amount), new Prisma.Decimal(0));
@@ -3506,20 +3628,20 @@ router.get('/bank-transactions', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER')
       .reduce((sum, p) => sum.add(p.amount), new Prisma.Decimal(0));
 
     const bankExpenses = expenses
-      .filter(e => e.method === 'BANKAK')
+      .filter(e => e.method === 'BANKAK' && !e.isDebt)
       .reduce((sum, e) => sum.add(e.amount), new Prisma.Decimal(0));
     
     const bankNileExpenses = expenses
-      .filter(e => e.method === 'BANK_NILE')
+      .filter(e => e.method === 'BANK_NILE' && !e.isDebt)
       .reduce((sum, e) => sum.add(e.amount), new Prisma.Decimal(0));
 
     const bankSalaries = salaries
       .filter(s => s.paymentMethod === 'BANKAK')
-      .reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0));
+      .reduce((sum, s) => sum.add(s.netAmount), new Prisma.Decimal(0));
     
     const bankNileSalaries = salaries
       .filter(s => s.paymentMethod === 'BANK_NILE')
-      .reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0));
+      .reduce((sum, s) => sum.add(s.netAmount), new Prisma.Decimal(0));
 
     const bankAdvances = advances
       .filter(a => a.paymentMethod === 'BANKAK')
@@ -3550,14 +3672,13 @@ router.get('/bank-transactions', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER')
       }
     });
 
-    // Calculate net balances (similar to liquid-cash)
-    // Net = opening + income - proc payments - expenses - salaries - advances + cash exchanges
     const netBank = openingBank
       .add(bankIncome)
       .sub(bankProcPayments)
       .sub(bankExpenses)
       .sub(bankSalaries)
       .sub(bankAdvances)
+      .sub(bankReturnTotal)
       .add(cashExchangeImpact.BANKAK);
     
     const netBankNile = openingBankNile
@@ -3566,6 +3687,7 @@ router.get('/bank-transactions', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER')
       .sub(bankNileExpenses)
       .sub(bankNileSalaries)
       .sub(bankNileAdvances)
+      .sub(bankNileReturnTotal)
       .add(cashExchangeImpact.BANK_NILE);
     
     const netTotal = netBank.add(netBankNile);
@@ -3908,11 +4030,12 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER')
       }
       transactionsByDate[dateKey].income.push({
         type: 'MISC_INCOME',
-        typeLabel: 'إيراد متنوع',
+        typeLabel: inc.isDebt ? 'إيراد متنوع (دين)' : 'إيراد متنوع',
         id: inc.id,
         amount: inc.amount.toString(),
         method: inc.method,
         date: inc.createdAt,
+        isDebt: inc.isDebt || false,
         recordedBy: (inc as any).creator?.username || 'غير محدد',
         details: {
           description: (inc as any).description || null,
@@ -3962,11 +4085,12 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER')
       }
       transactionsByDate[dateKey].losses.push({
         type: 'EXPENSE',
-        typeLabel: 'منصرف',
+        typeLabel: expense.isDebt ? 'منصرف (دين)' : 'منصرف',
         id: expense.id,
         amount: expense.amount.toString(),
         method: expense.method,
         date: expense.createdAt,
+        isDebt: expense.isDebt || false,
         recordedBy: expense.creator?.username || 'غير محدد',
         details: {
           description: expense.description,
@@ -3990,7 +4114,7 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER')
         type: 'SALARY',
         typeLabel: 'راتب',
         id: salary.id,
-        amount: salary.amount.toString(),
+        amount: salary.netAmount.toString(),
         method: salary.paymentMethod,
         date: salary.paidAt || salary.createdAt,
         recordedBy: salary.creator?.username || 'غير محدد',
@@ -4229,6 +4353,7 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER')
     const prePeriodExpenses = await prisma.expense.findMany({
       where: {
         createdAt: { lt: startOfDay },
+        isDebt: false,
         ...(method ? { method: method as 'CASH' | 'BANKAK' | 'BANK_NILE' } : {}),
       },
     });
@@ -4294,7 +4419,7 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER')
     prePeriodSalaries.forEach((s: any) => {
       const m = s.paymentMethod;
       if (isValidMethod(m)) {
-        prePeriodImpact[m] = prePeriodImpact[m].sub(s.amount);
+        prePeriodImpact[m] = prePeriodImpact[m].sub(s.netAmount);
       }
     });
 
@@ -4319,6 +4444,7 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER')
     const prePeriodMiscIncomes = await prisma.income.findMany({
       where: {
         createdAt: { lt: startOfDay },
+        isDebt: false,
         ...(method ? { method: method as any } : {}),
       },
     });
@@ -4388,6 +4514,7 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER')
       };
 
       dayData.income.forEach((t: any) => {
+        if (t.isDebt) return;
         const method = t.method;
         if (isValidMethod(method)) {
           incomeByMethod[method] = incomeByMethod[method].add(new Prisma.Decimal(t.amount));
@@ -4395,6 +4522,7 @@ router.get('/daily-income-loss', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER')
       });
 
       dayData.losses.forEach((t: any) => {
+        if (t.isDebt) return;
         const method = t.method;
         if (isValidMethod(method)) {
           lossesByMethod[method] = lossesByMethod[method].add(new Prisma.Decimal(t.amount));
