@@ -781,12 +781,12 @@ router.post('/opening-balances', requireRole('ACCOUNTANT', 'MANAGER'), createAud
       },
     });
 
-    // For CUSTOMER/SUPPLIER scopes, always mirror the OB into a treasury
-    // transaction so liquid-cash stays consistent (same sign rule for both):
-    //   CUSTOMER positive (they owe us)      → CASH_OUT
-    //   CUSTOMER negative (they paid us)     → CASH_IN
-    //   SUPPLIER positive (we paid them)     → CASH_OUT
-    //   SUPPLIER negative (we owe them)      → CASH_IN
+    // For CUSTOMER/SUPPLIER scopes, mirror the OB into a treasury transaction
+    // so liquid-cash matches the UI copy on customer/supplier pages:
+    //   CUSTOMER positive (they owe us)           → CASH_OUT
+    //   CUSTOMER negative (they prepaid us)       → CASH_IN
+    //   SUPPLIER positive (we prepaid them)       → CASH_IN  ("سيُضاف إلى رصيد الخزينة")
+    //   SUPPLIER negative (we owe them / AP)    → CASH_OUT ("سيُخصم من رصيد الخزينة")
     if (
       (data.scope === 'CUSTOMER' || data.scope === 'SUPPLIER') &&
       (data.paymentMethod === 'CASH' || data.paymentMethod === 'BANKAK' || data.paymentMethod === 'BANK_NILE')
@@ -798,7 +798,14 @@ router.post('/opening-balances', requireRole('ACCOUNTANT', 'MANAGER'), createAud
         const name =
           (data.scope === 'CUSTOMER' ? balance.customer?.name : balance.supplier?.name) || scopeLabel;
 
-        const txType = isPositive ? 'CASH_OUT' : 'CASH_IN';
+        const txType =
+          data.scope === 'CUSTOMER'
+            ? isPositive
+              ? 'CASH_OUT'
+              : 'CASH_IN'
+            : isPositive
+              ? 'CASH_IN'
+              : 'CASH_OUT';
 
         await prisma.treasuryTransaction.create({
           data: {
