@@ -1332,6 +1332,26 @@ router.post('/orders/:id/payments', requireRole('MANAGER'), checkBalanceOpen, cr
           },
         });
       }
+
+      const existingOb = await prisma.openingBalance.findFirst({
+        where: { receiptNumber: paymentData.receiptNumber },
+        include: { customer: true, supplier: true },
+      });
+      if (existingOb) {
+        return res.status(400).json({
+          error: 'رقم الإيصال مستخدم بالفعل في رصيد افتتاحي',
+          existingTransaction: {
+            id: existingOb.id,
+            scope: existingOb.scope,
+            customer: existingOb.customer?.name,
+            supplier: existingOb.supplier?.name,
+            amount: existingOb.amount.toString(),
+            paymentMethod: existingOb.paymentMethod,
+            receiptNumber: existingOb.receiptNumber,
+            openedAt: existingOb.openedAt,
+          },
+        });
+      }
     }
 
     // Ensure sufficient balance for selected method before paying

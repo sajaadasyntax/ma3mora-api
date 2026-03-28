@@ -745,6 +745,26 @@ router.post('/invoices/:id/payments', requireRole('ACCOUNTANT', 'SALES_GROCERY',
           }
         });
       }
+
+      const existingOb = await prisma.openingBalance.findFirst({
+        where: { receiptNumber: paymentData.receiptNumber },
+        include: { customer: true, supplier: true },
+      });
+      if (existingOb) {
+        return res.status(400).json({
+          error: 'رقم الإيصال مستخدم بالفعل في رصيد افتتاحي',
+          existingTransaction: {
+            id: existingOb.id,
+            scope: existingOb.scope,
+            customer: existingOb.customer?.name,
+            supplier: existingOb.supplier?.name,
+            amount: existingOb.amount.toString(),
+            paymentMethod: existingOb.paymentMethod,
+            receiptNumber: existingOb.receiptNumber,
+            openedAt: existingOb.openedAt,
+          },
+        });
+      }
     }
 
     // Convert amount to Prisma.Decimal and validate it doesn't exceed database limit

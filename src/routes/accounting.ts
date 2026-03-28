@@ -63,7 +63,13 @@ const createOpeningBalanceSchema = z
   .refine((d) => d.scope !== 'SUPPLIER' || !!d.supplierId, {
     message: 'معرّف المورد مطلوب لرصيد افتتاحي مورد',
     path: ['supplierId'],
-  });
+  })
+  .refine(
+    (d) =>
+      (d.paymentMethod !== 'BANKAK' && d.paymentMethod !== 'BANK_NILE') ||
+      (!!d.receiptNumber && d.receiptNumber.trim().length > 0),
+    { message: 'رقم الإيصال مطلوب لطرق الدفع البنكية', path: ['receiptNumber'] },
+  );
 
 const createCashExchangeSchema = z.object({
   amount: z.number().positive(),
@@ -667,7 +673,105 @@ router.get('/opening-balances', async (req: AuthRequest, res) => {
 
 router.post('/opening-balances', requireRole('ACCOUNTANT', 'MANAGER'), createAuditLog('OpeningBalance'), async (req: AuthRequest, res) => {
   try {
-    const data = createOpeningBalanceSchema.parse(req.body);
+    const parsed = createOpeningBalanceSchema.parse(req.body);
+    const receiptTrimmed =
+      typeof parsed.receiptNumber === 'string' ? parsed.receiptNumber.trim() : '';
+    const receiptNumber = receiptTrimmed.length > 0 ? receiptTrimmed : undefined;
+    const data = { ...parsed, receiptNumber };
+
+    if (receiptNumber) {
+      const existingPayment = await prisma.salesPayment.findUnique({
+        where: { receiptNumber },
+        include: {
+          invoice: { include: { customer: true } },
+          recordedByUser: { select: { id: true, username: true } },
+        },
+      });
+      if (existingPayment) {
+        return res.status(400).json({
+          error: 'رقم الإيصال مستخدم بالفعل في دفعة مبيعات',
+          existingTransaction: {
+            id: existingPayment.id,
+            invoiceId: existingPayment.invoiceId,
+            invoiceNumber: existingPayment.invoice.invoiceNumber,
+            customer: existingPayment.invoice.customer?.name || 'غير محدد',
+            amount: existingPayment.amount.toString(),
+            method: existingPayment.method,
+            receiptNumber: existingPayment.receiptNumber,
+            receiptUrl: existingPayment.receiptUrl,
+            paidAt: existingPayment.paidAt,
+            recordedBy: existingPayment.recordedByUser.username,
+            notes: existingPayment.notes,
+          },
+        });
+      }
+
+      const existingProcPayment = await prisma.procOrderPayment.findFirst({
+        where: { receiptNumber },
+        include: {
+          order: { include: { supplier: true } },
+          recordedByUser: { select: { id: true, username: true } },
+        },
+      });
+      if (existingProcPayment) {
+        return res.status(400).json({
+          error: 'رقم الإيصال مستخدم بالفعل في دفعة مشتريات',
+          existingTransaction: {
+            id: existingProcPayment.id,
+            orderId: existingProcPayment.orderId,
+            supplier: existingProcPayment.order.supplier.name,
+            amount: existingProcPayment.amount.toString(),
+            method: existingProcPayment.method,
+            receiptNumber: existingProcPayment.receiptNumber,
+            receiptUrl: existingProcPayment.receiptUrl,
+            paidAt: existingProcPayment.paidAt,
+            recordedBy: existingProcPayment.recordedByUser.username,
+            notes: existingProcPayment.notes,
+          },
+        });
+      }
+
+      const existingExchange = await (prisma as any).cashExchange.findUnique({
+        where: { receiptNumber },
+        include: { createdByUser: { select: { id: true, username: true } } },
+      });
+      if (existingExchange) {
+        return res.status(400).json({
+          error: 'رقم الإيصال مستخدم بالفعل في صرف نقدي',
+          existingTransaction: {
+            id: existingExchange.id,
+            amount: existingExchange.amount.toString(),
+            fromMethod: existingExchange.fromMethod,
+            toMethod: existingExchange.toMethod,
+            receiptNumber: existingExchange.receiptNumber,
+            receiptUrl: existingExchange.receiptUrl,
+            createdAt: existingExchange.createdAt,
+            createdBy: existingExchange.createdByUser.username,
+            notes: existingExchange.notes,
+          },
+        });
+      }
+
+      const existingOb = await prisma.openingBalance.findFirst({
+        where: { receiptNumber },
+        include: { customer: true, supplier: true },
+      });
+      if (existingOb) {
+        return res.status(400).json({
+          error: 'رقم الإيصال مستخدم بالفعل في رصيد افتتاحي',
+          existingTransaction: {
+            id: existingOb.id,
+            scope: existingOb.scope,
+            customer: existingOb.customer?.name,
+            supplier: existingOb.supplier?.name,
+            amount: existingOb.amount.toString(),
+            paymentMethod: existingOb.paymentMethod,
+            receiptNumber: existingOb.receiptNumber,
+            openedAt: existingOb.openedAt,
+          },
+        });
+      }
+    }
 
     const balance = await prisma.openingBalance.create({
       data,
@@ -678,11 +782,11 @@ router.post('/opening-balances', requireRole('ACCOUNTANT', 'MANAGER'), createAud
     });
 
     // For CUSTOMER/SUPPLIER scopes, always mirror the OB into a treasury
-    // transaction so liquid-cash stays consistent:
+    // transaction so liquid-cash stays consistent (same sign rule for both):
     //   CUSTOMER positive (they owe us)      → CASH_OUT
     //   CUSTOMER negative (they paid us)     → CASH_IN
-    //   SUPPLIER positive (we paid them)     → CASH_IN
-    //   SUPPLIER negative (we owe them)      → CASH_OUT
+    //   SUPPLIER positive (we paid them)     → CASH_OUT
+    //   SUPPLIER negative (we owe them)      → CASH_IN
     if (
       (data.scope === 'CUSTOMER' || data.scope === 'SUPPLIER') &&
       (data.paymentMethod === 'CASH' || data.paymentMethod === 'BANKAK' || data.paymentMethod === 'BANK_NILE')
@@ -694,12 +798,7 @@ router.post('/opening-balances', requireRole('ACCOUNTANT', 'MANAGER'), createAud
         const name =
           (data.scope === 'CUSTOMER' ? balance.customer?.name : balance.supplier?.name) || scopeLabel;
 
-        // CUSTOMER: positive → CASH_OUT, negative → CASH_IN
-        // SUPPLIER: positive → CASH_IN,  negative → CASH_OUT
-        const txType =
-          data.scope === 'CUSTOMER'
-            ? isPositive ? 'CASH_OUT' : 'CASH_IN'
-            : isPositive ? 'CASH_IN'  : 'CASH_OUT';
+        const txType = isPositive ? 'CASH_OUT' : 'CASH_IN';
 
         await prisma.treasuryTransaction.create({
           data: {
@@ -2869,6 +2968,51 @@ router.post('/cash-exchanges', requireRole('ACCOUNTANT', 'MANAGER'), checkBalanc
             recordedBy: (existingPayment as any).recordedByUser.username,
             notes: existingPayment.notes,
           }
+        });
+      }
+
+      const existingProcPayment = await prisma.procOrderPayment.findFirst({
+        where: { receiptNumber: data.receiptNumber },
+        include: {
+          order: { include: { supplier: true } },
+          recordedByUser: { select: { id: true, username: true } },
+        },
+      });
+      if (existingProcPayment) {
+        return res.status(400).json({
+          error: 'رقم الإيصال مستخدم بالفعل في دفعة مشتريات',
+          existingTransaction: {
+            id: existingProcPayment.id,
+            orderId: existingProcPayment.orderId,
+            supplier: existingProcPayment.order.supplier.name,
+            amount: existingProcPayment.amount.toString(),
+            method: existingProcPayment.method,
+            receiptNumber: existingProcPayment.receiptNumber,
+            receiptUrl: existingProcPayment.receiptUrl,
+            paidAt: existingProcPayment.paidAt,
+            recordedBy: existingProcPayment.recordedByUser.username,
+            notes: existingProcPayment.notes,
+          },
+        });
+      }
+
+      const existingOb = await prisma.openingBalance.findFirst({
+        where: { receiptNumber: data.receiptNumber },
+        include: { customer: true, supplier: true },
+      });
+      if (existingOb) {
+        return res.status(400).json({
+          error: 'رقم الإيصال مستخدم بالفعل في رصيد افتتاحي',
+          existingTransaction: {
+            id: existingOb.id,
+            scope: existingOb.scope,
+            customer: existingOb.customer?.name,
+            supplier: existingOb.supplier?.name,
+            amount: existingOb.amount.toString(),
+            paymentMethod: existingOb.paymentMethod,
+            receiptNumber: existingOb.receiptNumber,
+            openedAt: existingOb.openedAt,
+          },
         });
       }
     }
