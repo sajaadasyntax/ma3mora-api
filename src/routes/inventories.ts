@@ -1283,6 +1283,66 @@ router.get('/gift-report', requireRole('INVENTORY', 'MANAGER', 'ACCOUNTANT', 'AU
   }
 });
 
+/**
+ * صادر معلق: ordered quantity on sales invoices minus quantities delivered on/before asOfEnd
+ * (StockMovement.pendingOutgoing is not populated by sales flow — only outgoing on delivery.)
+ */
+async function computePendingOutgoingByItem(inventoryId: string, asOfEnd: Date): Promise<Map<string, Prisma.Decimal>> {
+  const pending = new Map<string, Prisma.Decimal>();
+
+  const bump = (itemId: string, qty: Prisma.Decimal) => {
+    if (qty.lte(0)) return;
+    pending.set(itemId, (pending.get(itemId) || new Prisma.Decimal(0)).add(qty));
+  };
+
+  const invoices = await prisma.salesInvoice.findMany({
+    where: {
+      inventoryId,
+      createdAt: { lte: asOfEnd },
+      paymentConfirmationStatus: { not: 'REJECTED' },
+    },
+    include: {
+      items: true,
+      deliveries: {
+        where: { deliveredAt: { lte: asOfEnd } },
+        include: { items: true },
+      },
+    },
+  });
+
+  for (const inv of invoices) {
+    for (const line of inv.items) {
+      const orderedMain = new Prisma.Decimal(line.quantity).add(new Prisma.Decimal(line.giftQty ?? 0));
+      let deliveredMain = new Prisma.Decimal(0);
+      for (const del of inv.deliveries) {
+        for (const di of del.items) {
+          if (di.itemId === line.itemId) {
+            deliveredMain = deliveredMain
+              .add(new Prisma.Decimal(di.quantity))
+              .add(new Prisma.Decimal(di.giftQty ?? 0));
+          }
+        }
+      }
+      bump(line.itemId, orderedMain.sub(deliveredMain));
+
+      if (line.giftItemId && line.giftQuantity != null) {
+        const orderedGift = new Prisma.Decimal(line.giftQuantity);
+        let deliveredGift = new Prisma.Decimal(0);
+        for (const del of inv.deliveries) {
+          for (const di of del.items) {
+            if (di.giftItemId === line.giftItemId) {
+              deliveredGift = deliveredGift.add(new Prisma.Decimal(di.giftQuantity ?? 0));
+            }
+          }
+        }
+        bump(line.giftItemId, orderedGift.sub(deliveredGift));
+      }
+    }
+  }
+
+  return pending;
+}
+
 // Warehouse balance report
 router.get('/:id/balance-report', requireRole('INVENTORY', 'MANAGER', 'ACCOUNTANT', 'AUDITOR'), async (req: AuthRequest, res) => {
   try {
@@ -1389,6 +1449,12 @@ router.get('/:id/balance-report', requireRole('INVENTORY', 'MANAGER', 'ACCOUNTAN
         closingBalance: priorClosing,
       };
     }).filter((x): x is NonNullable<typeof x> => x !== null);
+
+    const pendingByItem = await computePendingOutgoingByItem(id, dateEnd);
+    for (const row of items) {
+      const p = pendingByItem.get(row.itemId);
+      row.pendingOutgoing = p && p.gt(0) ? p.toString() : '0';
+    }
 
     const grandTotal = {
       totalOpeningBalance: items.reduce((sum, i) => sum + parseFloat(i.openingBalance), 0),

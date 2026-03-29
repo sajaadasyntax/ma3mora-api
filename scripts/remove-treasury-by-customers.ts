@@ -21,7 +21,7 @@ const CUSTOMER_IDS = [
   'cmn78eo5p007r2tf8tw983myv',
   'cmn78f4mm007u2tf8f03igve8',
   'cmn78fh2b007x2tf8koqmm8hm',
-  'cmn1zo68x00fgm99sreup5god',
+  'cmn78h4hx00802tf80vkuhdu8',
   'cmn7ed7un00t82tf8lof0psfa',
   'cmn78htm100862tf8rzs8tblc',
 ].map((id) => id.trim().replace(/^\//, ''));
