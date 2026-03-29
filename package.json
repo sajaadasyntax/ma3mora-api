@@ -29,6 +29,8 @@
     "script:clear-treasury": "tsx scripts/clear-treasury-transactions.ts",
     "script:clear-treasury:apply": "tsx scripts/clear-treasury-transactions.ts --apply",
     "script:list-treasury": "tsx scripts/list-treasury-transactions.ts",
+    "script:remove-treasury-customers": "tsx scripts/remove-treasury-by-customers.ts",
+    "script:remove-treasury-customers:apply": "tsx scripts/remove-treasury-by-customers.ts --apply",
     "script:remove-proc-orders": "tsx scripts/remove-procurement-orders.ts",
     "script:remove-proc-orders:apply": "tsx scripts/remove-procurement-orders.ts --apply",
     "script:remove-invoice-duplicates": "tsx scripts/remove-invoice-duplicates.ts",
