@@ -1,7 +1,10 @@
 /**
  * remove-treasury-by-customers.ts
  *
- * Deletes TreasuryTransaction rows linked to specific customers (customerId).
+ * Deletes TreasuryTransaction rows for given customers:
+ *   - customerId = that customer, OR
+ *   - legacy: customerId is null but description matches opening-balance mirror
+ *     exactly: `رصيد افتتاحي — عميل: {name}` (older API did not set customerId).
  *
  * Default: dry-run — prints each customer name and treasury totals only.
  * Apply:    npx tsx scripts/remove-treasury-by-customers.ts --apply
@@ -37,6 +40,11 @@ function sumAmount(rows: { type: string; amount: Prisma.Decimal }[]) {
   return { cashIn, cashOut, net };
 }
 
+/** Same pattern as POST /opening-balances treasury mirror (عميل only). */
+function openingBalanceCustomerDescription(customerName: string) {
+  return `رصيد افتتاحي — عميل: ${customerName}`;
+}
+
 async function main() {
   console.log(APPLY ? '⚠️  APPLY — deletions will run.\n' : '🔍  DRY-RUN — no deletions.\n');
 
@@ -65,14 +73,33 @@ async function main() {
   let grandIn = new Prisma.Decimal(0);
   let grandOut = new Prisma.Decimal(0);
 
-  console.log('— Per customer (treasury_transactions where customerId = this customer) —\n');
+  console.log(
+    '— Per customer (treasury: customerId match OR legacy OB description without customerId) —\n'
+  );
 
   for (const c of customers.sort((a, b) => a.name.localeCompare(b.name))) {
+    const obDesc = openingBalanceCustomerDescription(c.name);
     const txs = await prisma.treasuryTransaction.findMany({
-      where: { customerId: c.id },
-      select: { id: true, type: true, amount: true, method: true, description: true, createdAt: true },
+      where: {
+        OR: [
+          { customerId: c.id },
+          { customerId: null, description: obDesc },
+        ],
+      },
+      select: {
+        id: true,
+        type: true,
+        amount: true,
+        method: true,
+        description: true,
+        customerId: true,
+        createdAt: true,
+      },
       orderBy: { createdAt: 'asc' },
     });
+
+    const linked = txs.filter((t) => t.customerId === c.id);
+    const legacy = txs.filter((t) => t.customerId == null);
 
     const { cashIn, cashOut, net } = sumAmount(txs);
     grandCount += txs.length;
@@ -81,7 +108,7 @@ async function main() {
 
     console.log(`Customer: ${c.name}`);
     console.log(`  id:       ${c.id}`);
-    console.log(`  count:    ${txs.length}`);
+    console.log(`  count:    ${txs.length}  (برقم عميل: ${linked.length}، رصيد افتتاحي قديم بدون ربط: ${legacy.length})`);
     console.log(`  CASH_IN:  ${cashIn.toString()}`);
     console.log(`  CASH_OUT: ${cashOut.toString()}`);
     console.log(`  net (IN−OUT): ${net.toString()}`);
@@ -104,6 +131,12 @@ async function main() {
 
   if (!APPLY) {
     console.log('\n✅  Dry-run done. Re-run with --apply to delete these treasury rows.');
+    if (grandCount === 0) {
+      console.log(
+        '\n💡 إن كان الرصيد الافتتاحي أثّر على السيولة ولا تظهر أي حركة هنا، تحقق من وصف الحركة في قاعدة البيانات؛' +
+          ' أسماء العملاء يجب أن تطابق حرفياً النص: «رصيد افتتاحي — عميل: الاسم». بعد تحديث الخادم، الحركات الجديدة تُربط بـ customerId.'
+      );
+    }
     return;
   }
 
@@ -112,11 +145,18 @@ async function main() {
     return;
   }
 
-  const deleted = await prisma.treasuryTransaction.deleteMany({
-    where: { customerId: { in: customers.map((c) => c.id) } },
-  });
+  let deletedTotal = 0;
+  for (const c of customers) {
+    const obDesc = openingBalanceCustomerDescription(c.name);
+    const del = await prisma.treasuryTransaction.deleteMany({
+      where: {
+        OR: [{ customerId: c.id }, { customerId: null, description: obDesc }],
+      },
+    });
+    deletedTotal += del.count;
+  }
 
-  console.log(`\n✅  Deleted ${deleted.count} treasury transaction(s).`);
+  console.log(`\n✅  Deleted ${deletedTotal} treasury transaction(s) (per-customer OR: id or legacy OB description).`);
   console.log(
     '\nIf daily aggregates look wrong, run:\n  npx tsx scripts/recalculate-financial-aggregates.ts --apply'
   );

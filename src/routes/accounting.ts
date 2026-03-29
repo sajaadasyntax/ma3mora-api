@@ -803,6 +803,8 @@ router.post('/opening-balances', requireRole('ACCOUNTANT', 'MANAGER'), createAud
             amount: amt.abs(),
             method: data.paymentMethod,
             description: `رصيد افتتاحي — ${scopeLabel}: ${name}`,
+            customerId: data.scope === 'CUSTOMER' ? data.customerId ?? null : null,
+            supplierId: data.scope === 'SUPPLIER' ? data.supplierId ?? null : null,
             createdBy: req.user!.id,
           },
         });
