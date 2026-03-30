@@ -6,6 +6,7 @@ import { createAuditLog } from '../middleware/audit';
 import { AuthRequest } from '../types';
 import { aggregationService } from '../services/aggregationService';
 import { prisma } from '../lib/prisma';
+import { getAvailableByMethod } from '../services/liquidBalanceService';
 
 const router = Router();
 
@@ -1354,86 +1355,10 @@ router.post('/orders/:id/payments', requireRole('MANAGER'), checkBalanceOpen, cr
       }
     }
 
-    // Ensure sufficient balance for selected method before paying
-    // Opening balances (open cashbox only)
-    const openingBalances = await prisma.openingBalance.findMany({ where: { scope: 'CASHBOX', isClosed: false } });
-    const openingByMethod: Record<'CASH'|'BANKAK'|'BANK_NILE', Prisma.Decimal> = {
-      CASH: openingBalances.filter((b: any) => b.paymentMethod === 'CASH').reduce((s, b) => s.add(b.amount), new Prisma.Decimal(0)),
-      BANKAK: openingBalances.filter((b: any) => b.paymentMethod === 'BANKAK').reduce((s, b) => s.add(b.amount), new Prisma.Decimal(0)),
-      BANK_NILE: openingBalances.filter((b: any) => b.paymentMethod === 'BANK_NILE').reduce((s, b) => s.add(b.amount), new Prisma.Decimal(0)),
-    };
-
-    // Sales payments inflow (only confirmed invoices)
-    const confirmedInvoiceIds = (await prisma.salesInvoice.findMany({
-      where: { paymentConfirmationStatus: 'CONFIRMED' } as any,
-      select: { id: true },
-    })).map(i => i.id);
-    const salesPays = await prisma.salesPayment.findMany({ where: { invoiceId: { in: confirmedInvoiceIds } } });
-    const salesIn: Record<'CASH'|'BANKAK'|'BANK_NILE', Prisma.Decimal> = {
-      CASH: salesPays.filter(p => p.method === 'CASH').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
-      BANKAK: salesPays.filter(p => p.method === 'BANKAK').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
-      BANK_NILE: salesPays.filter(p => p.method === 'BANK_NILE').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
-    };
-
-    // Existing procurement payments out (only confirmed orders)
-    const procPays = await prisma.procOrderPayment.findMany({ where: { order: { paymentConfirmed: true } } });
-  // Commission payments are already paid by suppliers as gift, so they don't subtract from liquid assets
-  const procOut: Record<'CASH'|'BANKAK'|'BANK_NILE', Prisma.Decimal> = {
-    CASH: procPays.filter(p => p.method === 'CASH').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
-    BANKAK: procPays.filter(p => p.method === 'BANKAK').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
-    BANK_NILE: procPays.filter(p => p.method === 'BANK_NILE').reduce((s, p) => s.add(p.amount), new Prisma.Decimal(0)),
-    // COMMISSION payments are excluded - they don't subtract from liquid assets
-  };
-
-    // Expenses out - exclude debts from balance calculation
-    const expenses = await prisma.expense.findMany();
-    const expOut: Record<'CASH'|'BANKAK'|'BANK_NILE', Prisma.Decimal> = {
-      CASH: expenses.filter(e => e.method === 'CASH' && !e.isDebt).reduce((s, e) => s.add(e.amount), new Prisma.Decimal(0)),
-      BANKAK: expenses.filter(e => e.method === 'BANKAK' && !e.isDebt).reduce((s, e) => s.add(e.amount), new Prisma.Decimal(0)),
-      BANK_NILE: expenses.filter(e => e.method === 'BANK_NILE' && !e.isDebt).reduce((s, e) => s.add(e.amount), new Prisma.Decimal(0)),
-    };
-
-    // Salaries & advances out
-    const paidSalaries = await prisma.salary.findMany({ where: { paidAt: { not: null } } });
-    const paidAdvances = await prisma.advance.findMany({ where: { paidAt: { not: null } } });
-    const salOut: Record<'CASH'|'BANKAK'|'BANK_NILE', Prisma.Decimal> = {
-      CASH: paidSalaries.filter((s: any) => s.paymentMethod === 'CASH').reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0)),
-      BANKAK: paidSalaries.filter((s: any) => s.paymentMethod === 'BANKAK').reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0)),
-      BANK_NILE: paidSalaries.filter((s: any) => s.paymentMethod === 'BANK_NILE').reduce((sum, s) => sum.add(s.amount), new Prisma.Decimal(0)),
-    };
-    const advOut: Record<'CASH'|'BANKAK'|'BANK_NILE', Prisma.Decimal> = {
-      CASH: paidAdvances.filter((a: any) => a.paymentMethod === 'CASH').reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0)),
-      BANKAK: paidAdvances.filter((a: any) => a.paymentMethod === 'BANKAK').reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0)),
-      BANK_NILE: paidAdvances.filter((a: any) => a.paymentMethod === 'BANK_NILE').reduce((sum, a) => sum.add(a.amount), new Prisma.Decimal(0)),
-    };
-
-    // Income in - exclude debts from balance calculation
-    const income = await prisma.income.findMany();
-    const incomeIn: Record<'CASH'|'BANKAK'|'BANK_NILE', Prisma.Decimal> = {
-      CASH: income.filter(i => i.method === 'CASH' && !i.isDebt).reduce((s, i) => s.add(i.amount), new Prisma.Decimal(0)),
-      BANKAK: income.filter(i => i.method === 'BANKAK' && !i.isDebt).reduce((s, i) => s.add(i.amount), new Prisma.Decimal(0)),
-      BANK_NILE: income.filter(i => i.method === 'BANK_NILE' && !i.isDebt).reduce((s, i) => s.add(i.amount), new Prisma.Decimal(0)),
-    };
-
-    // Cash exchanges impact
-    const exchanges = await prisma.cashExchange.findMany();
-    const exImpact: Record<'CASH'|'BANKAK'|'BANK_NILE', Prisma.Decimal> = { CASH: new Prisma.Decimal(0), BANKAK: new Prisma.Decimal(0), BANK_NILE: new Prisma.Decimal(0) };
-    exchanges.forEach((e) => {
-      const fromMethod = e.fromMethod as 'CASH'|'BANKAK'|'BANK_NILE';
-      const toMethod = e.toMethod as 'CASH'|'BANKAK'|'BANK_NILE';
-      exImpact[fromMethod] = exImpact[fromMethod].sub(e.amount);
-      exImpact[toMethod] = exImpact[toMethod].add(e.amount);
-    });
-
-    const available: Record<'CASH'|'BANKAK'|'BANK_NILE', Prisma.Decimal> = {
-      CASH: openingByMethod.CASH.add(salesIn.CASH).add(incomeIn.CASH).add(exImpact.CASH).sub(expOut.CASH).sub(salOut.CASH).sub(advOut.CASH).sub(procOut.CASH),
-      BANKAK: openingByMethod.BANKAK.add(salesIn.BANKAK).add(incomeIn.BANKAK).add(exImpact.BANKAK).sub(expOut.BANKAK).sub(salOut.BANKAK).sub(advOut.BANKAK).sub(procOut.BANKAK),
-      BANK_NILE: openingByMethod.BANK_NILE.add(salesIn.BANK_NILE).add(incomeIn.BANK_NILE).add(exImpact.BANK_NILE).sub(expOut.BANK_NILE).sub(salOut.BANK_NILE).sub(advOut.BANK_NILE).sub(procOut.BANK_NILE),
-    };
-
-    // COMMISSION, DEBT, and OTHERS don't need balance check - not liquid asset methods
+    // Ensure sufficient balance — use the single shared helper (same formula as accounting routes)
     if (paymentData.method !== 'COMMISSION' && paymentData.method !== 'DEBT' && paymentData.method !== 'OTHERS') {
-      const method = paymentData.method as 'CASH'|'BANKAK'|'BANK_NILE';
+      const available = await getAvailableByMethod();
+      const method = paymentData.method as 'CASH' | 'BANKAK' | 'BANK_NILE';
       if (available[method].lessThan(paymentData.amount)) {
         return res.status(400).json({ error: 'الرصيد غير كافٍ لطريقة الدفع المحددة' });
       }
