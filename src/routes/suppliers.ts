@@ -56,6 +56,10 @@ router.get('/:id', requireRole('PROCUREMENT', 'ACCOUNTANT', 'AUDITOR', 'MANAGER'
       where: { id },
       include: {
         treasuryTransactions: {
+          where: {
+            // Exclude OB-mirror transactions — already captured in openingBalance records
+            description: { not: { startsWith: 'رصيد افتتاحي — مورد:' } },
+          },
           select: { type: true, amount: true },
         },
         openingBalance: {

@@ -103,6 +103,11 @@ router.get('/:id', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GROCERY',
           where: { isClosed: false },
         },
         treasuryTransactions: {
+          where: {
+            // Exclude OB-mirror transactions — those are already captured in openingBalance records
+            // and double-counting them would incorrectly inflate/deflate the net outstanding.
+            description: { not: { startsWith: 'رصيد افتتاحي — عميل:' } },
+          },
           select: { type: true, amount: true },
         },
       },
