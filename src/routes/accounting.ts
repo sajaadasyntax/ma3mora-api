@@ -774,6 +774,14 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
     const totalProcurement = procOrders.reduce((sum, o) => sum.add(o.total), new Prisma.Decimal(0));
     const totalCancelledProcurement = cancelledProcOrders.reduce((sum, o) => sum.add(o.total), new Prisma.Decimal(0));
 
+    // Split by receipt status for accurate profit calculation:
+    // Only RECEIVED/PARTIAL orders have goods in stock — their cost is a real cost.
+    // CREATED orders are pending obligations; goods haven't arrived so no stock offset exists.
+    const receivedProcOrders = procOrders.filter(o => o.status === 'RECEIVED' || o.status === 'PARTIAL');
+    const pendingProcOrders  = procOrders.filter(o => o.status === 'CREATED');
+    const totalReceivedProcurement = receivedProcOrders.reduce((sum, o) => sum.add(o.total), new Prisma.Decimal(0));
+    const totalPendingProcurement  = pendingProcOrders.reduce((sum, o) => sum.add(o.total), new Prisma.Decimal(0));
+
     const procPayments = await prisma.procOrderPayment.findMany({
       where: {
         paidAt: { gte: sessionStart, lte: sessionEnd },
@@ -974,17 +982,24 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
     }
 
     // ── 9. Profit formula ─────────────────────────────────────────────────────
-    // profit = sales + commission + finalStockCost - initialStockCost - procurement - expenses
+    // Unreceived (CREATED) orders are treated as "goods in transit" — a real asset.
+    // Adding their value offsets the procurement cost they already deduct, giving accurate profit.
+    // Math: profit = sales + commission + finalStock + goodsInTransit - initialStock - totalProc - expenses
+    //              = sales + commission + finalStock - initialStock - receivedProc - expenses  (equivalent)
     const profit = totalSales
       .add(totalCommission)
       .add(finalStockCost)
+      .add(totalPendingProcurement)   // goods in transit treated as asset
       .sub(initialStockCost)
-      .sub(totalProcurement)
+      .sub(totalProcurement)          // all procurement (received + pending)
       .sub(totalAllExpenses);
 
-    // ── 10. Capital = liquid assets + initial stock cost + receivables - payables
+    // ── 10. Capital = liquid assets + initial stock cost + goods-in-transit + receivables - payables
+    // Unreceived orders appear both as an asset (goods in transit) and in payables (we owe the supplier).
+    // Including them on both sides keeps capital balanced.
     const capital = totalOpeningBalance
       .add(initialStockCost)
+      .add(totalPendingProcurement)   // goods in transit
       .add(totalReceivables)
       .sub(totalPayables);
 
@@ -1002,9 +1017,13 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
       },
       procurement: {
         total: totalProcurement.toFixed(2),
+        received: totalReceivedProcurement.toFixed(2),
+        pendingUnreceived: totalPendingProcurement.toFixed(2),
         paid: totalProcurementPaid.toFixed(2),
         pending: totalProcurement.sub(totalProcurementPaid).toFixed(2),
         count: procOrders.length,
+        receivedCount: receivedProcOrders.length,
+        pendingUnreceivedCount: pendingProcOrders.length,
         cancelled: {
           total: totalCancelledProcurement.toFixed(2),
           count: cancelledProcOrders.length,
@@ -1032,6 +1051,8 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
       stock: {
         initialCost: initialStockCost.toFixed(2),
         finalCost: finalStockCost.toFixed(2),
+        goodsInTransit: totalPendingProcurement.toFixed(2),
+        goodsInTransitCount: pendingProcOrders.length,
       },
       receivables: totalReceivables.toFixed(2),
       payables: totalPayables.toFixed(2),
