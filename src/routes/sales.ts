@@ -27,7 +27,7 @@ function calculatePaymentStatus(paidAmount: Prisma.Decimal, total: Prisma.Decima
 async function checkBalanceOpen(req: AuthRequest, res: any, next: any) {
   try {
     const openBalance = await prisma.openingBalance.findFirst({
-      where: { isClosed: false },
+      where: { scope: 'CASHBOX', isClosed: false },
     });
 
     if (!openBalance) {

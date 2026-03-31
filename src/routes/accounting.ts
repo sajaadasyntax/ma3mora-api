@@ -718,8 +718,9 @@ router.get('/balance/summary', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
       orderBy: { openedAt: 'asc' },
     });
 
-    // Session start = earliest open CASHBOX balance; if none, use epoch
-    const sessionStart: Date = openingBalances.length > 0
+    // Session start = earliest open CASHBOX balance; if none, session is closed
+    const sessionIsOpen = openingBalances.length > 0;
+    const sessionStart: Date = sessionIsOpen
       ? openingBalances[0].openedAt
       : new Date(0);
     const sessionEnd = new Date();
