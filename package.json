@@ -42,6 +42,8 @@
     "script:backfill-advance-paid-at": "tsx scripts/backfill-advance-paid-at.ts",
     "script:backfill-initial-quantity": "tsx scripts/backfill-initial-quantity.ts",
     "script:backfill-initial-quantity:apply": "tsx scripts/backfill-initial-quantity.ts --apply",
+    "script:seed-april-debts": "tsx scripts/seed-april-2026-debts.ts --dry-run",
+    "script:seed-april-debts:apply": "tsx scripts/seed-april-2026-debts.ts --confirm",
     "postinstall": "prisma generate"
   },
   "dependencies": {
@@ -50,9 +52,10 @@
     "compression": "^1.7.4",
     "cookie-parser": "^1.4.6",
     "cors": "^2.8.5",
+    "exceljs": "^4.4.0",
     "express": "^4.18.2",
-    "multer": "^1.4.5-lts.1",
     "jsonwebtoken": "^9.0.2",
+    "multer": "^1.4.5-lts.1",
     "zod": "^3.22.4"
   },
   "devDependencies": {
