@@ -8,8 +8,8 @@
  *   --dry-run           Parse, match, print plan — no DB writes
  *   --confirm           Required to execute destructive writes
  *   --no-reset          Skip the delete phase, only seed
- *   --file1=<path>      Override path to ديون 25 كيلو.xlsx
- *   --file2=<path>      Override path to ديون شهر 4 المنتجات.xlsx
+ *   --file1=<path>      Override first workbook (default: scripts/data/april-2026-debts/debts-25kg-april-2026.xlsx)
+ *   --file2=<path>      Override second workbook (default: .../debts-products-april-2026.xlsx)
  *
  * Quick start (from apps/api):
  *   npm run script:seed-april-debts
@@ -42,12 +42,15 @@ const DRY_RUN = ARGS.includes('--dry-run');
 const NO_RESET = ARGS.includes('--no-reset');
 const CONFIRM = ARGS.includes('--confirm');
 
+/** Committed copies live next to this script: scripts/data/april-2026-debts/ */
+const DEFAULT_DEBT_DATA_DIR = path.join(__dirname, 'data', 'april-2026-debts');
+const DEFAULT_FILE1 = path.join(DEFAULT_DEBT_DATA_DIR, 'debts-25kg-april-2026.xlsx');
+const DEFAULT_FILE2 = path.join(DEFAULT_DEBT_DATA_DIR, 'debts-products-april-2026.xlsx');
+
 const FILE1 =
-  ARGS.find((a) => a.startsWith('--file1='))?.slice('--file1='.length) ??
-  'C:\\Users\\elsaj\\Downloads\\ديون 25 كيلو.xlsx';
+  ARGS.find((a) => a.startsWith('--file1='))?.slice('--file1='.length) ?? DEFAULT_FILE1;
 const FILE2 =
-  ARGS.find((a) => a.startsWith('--file2='))?.slice('--file2='.length) ??
-  'C:\\Users\\elsaj\\Downloads\\ديون شهر 4 المنتجات.xlsx';
+  ARGS.find((a) => a.startsWith('--file2='))?.slice('--file2='.length) ?? DEFAULT_FILE2;
 
 // ═══════════════════════════════════════════════════════════
 // CONSTANTS
