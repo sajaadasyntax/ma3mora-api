@@ -378,95 +378,106 @@ async function matchRows(
   return { matched, unmatchedReport };
 }
 
+/** All existing DB customer ids that appear on the Excel list (one id per matched row). */
+function buildExcelCustomerIdSet(matched: MatchResult[]): Set<string> {
+  const s = new Set<string>();
+  for (const m of matched) {
+    if (m.existingCustomerId) s.add(m.existingCustomerId);
+  }
+  return s;
+}
+
 // ═══════════════════════════════════════════════════════════
 // RESET PHASE
 // ═══════════════════════════════════════════════════════════
 
-async function resetPhase(prisma: PrismaClient): Promise<void> {
+async function resetPhase(
+  prisma: PrismaClient,
+  excelCustomerIds: Set<string>,
+): Promise<void> {
   console.log('\n══════════════════════════════════');
   console.log('RESET PHASE');
   console.log('══════════════════════════════════');
+  console.log(
+    `  Excel-matched customer ids (protected): ${excelCustomerIds.size} (unpaid pre-April invoices for these are kept)`,
+  );
 
   // ── Find target SalesInvoices ──────────────────────────────
+  // 1) All legacy seeded opening-balance lines (replaced in seed for Excel list + cleared for others)
   const preSysInvoices = await prisma.salesInvoice.findMany({
     where: { invoiceNumber: { startsWith: 'PRE-SYS-' } },
     select: { id: true, invoiceNumber: true, total: true, paidAmount: true },
   });
 
+  // 2) Unpaid pre-April real invoices: only for customers *not* on the Excel list (clear carry-over for others)
   const preAprilAllInvoices = await prisma.salesInvoice.findMany({
     where: {
       createdAt: { lt: APRIL_1 },
       NOT: { invoiceNumber: { startsWith: 'PRE-SYS-' } },
     },
-    select: { id: true, invoiceNumber: true, total: true, paidAmount: true, createdAt: true },
+    select: {
+      id: true,
+      invoiceNumber: true,
+      total: true,
+      paidAmount: true,
+      createdAt: true,
+      customerId: true,
+    },
   });
 
-  const preAprilUnpaidInvoices = preAprilAllInvoices.filter((inv) =>
-    new Prisma.Decimal(inv.total).greaterThan(new Prisma.Decimal(inv.paidAmount)),
-  );
+  const preAprilUnpaidNotOnExcel = preAprilAllInvoices.filter((inv) => {
+    const unpaid = new Prisma.Decimal(inv.total).greaterThan(new Prisma.Decimal(inv.paidAmount));
+    if (!unpaid) return false;
+    const cid = inv.customerId;
+    if (!cid) return true;
+    return !excelCustomerIds.has(cid);
+  });
 
   const invoiceIdSet = new Set<string>([
     ...preSysInvoices.map((i) => i.id),
-    ...preAprilUnpaidInvoices.map((i) => i.id),
+    ...preAprilUnpaidNotOnExcel.map((i) => i.id),
   ]);
   const invoiceIds = Array.from(invoiceIdSet);
 
-  // Outstanding receivables being deleted
-  const outstandingInvoices = [
-    ...preSysInvoices,
-    ...preAprilUnpaidInvoices,
-  ].reduce((sum, inv) => {
-    const outstanding = new Prisma.Decimal(inv.total).sub(new Prisma.Decimal(inv.paidAmount));
-    return sum.add(outstanding.greaterThan(0) ? outstanding : new Prisma.Decimal(0));
-  }, new Prisma.Decimal(0));
-
-  console.log(`  PRE-SYS-* SalesInvoices:          ${preSysInvoices.length}`);
-  console.log(`  Unpaid pre-April SalesInvoices:    ${preAprilUnpaidInvoices.length}`);
-  console.log(`  Total SalesInvoices to delete:     ${invoiceIds.length}`);
-  console.log(`  Outstanding receivables deleted:   ${outstandingInvoices.toFixed(2)} SDG`);
-
-  // ── Find target ProcOrders ─────────────────────────────────
-  const preSysProcOrders = await prisma.procOrder.findMany({
-    where: { orderNumber: { startsWith: 'PRE-SYS-PO-' } },
-    select: { id: true, orderNumber: true, total: true, paidAmount: true },
-  });
-
-  const preAprilAllPO = await prisma.procOrder.findMany({
-    where: {
-      createdAt: { lt: APRIL_1 },
-      NOT: { orderNumber: { startsWith: 'PRE-SYS-PO-' } },
+  const outstandingInvoices = [...preSysInvoices, ...preAprilUnpaidNotOnExcel].reduce(
+    (sum, inv) => {
+      const outstanding = new Prisma.Decimal(inv.total).sub(
+        new Prisma.Decimal(inv.paidAmount),
+      );
+      return sum.add(outstanding.greaterThan(0) ? outstanding : new Prisma.Decimal(0));
     },
-    select: { id: true, orderNumber: true, total: true, paidAmount: true },
-  });
-
-  const preAprilUnpaidPO = preAprilAllPO.filter((po) =>
-    new Prisma.Decimal(po.total).greaterThan(new Prisma.Decimal(po.paidAmount)),
+    new Prisma.Decimal(0),
   );
 
-  const poIdSet = new Set<string>([
-    ...preSysProcOrders.map((p) => p.id),
-    ...preAprilUnpaidPO.map((p) => p.id),
-  ]);
-  const poIds = Array.from(poIdSet);
+  console.log(`  PRE-SYS-* SalesInvoices:                    ${preSysInvoices.length}`);
+  console.log(
+    `  Unpaid pre-April (customers NOT in Excel): ${preAprilUnpaidNotOnExcel.length}`,
+  );
+  console.log(`  Total SalesInvoices to delete:              ${invoiceIds.length}`);
+  console.log(`  Outstanding receivables deleted:            ${outstandingInvoices.toFixed(2)} SDG`);
 
-  const outstandingPO = [...preSysProcOrders, ...preAprilUnpaidPO].reduce((sum, po) => {
-    const outstanding = new Prisma.Decimal(po.total).sub(new Prisma.Decimal(po.paidAmount));
-    return sum.add(outstanding.greaterThan(0) ? outstanding : new Prisma.Decimal(0));
-  }, new Prisma.Decimal(0));
+  // ── ProcOrders: intentionally not modified ─────────────────
+  console.log(`  ProcOrders:                                 0 (skipped — not deleted)`);
 
-  console.log(`  PRE-SYS-PO-* ProcOrders:           ${preSysProcOrders.length}`);
-  console.log(`  Unpaid pre-April ProcOrders:        ${preAprilUnpaidPO.length}`);
-  console.log(`  Total ProcOrders to delete:         ${poIds.length}`);
-  console.log(`  Outstanding payables deleted:       ${outstandingPO.toFixed(2)} SDG`);
+  // ── Opening Balances: CUSTOMER only, same rule as invoices (supplier OB untouched)
+  const obWhereCustomerNotOnExcel: Prisma.OpeningBalanceWhereInput =
+    excelCustomerIds.size === 0
+      ? { scope: 'CUSTOMER' }
+      : {
+          scope: 'CUSTOMER',
+          OR: [
+            { customerId: null },
+            { customerId: { notIn: Array.from(excelCustomerIds) } },
+          ],
+        };
 
-  // ── Opening Balances ───────────────────────────────────────
-  const obCount = await prisma.openingBalance.count({
-    where: { scope: { in: ['CUSTOMER', 'SUPPLIER'] } },
-  });
-  console.log(`  OpeningBalances to delete:          ${obCount}`);
+  const obCount = await prisma.openingBalance.count({ where: obWhereCustomerNotOnExcel });
+  const supplierObCount = await prisma.openingBalance.count({ where: { scope: 'SUPPLIER' } });
+  console.log(`  Customer OpeningBalances to delete:         ${obCount} (not on Excel list)`);
+  console.log(`  Supplier OpeningBalances:                   ${supplierObCount} (skipped — not deleted)`);
 
   // ── Safety check ───────────────────────────────────────────
-  const totalRows = invoiceIds.length + poIds.length + obCount;
+  const totalRows = invoiceIds.length + obCount;
   if (totalRows > MAX_SAFE_DELETE) {
     throw new Error(
       `\nSafety check FAILED: would delete ${totalRows} rows (limit: ${MAX_SAFE_DELETE}).\n` +
@@ -487,7 +498,6 @@ async function resetPhase(prisma: PrismaClient): Promise<void> {
   // ── Execute ────────────────────────────────────────────────
   console.log('\n  Executing deletions...');
 
-  // Delete SalesInvoices in batches — cascade handles children automatically
   const BATCH = 500;
   let deletedInvoices = 0;
   for (let i = 0; i < invoiceIds.length; i += BATCH) {
@@ -497,20 +507,8 @@ async function resetPhase(prisma: PrismaClient): Promise<void> {
   }
   console.log(`  ✓ Deleted ${deletedInvoices} SalesInvoices`);
 
-  // Delete ProcOrders in batches — cascade handles items/payments/receipts
-  let deletedPO = 0;
-  for (let i = 0; i < poIds.length; i += BATCH) {
-    const batch = poIds.slice(i, i + BATCH);
-    const result = await prisma.procOrder.deleteMany({ where: { id: { in: batch } } });
-    deletedPO += result.count;
-  }
-  console.log(`  ✓ Deleted ${deletedPO} ProcOrders`);
-
-  // Delete OpeningBalances
-  const obDeleted = await prisma.openingBalance.deleteMany({
-    where: { scope: { in: ['CUSTOMER', 'SUPPLIER'] } },
-  });
-  console.log(`  ✓ Deleted ${obDeleted.count} OpeningBalances`);
+  const obDeleted = await prisma.openingBalance.deleteMany({ where: obWhereCustomerNotOnExcel });
+  console.log(`  ✓ Deleted ${obDeleted.count} customer OpeningBalances`);
 
   // Invalidate pre-April cumulative aggregates so they recompute cleanly
   const caDeleted = await prisma.customerCumulativeAggregate.deleteMany({
@@ -814,9 +812,10 @@ async function main(): Promise<void> {
       console.log('    New customers will be created for these.');
     }
 
-    // ── Reset phase ──────────────────────────────────────────
+    // ── Reset phase (needs match results: only clear non–Excel customers) ──
+    const excelCustomerIds = buildExcelCustomerIdSet(matched);
     if (!NO_RESET) {
-      await resetPhase(prisma);
+      await resetPhase(prisma, excelCustomerIds);
     } else {
       console.log('\n[--no-reset] Skipping reset phase.');
     }
