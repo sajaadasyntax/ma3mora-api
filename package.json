@@ -44,6 +44,8 @@
     "script:backfill-initial-quantity:apply": "tsx scripts/backfill-initial-quantity.ts --apply",
     "script:seed-april-debts": "node ./node_modules/tsx/dist/cli.mjs scripts/seed-april-2026-debts.ts --dry-run",
     "script:seed-april-debts:apply": "node ./node_modules/tsx/dist/cli.mjs scripts/seed-april-2026-debts.ts --confirm",
+    "script:clear-customer-ob": "node ./node_modules/tsx/dist/cli.mjs scripts/clear-customer-opening-balances.ts --dry-run",
+    "script:clear-customer-ob:apply": "node ./node_modules/tsx/dist/cli.mjs scripts/clear-customer-opening-balances.ts --confirm",
     "postinstall": "node ./node_modules/prisma/build/index.js generate"
   },
   "dependencies": {
