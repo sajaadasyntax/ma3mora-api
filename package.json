@@ -42,8 +42,8 @@
     "script:backfill-advance-paid-at": "tsx scripts/backfill-advance-paid-at.ts",
     "script:backfill-initial-quantity": "tsx scripts/backfill-initial-quantity.ts",
     "script:backfill-initial-quantity:apply": "tsx scripts/backfill-initial-quantity.ts --apply",
-    "script:seed-april-debts": "tsx scripts/seed-april-2026-debts.ts --dry-run",
-    "script:seed-april-debts:apply": "tsx scripts/seed-april-2026-debts.ts --confirm",
+    "script:seed-april-debts": "node ./node_modules/tsx/dist/cli.mjs scripts/seed-april-2026-debts.ts --dry-run",
+    "script:seed-april-debts:apply": "node ./node_modules/tsx/dist/cli.mjs scripts/seed-april-2026-debts.ts --confirm",
     "postinstall": "prisma generate"
   },
   "dependencies": {

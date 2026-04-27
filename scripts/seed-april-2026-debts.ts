@@ -11,9 +11,13 @@
  *   --file1=<path>      Override path to ديون 25 كيلو.xlsx
  *   --file2=<path>      Override path to ديون شهر 4 المنتجات.xlsx
  *
- * Quick start:
- *   npx tsx scripts/seed-april-2026-debts.ts --dry-run
- *   npx tsx scripts/seed-april-2026-debts.ts --confirm
+ * Quick start (from apps/api):
+ *   npm run script:seed-april-debts
+ *   npm run script:seed-april-debts:apply
+ *
+ * If `npx tsx` fails with "Permission denied" (strict .bin permissions or noexec),
+ * run the CLI directly:
+ *   node ./node_modules/tsx/dist/cli.mjs scripts/seed-april-2026-debts.ts --dry-run
  */
 
 import ExcelJS from 'exceljs';
