@@ -14,7 +14,7 @@
     "db:migrate": "prisma migrate dev",
     "db:seed": "tsx prisma/seed-users-warehouses.ts",
     "db:studio": "prisma studio",
-    "db:generate": "prisma generate",
+    "db:generate": "node ./node_modules/prisma/build/index.js generate",
     "db:push": "prisma db push",
     "db:reset": "prisma migrate reset",
     "db:reset:force": "prisma migrate reset --force && tsx prisma/seed-all.ts",
@@ -44,7 +44,7 @@
     "script:backfill-initial-quantity:apply": "tsx scripts/backfill-initial-quantity.ts --apply",
     "script:seed-april-debts": "node ./node_modules/tsx/dist/cli.mjs scripts/seed-april-2026-debts.ts --dry-run",
     "script:seed-april-debts:apply": "node ./node_modules/tsx/dist/cli.mjs scripts/seed-april-2026-debts.ts --confirm",
-    "postinstall": "prisma generate"
+    "postinstall": "node ./node_modules/prisma/build/index.js generate"
   },
   "dependencies": {
     "@prisma/client": "^5.8.1",
