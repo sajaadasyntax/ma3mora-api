@@ -23,6 +23,24 @@ function calculatePaymentStatus(paidAmount: Prisma.Decimal, total: Prisma.Decima
   }
 }
 
+/** Aligns with assets-liabilities "delivered unpaid" receivables: fully delivered, not fully paid, positive balance. */
+function summarizeDeliveredUnpaidForReport(
+  invoices: { total: Prisma.Decimal; paidAmount: Prisma.Decimal; deliveryStatus: string; paymentStatus: string }[]
+) {
+  let totalOutstanding = 0;
+  let invoiceCount = 0;
+  for (const inv of invoices) {
+    if (inv.deliveryStatus !== 'DELIVERED') continue;
+    if (inv.paymentStatus === 'PAID') continue;
+    const out = parseFloat(inv.total.toString()) - parseFloat(inv.paidAmount.toString());
+    if (out > 0) {
+      totalOutstanding += out;
+      invoiceCount += 1;
+    }
+  }
+  return { totalOutstanding, invoiceCount };
+}
+
 // Middleware to check if balance is closed
 async function checkBalanceOpen(req: AuthRequest, res: any, next: any) {
   try {
@@ -2171,6 +2189,8 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
       orderBy: { createdAt: 'desc' },
     });
 
+    const deliveredUnpaid = summarizeDeliveredUnpaidForReport(invoices);
+
     // If viewType is 'invoices', return invoice-level data similar to supplier report
     if (viewType === 'invoices') {
       const invoiceReportData = invoices.map(invoice => {
@@ -2283,6 +2303,8 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
           totalSales: invoices.reduce((sum, inv) => sum + parseFloat(inv.total.toString()), 0),
           totalPaid: invoices.reduce((sum, inv) => sum + parseFloat(inv.paidAmount.toString()), 0),
           totalOutstanding: invoices.reduce((sum, inv) => sum + parseFloat(inv.total.toString()) - parseFloat(inv.paidAmount.toString()), 0),
+          deliveredUnpaidOutstanding: deliveredUnpaid.totalOutstanding,
+          deliveredUnpaidInvoiceCount: deliveredUnpaid.invoiceCount,
         },
         ...(stockInfo && { stockInfo }),
       });
@@ -2976,6 +2998,8 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
           totalSales: invoices.reduce((sum, inv) => sum + parseFloat(inv.total.toString()), 0),
           totalPaid: invoices.reduce((sum, inv) => sum + parseFloat(inv.paidAmount.toString()), 0),
           totalOutstanding: invoices.reduce((sum, inv) => sum + parseFloat(inv.total.toString()) - parseFloat(inv.paidAmount.toString()), 0),
+          deliveredUnpaidOutstanding: deliveredUnpaid.totalOutstanding,
+          deliveredUnpaidInvoiceCount: deliveredUnpaid.invoiceCount,
         },
         ...(stockInfo && { stockInfo }),
       });
@@ -2989,6 +3013,8 @@ router.get('/reports', requireRole('ACCOUNTANT', 'AUDITOR', 'MANAGER'), async (r
         totalSales: invoices.reduce((sum, inv) => sum + parseFloat(inv.total.toString()), 0),
         totalPaid: invoices.reduce((sum, inv) => sum + parseFloat(inv.paidAmount.toString()), 0),
         totalOutstanding: invoices.reduce((sum, inv) => sum + parseFloat(inv.total.toString()) - parseFloat(inv.paidAmount.toString()), 0),
+        deliveredUnpaidOutstanding: deliveredUnpaid.totalOutstanding,
+        deliveredUnpaidInvoiceCount: deliveredUnpaid.invoiceCount,
       },
       ...(stockInfo && { stockInfo }),
     });

@@ -4,6 +4,14 @@
  * Resets all pre-April-2026 carry-over debts and re-seeds them from two Excel
  * sheets (April 1 opening balances).
  *
+ * What the parser reads (per customer data row) — and ONLY this:
+ *   • Column C = "رصيد افتتاحي" under the 2026-04-01 column (first day block).
+ *   That is the balance at the start of 1 Apr — it does NOT include:
+ *   – any "سداد كاش" / "سداد بنكك" / daily payments in April,
+ *   – "المديونية" in later day columns,
+ *   – the end-of-month TOTAL / "الصافي" summary columns.
+ *   The seeder never scans those cells; only v[3] (column C) per row.
+ *
  * Usage:
  *   --dry-run           Parse, match, print plan — no DB writes
  *   --confirm           Required to execute destructive writes
@@ -174,6 +182,8 @@ function cellStr(v: ExcelJS.CellValue): string | null {
  * Sheet structure: two sections separated by a repeated header row where cell A = 'الرقم'.
  * Section 1a → BAKERY WHOLESALE
  * Section 1b → GROCERY AGENT_WHOLESALE
+ *
+ * Reads only `row.values[3]` (column C) as opening; ignores all other columns in the row.
  */
 async function parseFile1(filePath: string): Promise<DebtRow[]> {
   const wb = new ExcelJS.Workbook();
@@ -224,6 +234,8 @@ async function parseFile1(filePath: string): Promise<DebtRow[]> {
  * Second section header: a row where col B contains 'قطاعي'.
  * Section 2a → GROCERY WHOLESALE
  * Section 2b → GROCERY RETAIL
+ *
+ * Reads only `row.values[3]` (column C) as opening; ignores all other columns in the row.
  */
 async function parseFile2(filePath: string): Promise<DebtRow[]> {
   const wb = new ExcelJS.Workbook();
@@ -744,6 +756,9 @@ async function main(): Promise<void> {
   try {
     // ── Parse Excel files ────────────────────────────────────
     console.log('Parsing Excel files...');
+    console.log(
+      '  (Amount source: column C only = رصيد افتتاحي ليوم 2026-04-01 per row — excludes all April daily payments & الصافي totals.)',
+    );
     const rows1 = await parseFile1(FILE1);
     const rows2 = await parseFile2(FILE2);
     const allRows = [...rows1, ...rows2];
