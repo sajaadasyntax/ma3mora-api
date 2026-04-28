@@ -132,12 +132,35 @@ function randomInvoiceFallback(): string {
 
 router.get('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GROCERY', 'AGENT_BAKERY', 'ACCOUNTANT', 'AUDITOR', 'MANAGER', 'INVENTORY', 'PROCUREMENT'), async (req: AuthRequest, res) => {
   try {
-    const { status, inventoryId, section, deliveryStatus, paymentStatus } = req.query;
+    const {
+      status,
+      inventoryId,
+      section,
+      deliveryStatus,
+      paymentStatus,
+      unpaidOnly,
+      deliveryScope,
+    } = req.query;
     const where: any = {};
 
-    if (status) where.deliveryStatus = status;
-    if (deliveryStatus) where.deliveryStatus = deliveryStatus;
-    if (paymentStatus) where.paymentStatus = paymentStatus;
+    const scope = deliveryScope as string | undefined;
+    if (scope === 'delivered') {
+      where.deliveryStatus = 'DELIVERED';
+    } else if (scope === 'not_delivered') {
+      where.deliveryStatus = { not: 'DELIVERED' };
+    } else if (deliveryStatus) {
+      where.deliveryStatus = deliveryStatus;
+    } else if (status) {
+      where.deliveryStatus = status;
+    }
+
+    const wantUnpaidOnly = unpaidOnly === 'true' || unpaidOnly === '1';
+    if (wantUnpaidOnly) {
+      where.paymentStatus = { not: 'PAID' };
+    } else if (paymentStatus) {
+      where.paymentStatus = paymentStatus;
+    }
+
     if (inventoryId) where.inventoryId = inventoryId;
     if (section) where.section = section;
 
@@ -146,10 +169,13 @@ router.get('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GROC
       where.salesUserId = req.user.id;
     }
 
-    // Inventory users can only see payment-confirmed invoices
+    // Inventory users can only see payment-confirmed invoices (overrides unpaid-only rejection filter)
     if (req.user?.role === 'INVENTORY') {
       where.paymentConfirmationStatus = 'CONFIRMED';
+    } else if (wantUnpaidOnly) {
+      where.paymentConfirmationStatus = { not: 'REJECTED' };
     }
+
 
     const invoices = await prisma.salesInvoice.findMany({
       where,
