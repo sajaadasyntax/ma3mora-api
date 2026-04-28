@@ -104,14 +104,23 @@ const TAG = 'EXCEL-APR2026';
  *
  * Mapping is keyed by the Excel file's basename:
  *   ديون المنتجات.xlsx       -> WHOLESALE / GROCERY  (products debts; wholesale)
- *   مخزن رئيسي بقالات.xlsx   -> RETAIL    / BAKERY   (main warehouse; bakery shops)
+ *   مخزن رئيسي بقالات.xlsx   -> RETAIL    / GROCERY  (main warehouse; grocery retail)
  */
 const FILE_DEFAULTS: Record<string, { type: CustomerType; division: Section }> = {
   'ديون المنتجات.xlsx': { type: CustomerType.WHOLESALE, division: Section.GROCERY },
-  'مخزن رئيسي بقالات.xlsx': { type: CustomerType.RETAIL, division: Section.BAKERY },
+  'مخزن رئيسي بقالات.xlsx': { type: CustomerType.RETAIL, division: Section.GROCERY },
 };
 
 const FALLBACK_DEFAULTS = { type: CustomerType.WHOLESALE, division: Section.GROCERY };
+
+const FILE_TYPE_GROUPS: Record<string, CustomerType[]> = {
+  'ديون المنتجات.xlsx': [CustomerType.WHOLESALE, CustomerType.AGENT_WHOLESALE],
+  'مخزن رئيسي بقالات.xlsx': [
+    CustomerType.RETAIL,
+    CustomerType.AGENT_RETAIL,
+    CustomerType.BAKERY_CUSTOMER,
+  ],
+};
 
 /**
  * Manual overrides for Excel customer names that the fuzzy matcher cannot resolve
@@ -154,7 +163,7 @@ const EXCEL_NAME_OVERRIDES: Record<string, ExcelOverride> = {
   'مخبز ود عائس': 'cmn1zy7sj00gdm99srdrsxjrs',
 
   // ── Create new customer (no id supplied; file defaults will be used) ────
-  'مخبز اولاد ابراهيم': '', // مخزن رئيسي بقالات => BAKERY/RETAIL
+  'مخبز اولاد ابراهيم': '', // مخزن رئيسي بقالات => GROCERY/RETAIL
   'عبد اللطيف الجيلي': '', // ديون المنتجات    => GROCERY/WHOLESALE
   'جلال يوسف': '', // ديون المنتجات    => GROCERY/WHOLESALE
 
@@ -372,7 +381,7 @@ interface MatchedExcelCustomer extends ExcelCustomerRow {
 
 interface UnmatchedExcelCustomer extends ExcelCustomerRow {
   reason: 'no_match' | 'multiple_candidates';
-  candidates: { id: string; name: string }[];
+  candidates: { id: string; name: string; type: CustomerType; division: Section }[];
 }
 
 /**
@@ -506,21 +515,32 @@ async function matchCustomers(
       note = 'substring';
     }
 
-    // 3) If multiple candidates, narrow by file -> preferred customer.type.
-    //    e.g. "محمد مهدي" appears in both files; the row from ديون المنتجات
-    //    picks the WHOLESALE candidate, the row from مخزن رئيسي بقالات picks
-    //    the RETAIL candidate.
+    // 3) If multiple candidates, narrow by source file -> customer type family,
+    //    then by division. This handles duplicate customer names where one row is
+    //    wholesale/product debt and the other is retail/main-warehouse debt.
     if (candidates.length > 1) {
-      const preferredType = FILE_DEFAULTS[row.sourceFile]?.type;
-      if (preferredType) {
-        const filtered = candidates.filter((c) => c.type === preferredType);
-        if (filtered.length === 1) {
-          candidates = filtered;
-          note = `${note}+file-type=${preferredType}`;
-        } else if (filtered.length > 0 && filtered.length < candidates.length) {
-          // Still ambiguous, but at least narrow down the candidate list shown
-          // in the unmatched output so the user can pick faster.
-          candidates = filtered;
+      const defaults = FILE_DEFAULTS[row.sourceFile];
+      const preferredTypes = FILE_TYPE_GROUPS[row.sourceFile] ?? [];
+
+      if (preferredTypes.length > 0) {
+        const typeFiltered = candidates.filter((c) => preferredTypes.includes(c.type));
+        if (typeFiltered.length === 1) {
+          candidates = typeFiltered;
+          note = `${note}+file-type=${typeFiltered[0].type}`;
+        } else if (typeFiltered.length > 1) {
+          const divisionFiltered = defaults
+            ? typeFiltered.filter((c) => c.division === defaults.division)
+            : [];
+          if (divisionFiltered.length === 1) {
+            candidates = divisionFiltered;
+            note = `${note}+file-type=${divisionFiltered[0].type}+division=${divisionFiltered[0].division}`;
+          } else {
+            // Still ambiguous, but narrow the candidate list shown in the
+            // unmatched output so the user can see only the relevant type side.
+            candidates = divisionFiltered.length > 0 ? divisionFiltered : typeFiltered;
+          }
+        } else if (typeFiltered.length > 0 && typeFiltered.length < candidates.length) {
+          candidates = typeFiltered;
         }
       }
     }
@@ -538,7 +558,12 @@ async function matchCustomers(
     unmatched.push({
       ...row,
       reason: candidates.length === 0 ? 'no_match' : 'multiple_candidates',
-      candidates: candidates.map((c) => ({ id: c.id, name: c.name })),
+      candidates: candidates.map((c) => ({
+        id: c.id,
+        name: c.name,
+        type: c.type,
+        division: c.division,
+      })),
     });
   }
 
@@ -568,7 +593,7 @@ function printUnmatched(unmatched: UnmatchedExcelCustomer[]): void {
     '                                         (file defaults: ديون المنتجات => GROCERY/WHOLESALE,',
   );
   console.log(
-    '                                                         مخزن رئيسي بقالات => BAKERY/RETAIL)',
+    '                                                         مخزن رئيسي بقالات => GROCERY/RETAIL)',
   );
   console.log('  ----------------------------------------');
 
@@ -588,7 +613,7 @@ function printUnmatched(unmatched: UnmatchedExcelCustomer[]): void {
       u.reason === 'multiple_candidates'
         ? ` (multiple matches: ${u.candidates
             .slice(0, 3)
-            .map((c) => `"${c.name}" [${c.id.slice(0, 8)}…]`)
+            .map((c) => `"${c.name}" [${c.id}] ${c.division}/${c.type}`)
             .join(', ')}${u.candidates.length > 3 ? ', …' : ''})`
         : '';
     console.log(
