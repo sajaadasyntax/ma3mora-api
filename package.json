@@ -48,6 +48,8 @@
     "script:clear-customer-ob:apply": "node ./node_modules/tsx/dist/cli.mjs scripts/clear-customer-opening-balances.ts --confirm",
     "script:check-pre-sys-unpaid": "node ./node_modules/tsx/dist/cli.mjs scripts/check-pre-sys-unpaid.ts",
     "script:check-pre-sys-unpaid:json": "node ./node_modules/tsx/dist/cli.mjs scripts/check-pre-sys-unpaid.ts --json",
+    "script:reconcile-pre-sys-excel": "node ./node_modules/tsx/dist/cli.mjs scripts/reconcile-pre-sys-unpaid-with-excel.ts",
+    "script:reconcile-pre-sys-excel:json": "node ./node_modules/tsx/dist/cli.mjs scripts/reconcile-pre-sys-unpaid-with-excel.ts --json",
     "postinstall": "node ./node_modules/prisma/build/index.js generate"
   },
   "dependencies": {
