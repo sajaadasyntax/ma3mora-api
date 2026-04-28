@@ -49,6 +49,7 @@ import {
   PaymentMethod,
   PaymentStatus,
   Section,
+  CustomerType,
 } from '@prisma/client';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -91,20 +92,80 @@ const APRIL_1 = new Date('2026-04-01T00:00:00.000Z');
 const TAG = 'EXCEL-APR2026';
 
 /**
- * Manual overrides for Excel customer names that the fuzzy matcher cannot resolve.
- * The dry-run prints all unmatched names with their daily payment totals; once you
- * supply a customerId for an Excel name, add it here and re-run dry-run to verify.
+ * Per-source-file customer defaults.
  *
- * Key:   Excel customer name EXACTLY as it appears in the workbook (cell B in the
- *        data row). Whitespace at the ends is trimmed automatically; otherwise the
- *        string is used verbatim as a key.
- * Value: DB Customer.id (cuid string). The override skips fuzzy matching entirely.
+ * Used in two places:
+ *   1. Multiple-candidate disambiguation. When the fuzzy matcher returns >1 DB
+ *      candidate for a row, we narrow by `customer.type === preferredType` for
+ *      that source file. If exactly one candidate survives, we pick it.
+ *   2. New-customer creation. When EXCEL_NAME_OVERRIDES has an entry whose value
+ *      is the empty string `""` (or `{ create: true }`), the new Customer row
+ *      is inserted with these defaults unless explicitly overridden in the entry.
  *
- * Example:
- *   'عزالدين الحوري': 'cln1abcd0000xyz...',
+ * Mapping is keyed by the Excel file's basename:
+ *   ديون المنتجات.xlsx       -> WHOLESALE / GROCERY  (products debts; wholesale)
+ *   مخزن رئيسي بقالات.xlsx   -> RETAIL    / BAKERY   (main warehouse; bakery shops)
  */
-const EXCEL_NAME_OVERRIDES: Record<string, string> = {
-  // Add entries here once you read them from the dry-run unmatched list.
+const FILE_DEFAULTS: Record<string, { type: CustomerType; division: Section }> = {
+  'ديون المنتجات.xlsx': { type: CustomerType.WHOLESALE, division: Section.GROCERY },
+  'مخزن رئيسي بقالات.xlsx': { type: CustomerType.RETAIL, division: Section.BAKERY },
+};
+
+const FALLBACK_DEFAULTS = { type: CustomerType.WHOLESALE, division: Section.GROCERY };
+
+/**
+ * Manual overrides for Excel customer names that the fuzzy matcher cannot resolve
+ * automatically. The dry-run prints every unmatched name with its daily totals so
+ * you can decide per-name whether to: (a) point it at an existing Customer.id, or
+ * (b) ask the script to create a brand-new Customer row.
+ *
+ * Key:   Excel customer name EXACTLY as it appears in the workbook (cell B in
+ *        the data row). Leading/trailing whitespace is trimmed automatically;
+ *        otherwise the string is used verbatim.
+ *
+ * Value (any of these forms):
+ *   '<cuid>'                                       -> use that existing customer
+ *   ''                                              -> create a new customer with file
+ *                                                     defaults (FILE_DEFAULTS)
+ *   { customerId: '<cuid>' }                       -> use that existing customer
+ *   { create: true }                               -> create with file defaults
+ *   { create: true, type, division, name }         -> create with explicit fields
+ *
+ * Disambiguation note: if the SAME Excel name appears in BOTH workbooks and the
+ * fuzzy matcher returns multiple DB candidates, you usually do NOT need an entry
+ * here. The file-type rule (FILE_DEFAULTS above) splits them automatically:
+ *   ديون المنتجات row     -> picks the WHOLESALE candidate
+ *   مخزن رئيسي بقالات row -> picks the RETAIL    candidate
+ */
+type ExcelOverride =
+  | string
+  | { customerId: string }
+  | {
+      create: true;
+      name?: string;
+      type?: CustomerType;
+      division?: Section;
+    };
+
+const EXCEL_NAME_OVERRIDES: Record<string, ExcelOverride> = {
+  // ── Use existing customer (id supplied from dry-run output) ──────────────
+  'احمد المندوب': 'cmn4o77je003nb84wd7orx4uz',
+  'مخبز  زكي- الكريمت': 'cmn5t6hpg004vtpdk0ihrkpb7',
+  'مخبز ود عائس': 'cmn1zy7sj00gdm99srdrsxjrs',
+
+  // ── Create new customer (no id supplied; file defaults will be used) ────
+  'مخبز اولاد ابراهيم': '', // مخزن رئيسي بقالات => BAKERY/RETAIL
+  'عبد اللطيف الجيلي': '', // ديون المنتجات    => GROCERY/WHOLESALE
+  'جلال يوسف': '', // ديون المنتجات    => GROCERY/WHOLESALE
+
+  // The remaining `multiple_candidates` rows from the dry-run dump are resolved
+  // automatically by the FILE_DEFAULTS file-type rule and do NOT need entries here:
+  //   التوم حميدان معتوق  [مخزن رئيسي بقالات]   -> picks RETAIL candidate
+  //   محمد مهدي           [مخزن رئيسي بقالات]   -> picks RETAIL candidate
+  //   محمد مهدي           [ديون المنتجات]       -> picks WHOLESALE candidate
+  //   مهدى المستشفى       [ديون المنتجات]       -> picks WHOLESALE candidate
+  //   خالد مدرسة المجد    [ديون المنتجات]       -> picks WHOLESALE candidate
+  //   خالد - مدرسة المجد  [مخزن رئيسي بقالات]   -> picks RETAIL candidate
 };
 
 const REPORTS_DIR = __dirname;
@@ -301,9 +362,12 @@ async function parseWorkbookPayments(filePath: string): Promise<ExcelCustomerRow
 // ═══════════════════════════════════════════════════════════
 
 interface MatchedExcelCustomer extends ExcelCustomerRow {
+  /** Empty string when this row is a pendingCreate that has not been written yet. */
   customerId: string;
   customerName: string;
   matchNote: string;
+  /** Set when the override map asked us to create a brand-new Customer row. */
+  pendingCreate?: { name: string; type: CustomerType; division: Section };
 }
 
 interface UnmatchedExcelCustomer extends ExcelCustomerRow {
@@ -311,25 +375,73 @@ interface UnmatchedExcelCustomer extends ExcelCustomerRow {
   candidates: { id: string; name: string }[];
 }
 
+/**
+ * Read an EXCEL_NAME_OVERRIDES value into a normalised shape:
+ *   { kind: 'use'; id }                                  - existing customer
+ *   { kind: 'create'; name, type, division }             - create new customer
+ *   null                                                  - no override / falls through to fuzzy
+ */
+function resolveOverride(
+  raw: ExcelOverride | undefined,
+  excelName: string,
+  sourceFile: string,
+):
+  | { kind: 'use'; id: string }
+  | { kind: 'create'; name: string; type: CustomerType; division: Section }
+  | null {
+  if (raw === undefined) return null;
+  const fileDefaults = FILE_DEFAULTS[sourceFile] ?? FALLBACK_DEFAULTS;
+
+  if (typeof raw === 'string') {
+    if (raw.length === 0) {
+      return {
+        kind: 'create',
+        name: excelName,
+        type: fileDefaults.type,
+        division: fileDefaults.division,
+      };
+    }
+    return { kind: 'use', id: raw };
+  }
+
+  if ('customerId' in raw) {
+    return { kind: 'use', id: raw.customerId };
+  }
+
+  return {
+    kind: 'create',
+    name: raw.name ?? excelName,
+    type: raw.type ?? fileDefaults.type,
+    division: raw.division ?? fileDefaults.division,
+  };
+}
+
 async function matchCustomers(
   rows: ExcelCustomerRow[],
 ): Promise<{ matched: MatchedExcelCustomer[]; unmatched: UnmatchedExcelCustomer[] }> {
   const all = await prisma.customer.findMany({
-    select: { id: true, name: true, division: true },
+    select: { id: true, name: true, type: true, division: true },
   });
   const normalized = all.map((c) => ({
     id: c.id,
     name: c.name,
+    type: c.type,
     division: c.division,
     norm: normalizeArabic(c.name),
   }));
   const byId = new Map(all.map((c) => [c.id, c]));
 
   // Validate the manual overrides up front so typos surface fast.
-  for (const [excelName, customerId] of Object.entries(EXCEL_NAME_OVERRIDES)) {
-    if (!byId.has(customerId)) {
+  for (const [excelName, raw] of Object.entries(EXCEL_NAME_OVERRIDES)) {
+    const id =
+      typeof raw === 'string' && raw.length > 0
+        ? raw
+        : typeof raw === 'object' && 'customerId' in raw
+          ? raw.customerId
+          : null;
+    if (id && !byId.has(id)) {
       console.warn(
-        `  WARNING: EXCEL_NAME_OVERRIDES["${excelName}"] -> ${customerId} is not a known Customer.id; ignoring.`,
+        `  WARNING: EXCEL_NAME_OVERRIDES["${excelName}"] -> ${id} is not a known Customer.id; the entry will be IGNORED.`,
       );
     }
   }
@@ -341,20 +453,43 @@ async function matchCustomers(
   // all customers; if multiple Excel rows match the same DB customer, all of
   // their daily payments are merged into that customer's payment plan.
   for (const row of rows) {
+    const trimmedName = row.name.trim();
+
     // 1) Exact-name override map wins over fuzzy matching.
-    const overrideId = EXCEL_NAME_OVERRIDES[row.name.trim()];
-    if (overrideId && byId.has(overrideId)) {
-      const c = byId.get(overrideId)!;
+    const override = resolveOverride(
+      EXCEL_NAME_OVERRIDES[trimmedName],
+      trimmedName,
+      row.sourceFile,
+    );
+
+    if (override?.kind === 'use' && byId.has(override.id)) {
+      const c = byId.get(override.id)!;
       matched.push({
         ...row,
         customerId: c.id,
         customerName: c.name,
-        matchNote: 'override',
+        matchNote: 'override:use',
       });
       continue;
     }
 
-    const norm = normalizeArabic(row.name);
+    if (override?.kind === 'create') {
+      matched.push({
+        ...row,
+        customerId: '',
+        customerName: override.name,
+        matchNote: 'override:create',
+        pendingCreate: {
+          name: override.name,
+          type: override.type,
+          division: override.division,
+        },
+      });
+      continue;
+    }
+
+    // 2) Fuzzy match (no override or override pointed at unknown id).
+    const norm = normalizeArabic(trimmedName);
     let candidates = normalized.filter((c) => c.norm === norm);
     let note = 'exact';
 
@@ -369,6 +504,25 @@ async function matchCustomers(
           c.norm.length >= 8 && (c.norm.includes(norm) || norm.includes(c.norm)),
       );
       note = 'substring';
+    }
+
+    // 3) If multiple candidates, narrow by file -> preferred customer.type.
+    //    e.g. "محمد مهدي" appears in both files; the row from ديون المنتجات
+    //    picks the WHOLESALE candidate, the row from مخزن رئيسي بقالات picks
+    //    the RETAIL candidate.
+    if (candidates.length > 1) {
+      const preferredType = FILE_DEFAULTS[row.sourceFile]?.type;
+      if (preferredType) {
+        const filtered = candidates.filter((c) => c.type === preferredType);
+        if (filtered.length === 1) {
+          candidates = filtered;
+          note = `${note}+file-type=${preferredType}`;
+        } else if (filtered.length > 0 && filtered.length < candidates.length) {
+          // Still ambiguous, but at least narrow down the candidate list shown
+          // in the unmatched output so the user can pick faster.
+          candidates = filtered;
+        }
+      }
     }
 
     if (candidates.length === 1) {
@@ -405,10 +559,17 @@ function printUnmatched(unmatched: UnmatchedExcelCustomer[]): void {
   console.log(`UNMATCHED EXCEL CUSTOMER NAMES (${unmatched.length})`);
   console.log('══════════════════════════════════');
   console.log(
-    '  These rows will be SKIPPED until you supply a Customer.id. Paste an entry into',
+    '  These rows will be SKIPPED until you add an entry to EXCEL_NAME_OVERRIDES at',
   );
-  console.log('  EXCEL_NAME_OVERRIDES at the top of this script and re-run dry-run.');
-  console.log('  Format:   "Excel name": "<customer-id>",');
+  console.log('  the top of this script. Pick one of these two formats per name:');
+  console.log('     "Excel name": "<customer-id>",   // use existing customer');
+  console.log('     "Excel name": "",                // create a NEW customer');
+  console.log(
+    '                                         (file defaults: ديون المنتجات => GROCERY/WHOLESALE,',
+  );
+  console.log(
+    '                                                         مخزن رئيسي بقالات => BAKERY/RETAIL)',
+  );
   console.log('  ----------------------------------------');
 
   // Sort by total Excel cash+bank descending so the highest-impact names are first.
@@ -642,6 +803,84 @@ async function phase2ReverseOld(): Promise<ReversalResult> {
 }
 
 // ═══════════════════════════════════════════════════════════
+// PHASE 2.5 — create new customers requested by EXCEL_NAME_OVERRIDES
+// ═══════════════════════════════════════════════════════════
+
+interface CreateResult {
+  pending: number;
+  created: number;
+  skipped: number;
+}
+
+/**
+ * For every matched row that came from an EXCEL_NAME_OVERRIDES entry without an
+ * id (i.e. `pendingCreate` is set), insert a Customer row and rewrite the row's
+ * customerId/customerName so phases 3-4 treat them like any other matched row.
+ *
+ * Dry-run prints the planned creates but writes nothing; in that case the rows
+ * keep customerId='' and phase 3-4 reports their daily totals as overflow with
+ * reason='pending-create' so the user can see the impact ahead of time.
+ */
+async function phaseCreateCustomers(
+  matched: MatchedExcelCustomer[],
+): Promise<CreateResult> {
+  const pending = matched.filter((m) => m.pendingCreate);
+
+  if (pending.length === 0) {
+    return { pending: 0, created: 0, skipped: 0 };
+  }
+
+  console.log('\n══════════════════════════════════');
+  console.log(`PHASE 2.5 — create new customers (${pending.length})`);
+  console.log('══════════════════════════════════');
+  console.log(
+    '  These names exist in EXCEL_NAME_OVERRIDES with NO customer id, so a new',
+  );
+  console.log('  Customer row will be inserted using FILE_DEFAULTS for type/division.');
+  console.log('  ----------------------------------------');
+
+  for (const m of pending) {
+    const total = m.daily.reduce(
+      (s, d) => s.add(d.cash).add(d.bank),
+      new Prisma.Decimal(0),
+    );
+    console.log(
+      `  + "${m.pendingCreate!.name}"  ${m.pendingCreate!.division}/${m.pendingCreate!.type}   total=${total.toFixed(2)} SDG  [${m.sourceFile} row ${m.rowNum}]`,
+    );
+  }
+
+  if (DRY_RUN) {
+    console.log('  (dry-run — no Customer rows created)');
+    console.log(
+      '  Note: dry-run cannot allocate payments to a not-yet-created customer;',
+    );
+    console.log(
+      '  their daily totals will appear as overflow with reason="pending-create".',
+    );
+    return { pending: pending.length, created: 0, skipped: pending.length };
+  }
+
+  let created = 0;
+  for (const m of pending) {
+    const newCustomer = await prisma.customer.create({
+      data: {
+        name: m.pendingCreate!.name,
+        type: m.pendingCreate!.type,
+        division: m.pendingCreate!.division,
+      },
+      select: { id: true, name: true },
+    });
+    m.customerId = newCustomer.id;
+    m.customerName = newCustomer.name;
+    delete m.pendingCreate;
+    created++;
+  }
+
+  console.log(`  created ${created} customer row(s)`);
+  return { pending: pending.length, created, skipped: 0 };
+}
+
+// ═══════════════════════════════════════════════════════════
 // PHASE 3 + 4 — apply Excel payments FIFO
 // ═══════════════════════════════════════════════════════════
 
@@ -733,7 +972,40 @@ async function phase34ApplyPayments(
     { customerId: string; customerName: string; date: Date; method: PaymentMethod; amount: Prisma.Decimal }
   >();
 
+  const applied: AppliedRecord[] = [];
+  const overflows: OverflowRecord[] = [];
+  const touched = new Set<string>();
+
   for (const m of matched) {
+    // Pending-create rows in dry-run: no customerId means there's no DB customer
+    // to allocate against (and creating one in dry-run is forbidden). Surface
+    // every day's totals as overflow so the user sees the impact.
+    if (!m.customerId) {
+      for (const day of m.daily) {
+        if (day.cash.greaterThan(0)) {
+          overflows.push({
+            customerId: '',
+            customerName: m.customerName,
+            date: ymd(day.date),
+            method: PaymentMethod.CASH,
+            amountUnapplied: day.cash.toFixed(2),
+            reason: 'pending-create (dry-run customer not inserted)',
+          });
+        }
+        if (day.bank.greaterThan(0)) {
+          overflows.push({
+            customerId: '',
+            customerName: m.customerName,
+            date: ymd(day.date),
+            method: PaymentMethod.BANKAK,
+            amountUnapplied: day.bank.toFixed(2),
+            reason: 'pending-create (dry-run customer not inserted)',
+          });
+        }
+      }
+      continue;
+    }
+
     for (const day of m.daily) {
       if (day.cash.greaterThan(0)) {
         const key = `${m.customerId}|${ymd(day.date)}|CASH`;
@@ -771,10 +1043,6 @@ async function phase34ApplyPayments(
   console.log(`  customer/day/method allocations to apply: ${ops.length}`);
   const planTotal = ops.reduce((s, o) => s.add(o.amount), new Prisma.Decimal(0));
   console.log(`  total amount to allocate:                 ${planTotal.toFixed(2)} SDG`);
-
-  const applied: AppliedRecord[] = [];
-  const overflows: OverflowRecord[] = [];
-  const touched = new Set<string>();
 
   for (const op of ops) {
     const invoices = await prisma.salesInvoice.findMany({
@@ -1020,8 +1288,13 @@ async function main() {
   const systemUserId = await resolveSystemUserId();
   console.log(`  recordedBy user:     ${systemUserId}`);
 
-  // Phase 2 (reverse old) and Phase 3-4 (apply new)
+  // Phase 2 (reverse old)
   await phase2ReverseOld();
+
+  // Phase 2.5 (create new customers requested via EXCEL_NAME_OVERRIDES)
+  await phaseCreateCustomers(matched);
+
+  // Phase 3-4 (apply new)
   const applyResult = await phase34ApplyPayments(matched, systemUserId);
 
   // Phase 5
