@@ -46,6 +46,8 @@
     "script:seed-april-debts:apply": "node ./node_modules/tsx/dist/cli.mjs scripts/seed-april-2026-debts.ts --confirm",
     "script:clear-customer-ob": "node ./node_modules/tsx/dist/cli.mjs scripts/clear-customer-opening-balances.ts --dry-run",
     "script:clear-customer-ob:apply": "node ./node_modules/tsx/dist/cli.mjs scripts/clear-customer-opening-balances.ts --confirm",
+    "script:check-pre-sys-unpaid": "node ./node_modules/tsx/dist/cli.mjs scripts/check-pre-sys-unpaid.ts",
+    "script:check-pre-sys-unpaid:json": "node ./node_modules/tsx/dist/cli.mjs scripts/check-pre-sys-unpaid.ts --json",
     "postinstall": "node ./node_modules/prisma/build/index.js generate"
   },
   "dependencies": {
