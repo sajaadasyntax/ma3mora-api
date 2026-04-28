@@ -50,6 +50,8 @@
     "script:check-pre-sys-unpaid:json": "node ./node_modules/tsx/dist/cli.mjs scripts/check-pre-sys-unpaid.ts --json",
     "script:reconcile-pre-sys-excel": "node ./node_modules/tsx/dist/cli.mjs scripts/reconcile-pre-sys-unpaid-with-excel.ts",
     "script:reconcile-pre-sys-excel:json": "node ./node_modules/tsx/dist/cli.mjs scripts/reconcile-pre-sys-unpaid-with-excel.ts --json",
+    "script:apply-april-payments": "node ./node_modules/tsx/dist/cli.mjs scripts/apply-april-2026-excel-payments.ts",
+    "script:apply-april-payments:apply": "node ./node_modules/tsx/dist/cli.mjs scripts/apply-april-2026-excel-payments.ts --confirm",
     "postinstall": "node ./node_modules/prisma/build/index.js generate"
   },
   "dependencies": {
