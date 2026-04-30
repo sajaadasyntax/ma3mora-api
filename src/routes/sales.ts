@@ -140,6 +140,8 @@ router.get('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GROC
       paymentStatus,
       unpaidOnly,
       deliveryScope,
+      startDate,
+      endDate,
     } = req.query;
     const where: any = {};
 
@@ -163,6 +165,20 @@ router.get('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GROC
 
     if (inventoryId) where.inventoryId = inventoryId;
     if (section) where.section = section;
+
+    if (startDate || endDate) {
+      where.createdAt = {};
+      if (startDate) {
+        const start = new Date(startDate as string);
+        start.setHours(0, 0, 0, 0);
+        where.createdAt.gte = start;
+      }
+      if (endDate) {
+        const end = new Date(endDate as string);
+        end.setHours(23, 59, 59, 999);
+        where.createdAt.lte = end;
+      }
+    }
 
     // Sales users (including agents) can only see their own invoices or filtered by their access
     if (req.user?.role === 'SALES_GROCERY' || req.user?.role === 'SALES_BAKERY' || req.user?.role === 'AGENT_GROCERY' || req.user?.role === 'AGENT_BAKERY') {
