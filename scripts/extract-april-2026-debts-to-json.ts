@@ -1,8 +1,9 @@
 /**
  * extract-april-2026-debts-to-json.ts
  *
- * Reads latest.xlsx (grocery, 3 sub-sections) and latest2.xlsx (bakery, 2 sub-sections)
- * and writes a single canonical april-2026-debts.json.
+ * Reads latest.xlsx (grocery, 3 sub-sections), latest2.xlsx (bakery, 2 sub-sections),
+ * and optionally ديون المنتجات.xlsx for extra grocery-only rows, then writes a
+ * single canonical april-2026-debts.json.
  *
  * Sub-section map (verified by direct file inspection):
  *
@@ -46,6 +47,9 @@ const FILE_GROCERY =
 const FILE_BAKERY =
   ARGS.find((a) => a.startsWith('--file2='))?.slice('--file2='.length) ??
   path.join(DATA_DIR, 'latest2.xlsx');
+const FILE_GROCERY_EXTRA =
+  ARGS.find((a) => a.startsWith('--grocery-extra='))?.slice('--grocery-extra='.length) ??
+  path.join(DATA_DIR, 'ديون المنتجات.xlsx');
 const OUT_FILE =
   ARGS.find((a) => a.startsWith('--out='))?.slice('--out='.length) ??
   path.join(DATA_DIR, 'april-2026-debts.json');
@@ -202,6 +206,17 @@ function extractDailyData(v: ExcelJS.CellValue[], daySlots: DaySlot[]): DayData[
   return days;
 }
 
+function hasAnyDailyActivity(daily: DayData[]): boolean {
+  return daily.some((day) =>
+    day.opening !== 0 ||
+    day.debt !== 0 ||
+    day.cash !== 0 ||
+    day.bank !== 0 ||
+    day.closing !== 0 ||
+    Boolean(day.description),
+  );
+}
+
 // ─── PARSE BAKERY (latest2.xlsx) ──────────────────────────────────────────────
 /**
  * latest2.xlsx has two sections separated by repeated "الرقم" headers in col A.
@@ -232,8 +247,8 @@ function parseBakery(wb: ExcelJS.Workbook, fileName: string): CustomerData[] {
     if (aNum === null || !Number.isInteger(aNum) || aNum <= 0 || !colBStr) return;
 
     const daily = extractDailyData(v, daySlots);
-    const opening = daily.length > 0 ? daily[0].opening : (cellNum(v[3]) ?? 0);
-    if (opening <= 0) return;
+    const opening = cellNum(v[3]) ?? 0;
+    if (opening <= 0 && !hasAnyDailyActivity(daily)) return;
 
     customers.push({
       sourceFile: fileName,
@@ -307,8 +322,8 @@ function parseGrocery(wb: ExcelJS.Workbook, fileName: string): CustomerData[] {
       if (c3 === null || c3 <= 0) return;
 
       const daily = extractDailyData(v, daySlots);
-      const opening = daily.length > 0 ? daily[0].opening : c3;
-      if (opening <= 0) return;
+      const opening = c3;
+      if (opening <= 0 && !hasAnyDailyActivity(daily)) return;
 
       customers.push({
         sourceFile: fileName,
@@ -327,8 +342,8 @@ function parseGrocery(wb: ExcelJS.Workbook, fileName: string): CustomerData[] {
     if (!colBStr || SKIP_B_NORMS.has(colBNorm)) return;
 
     const daily = extractDailyData(v, daySlots);
-    const opening = daily.length > 0 ? daily[0].opening : (cellNum(v[3]) ?? 0);
-    if (opening <= 0) return;
+    const opening = cellNum(v[3]) ?? 0;
+    if (opening <= 0 && !hasAnyDailyActivity(daily)) return;
 
     customers.push({
       sourceFile: fileName,
@@ -349,6 +364,22 @@ function readSubtotalRow(ws: ExcelJS.Worksheet, rowNum: number): number | null {
   const row = ws.getRow(rowNum);
   const v = row.values as ExcelJS.CellValue[];
   return cellNum(v[3]) ?? cellNum(v[1]) ?? null;
+}
+
+function customerKey(c: CustomerData): string {
+  return `${c.section}|${c.nonMoving ? 'non-moving' : 'regular'}|${normalizeArabic(c.name)}`;
+}
+
+function appendExtraOnlyRows(primary: CustomerData[], extra: CustomerData[]): CustomerData[] {
+  const seen = new Set(primary.map(customerKey));
+  const out = [...primary];
+  for (const row of extra) {
+    const key = customerKey(row);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(row);
+  }
+  return out;
 }
 
 function checkSubtotal(
@@ -381,6 +412,7 @@ async function main(): Promise<void> {
   console.log('║  APRIL 2026 DEBTS — EXCEL → JSON EXTRACTOR  ║');
   console.log('╚══════════════════════════════════════════════╝');
   console.log(`  Grocery (latest.xlsx):  ${FILE_GROCERY}`);
+  console.log(`  Grocery extra:          ${fs.existsSync(FILE_GROCERY_EXTRA) ? FILE_GROCERY_EXTRA : '(not present)'}`);
   console.log(`  Bakery  (latest2.xlsx): ${FILE_BAKERY}`);
   console.log(`  Output:                 ${OUT_FILE}`);
   console.log(`  Subtotal assert:        ${NO_ASSERT ? 'disabled (--no-assert)' : 'enabled'}`);
@@ -399,12 +431,27 @@ async function main(): Promise<void> {
   const groceryWb = new ExcelJS.Workbook();
   await groceryWb.xlsx.readFile(FILE_GROCERY);
 
+  let groceryExtraWb: ExcelJS.Workbook | null = null;
+  if (fs.existsSync(FILE_GROCERY_EXTRA)) {
+    groceryExtraWb = new ExcelJS.Workbook();
+    await groceryExtraWb.xlsx.readFile(FILE_GROCERY_EXTRA);
+  }
+
   const bakeryWb = new ExcelJS.Workbook();
   await bakeryWb.xlsx.readFile(FILE_BAKERY);
 
   // Parse
   console.log('Parsing grocery workbook (latest.xlsx)...');
-  const groceryCustomers = parseGrocery(groceryWb, path.basename(FILE_GROCERY));
+  let groceryCustomers = parseGrocery(groceryWb, path.basename(FILE_GROCERY));
+
+  let groceryExtraCustomers: CustomerData[] = [];
+  if (groceryExtraWb) {
+    console.log(`Parsing extra grocery workbook (${path.basename(FILE_GROCERY_EXTRA)})...`);
+    groceryExtraCustomers = parseGrocery(groceryExtraWb, path.basename(FILE_GROCERY_EXTRA));
+    const before = groceryCustomers.length;
+    groceryCustomers = appendExtraOnlyRows(groceryCustomers, groceryExtraCustomers);
+    console.log(`  Extra-only grocery rows appended: ${groceryCustomers.length - before}`);
+  }
 
   console.log('Parsing bakery workbook  (latest2.xlsx)...');
   const bakeryCustomers = parseBakery(bakeryWb, path.basename(FILE_BAKERY));
@@ -453,6 +500,22 @@ async function main(): Promise<void> {
   console.log(`  Total:                          ${all.length}`);
 
   // ── Build and write JSON ───────────────────────────────────────────────────
+  const extraBaseName = path.basename(FILE_GROCERY_EXTRA);
+  const extraOnlyCustomers = groceryCustomers.filter((c) => c.sourceFile === extraBaseName);
+  const extraSource = extraOnlyCustomers.length > 0
+    ? [{
+        file: extraBaseName,
+        subsections: [
+          {
+            section: '2b' as SectionTag,
+            title: 'Extra grocery rows appended only when missing from latest.xlsx',
+            customers: extraOnlyCustomers.length,
+            subtotal: extraOnlyCustomers.reduce((s, c) => s + c.openingBalanceApril1, 0),
+          },
+        ],
+      }]
+    : [];
+
   const output: AprilDebtsJson = {
     extractedAt: new Date().toISOString(),
     sources: [
@@ -464,6 +527,7 @@ async function main(): Promise<void> {
           { section: '2b', title: 'مديونية غير متحركة',      customers: count('2b', true),  subtotal: t2b_nm, nonMoving: true },
         ],
       },
+      ...extraSource,
       {
         file: path.basename(FILE_BAKERY),
         subsections: [

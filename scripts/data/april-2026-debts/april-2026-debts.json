@@ -1,5 +1,5 @@
 {
-  "extractedAt": "2026-05-01T17:55:03.989Z",
+  "extractedAt": "2026-05-02T05:27:41.272Z",
   "sources": [
     {
       "file": "latest.xlsx",
@@ -7,13 +7,13 @@
         {
           "section": "2a",
           "title": "مديونية منتجات الجملة",
-          "customers": 7,
+          "customers": 14,
           "subtotal": 34232200
         },
         {
           "section": "2b",
           "title": "مديونية القطاعي- منتجات",
-          "customers": 18,
+          "customers": 30,
           "subtotal": 15575500
         },
         {
@@ -31,13 +31,13 @@
         {
           "section": "1a",
           "title": "ديون 25 كيلو - مجموعة 1",
-          "customers": 48,
+          "customers": 56,
           "subtotal": 412445065
         },
         {
           "section": "1b",
           "title": "ديون 25 كيلو - مجموعة 2",
-          "customers": 11,
+          "customers": 15,
           "subtotal": 208794665
         }
       ]
@@ -1655,6 +1655,661 @@
     },
     {
       "sourceFile": "latest.xlsx",
+      "section": "2a",
+      "rowNum": 8,
+      "name": "محمد مهدي",
+      "openingBalanceApril1": 0,
+      "nonMoving": false,
+      "daily": [
+        {
+          "date": "2026-04-05",
+          "opening": 0,
+          "description": null,
+          "debt": 789000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 789000
+        },
+        {
+          "date": "2026-04-06",
+          "opening": 789000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 789000
+        },
+        {
+          "date": "2026-04-07",
+          "opening": 789000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 789000
+        },
+        {
+          "date": "2026-04-08",
+          "opening": 789000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 789000
+        },
+        {
+          "date": "2026-04-09",
+          "opening": 789000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 789000
+        },
+        {
+          "date": "2026-04-10",
+          "opening": 789000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 789000
+        },
+        {
+          "date": "2026-04-11",
+          "opening": 789000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 789000
+        },
+        {
+          "date": "2026-04-12",
+          "opening": 789000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 789000,
+          "closing": 0
+        },
+        {
+          "date": "2026-04-20",
+          "opening": 0,
+          "description": null,
+          "debt": 1315000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1315000
+        },
+        {
+          "date": "2026-04-21",
+          "opening": 1315000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1315000
+        },
+        {
+          "date": "2026-04-22",
+          "opening": 1315000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1315000
+        },
+        {
+          "date": "2026-04-23",
+          "opening": 1315000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1315000
+        },
+        {
+          "date": "2026-04-24",
+          "opening": 1315000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1315000
+        },
+        {
+          "date": "2026-04-25",
+          "opening": 1315000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1315000
+        },
+        {
+          "date": "2026-04-26",
+          "opening": 1315000,
+          "description": null,
+          "debt": 0,
+          "cash": 1315000,
+          "bank": 0,
+          "closing": 0
+        },
+        {
+          "date": "2026-04-30",
+          "opening": 0,
+          "description": null,
+          "debt": 2630000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2630000
+        },
+        {
+          "date": "2026-05-01",
+          "opening": 2630000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2630000
+        }
+      ]
+    },
+    {
+      "sourceFile": "latest.xlsx",
+      "section": "2a",
+      "rowNum": 9,
+      "name": "احمد خالد البر",
+      "openingBalanceApril1": 0,
+      "nonMoving": false,
+      "daily": [
+        {
+          "date": "2026-04-09",
+          "opening": 0,
+          "description": null,
+          "debt": 10920000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 10920000
+        },
+        {
+          "date": "2026-04-10",
+          "opening": 10920000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 10920000
+        },
+        {
+          "date": "2026-04-11",
+          "opening": 10920000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 10920000
+        },
+        {
+          "date": "2026-04-12",
+          "opening": 10920000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 10920000
+        },
+        {
+          "date": "2026-04-13",
+          "opening": 10920000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 10920000
+        },
+        {
+          "date": "2026-04-14",
+          "opening": 10920000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 10920000
+        },
+        {
+          "date": "2026-04-15",
+          "opening": 10920000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 10920000
+        },
+        {
+          "date": "2026-04-16",
+          "opening": 10920000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 10920000
+        },
+        {
+          "date": "2026-04-17",
+          "opening": 10920000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 10920000
+        },
+        {
+          "date": "2026-04-18",
+          "opening": 10920000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 10920000
+        },
+        {
+          "date": "2026-04-19",
+          "opening": 10920000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 10920000
+        },
+        {
+          "date": "2026-04-20",
+          "opening": 10920000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 4920000,
+          "closing": 6000000
+        },
+        {
+          "date": "2026-04-21",
+          "opening": 6000000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 1000000,
+          "closing": 5000000
+        },
+        {
+          "date": "2026-04-22",
+          "opening": 5000000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 5000000
+        },
+        {
+          "date": "2026-04-23",
+          "opening": 5000000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 3500000,
+          "closing": 1500000
+        },
+        {
+          "date": "2026-04-24",
+          "opening": 1500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1500000
+        },
+        {
+          "date": "2026-04-25",
+          "opening": 1500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1500000
+        },
+        {
+          "date": "2026-04-26",
+          "opening": 1500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1500000
+        },
+        {
+          "date": "2026-04-27",
+          "opening": 1500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1500000
+        },
+        {
+          "date": "2026-04-28",
+          "opening": 1500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 1500000,
+          "closing": 0
+        }
+      ]
+    },
+    {
+      "sourceFile": "latest.xlsx",
+      "section": "2a",
+      "rowNum": 10,
+      "name": "عبد الوهاب اب سم",
+      "openingBalanceApril1": 0,
+      "nonMoving": false,
+      "daily": [
+        {
+          "date": "2026-04-14",
+          "opening": 0,
+          "description": null,
+          "debt": 203100,
+          "cash": 0,
+          "bank": 0,
+          "closing": 203100
+        },
+        {
+          "date": "2026-04-15",
+          "opening": 203100,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 203100
+        },
+        {
+          "date": "2026-04-16",
+          "opening": 203100,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 203100
+        },
+        {
+          "date": "2026-04-17",
+          "opening": 203100,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 203100
+        },
+        {
+          "date": "2026-04-18",
+          "opening": 203100,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 203100
+        },
+        {
+          "date": "2026-04-19",
+          "opening": 203100,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 203100
+        },
+        {
+          "date": "2026-04-20",
+          "opening": 203100,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 203100
+        },
+        {
+          "date": "2026-04-21",
+          "opening": 203100,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 203100
+        },
+        {
+          "date": "2026-04-22",
+          "opening": 203100,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 203100
+        },
+        {
+          "date": "2026-04-23",
+          "opening": 203100,
+          "description": null,
+          "debt": 0,
+          "cash": 203100,
+          "bank": 0,
+          "closing": 0
+        }
+      ]
+    },
+    {
+      "sourceFile": "latest.xlsx",
+      "section": "2a",
+      "rowNum": 11,
+      "name": "عبد اللطيف الجيلي",
+      "openingBalanceApril1": 0,
+      "nonMoving": false,
+      "daily": [
+        {
+          "date": "2026-04-14",
+          "opening": 0,
+          "description": null,
+          "debt": 1410500,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1410500
+        },
+        {
+          "date": "2026-04-15",
+          "opening": 1410500,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 1410500,
+          "closing": 0
+        }
+      ]
+    },
+    {
+      "sourceFile": "latest.xlsx",
+      "section": "2a",
+      "rowNum": 12,
+      "name": "سعد موسي",
+      "openingBalanceApril1": 0,
+      "nonMoving": false,
+      "daily": [
+        {
+          "date": "2026-04-23",
+          "opening": 0,
+          "description": null,
+          "debt": 1106500,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1106500
+        },
+        {
+          "date": "2026-04-24",
+          "opening": 1106500,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1106500
+        },
+        {
+          "date": "2026-04-25",
+          "opening": 1106500,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1106500
+        },
+        {
+          "date": "2026-04-26",
+          "opening": 1106500,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1106500
+        },
+        {
+          "date": "2026-04-27",
+          "opening": 1106500,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1106500
+        },
+        {
+          "date": "2026-04-28",
+          "opening": 1106500,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1106500
+        },
+        {
+          "date": "2026-04-29",
+          "opening": 1106500,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1106500
+        },
+        {
+          "date": "2026-04-30",
+          "opening": 1106500,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 1106500,
+          "closing": 0
+        }
+      ]
+    },
+    {
+      "sourceFile": "latest.xlsx",
+      "section": "2a",
+      "rowNum": 13,
+      "name": "التوم حميدان - معتوق",
+      "openingBalanceApril1": 0,
+      "nonMoving": false,
+      "daily": [
+        {
+          "date": "2026-04-26",
+          "opening": 0,
+          "description": null,
+          "debt": 14330000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 14330000
+        },
+        {
+          "date": "2026-04-27",
+          "opening": 14330000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 14330000
+        },
+        {
+          "date": "2026-04-28",
+          "opening": 14330000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 14330000
+        },
+        {
+          "date": "2026-04-29",
+          "opening": 14330000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 14330000
+        },
+        {
+          "date": "2026-04-30",
+          "opening": 14330000,
+          "description": null,
+          "debt": 26100000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 40430000
+        },
+        {
+          "date": "2026-05-01",
+          "opening": 40430000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 40430000
+        }
+      ]
+    },
+    {
+      "sourceFile": "latest.xlsx",
+      "section": "2a",
+      "rowNum": 14,
+      "name": "هاشم يوسف",
+      "openingBalanceApril1": 0,
+      "nonMoving": false,
+      "daily": [
+        {
+          "date": "2026-04-30",
+          "opening": 0,
+          "description": null,
+          "debt": 322400,
+          "cash": 0,
+          "bank": 0,
+          "closing": 322400
+        },
+        {
+          "date": "2026-05-01",
+          "opening": 322400,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 322400
+        }
+      ]
+    },
+    {
+      "sourceFile": "latest.xlsx",
       "section": "2b",
       "rowNum": 1,
       "name": "مهند - البيت السعيد",
@@ -3093,6 +3748,88 @@
     {
       "sourceFile": "latest.xlsx",
       "section": "2b",
+      "rowNum": 10,
+      "name": "عبد الرؤوف محمد- القرشي",
+      "openingBalanceApril1": 0,
+      "nonMoving": false,
+      "daily": [
+        {
+          "date": "2026-04-09",
+          "opening": 0,
+          "description": null,
+          "debt": 1500000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1500000
+        },
+        {
+          "date": "2026-04-10",
+          "opening": 1500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1500000
+        },
+        {
+          "date": "2026-04-11",
+          "opening": 1500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1500000
+        },
+        {
+          "date": "2026-04-12",
+          "opening": 1500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1500000
+        },
+        {
+          "date": "2026-04-13",
+          "opening": 1500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1500000
+        },
+        {
+          "date": "2026-04-14",
+          "opening": 1500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1500000
+        },
+        {
+          "date": "2026-04-15",
+          "opening": 1500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1500000
+        },
+        {
+          "date": "2026-04-16",
+          "opening": 1500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 1500000,
+          "closing": 0
+        }
+      ]
+    },
+    {
+      "sourceFile": "latest.xlsx",
+      "section": "2b",
       "rowNum": 13,
       "name": "حمدي المودة",
       "openingBalanceApril1": 1225000,
@@ -3277,6 +4014,259 @@
           "cash": 0,
           "bank": 700000,
           "closing": 0
+        }
+      ]
+    },
+    {
+      "sourceFile": "latest.xlsx",
+      "section": "2b",
+      "rowNum": 14,
+      "name": "دينق - شارع الدكاترة",
+      "openingBalanceApril1": 0,
+      "nonMoving": false,
+      "daily": [
+        {
+          "date": "2026-04-05",
+          "opening": 0,
+          "description": null,
+          "debt": 840000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 840000
+        },
+        {
+          "date": "2026-04-06",
+          "opening": 840000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 840000
+        },
+        {
+          "date": "2026-04-07",
+          "opening": 840000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 840000
+        },
+        {
+          "date": "2026-04-08",
+          "opening": 840000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 840000
+        },
+        {
+          "date": "2026-04-09",
+          "opening": 840000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 840000
+        },
+        {
+          "date": "2026-04-10",
+          "opening": 840000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 840000
+        },
+        {
+          "date": "2026-04-11",
+          "opening": 840000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 840000
+        },
+        {
+          "date": "2026-04-12",
+          "opening": 840000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 840000
+        },
+        {
+          "date": "2026-04-13",
+          "opening": 840000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 840000
+        },
+        {
+          "date": "2026-04-14",
+          "opening": 840000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 840000
+        },
+        {
+          "date": "2026-04-15",
+          "opening": 840000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 840000
+        },
+        {
+          "date": "2026-04-16",
+          "opening": 840000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 840000
+        },
+        {
+          "date": "2026-04-17",
+          "opening": 840000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 840000
+        },
+        {
+          "date": "2026-04-18",
+          "opening": 840000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 840000
+        },
+        {
+          "date": "2026-04-19",
+          "opening": 840000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 840000
+        },
+        {
+          "date": "2026-04-20",
+          "opening": 840000,
+          "description": null,
+          "debt": 800000,
+          "cash": 0,
+          "bank": 840000,
+          "closing": 800000
+        },
+        {
+          "date": "2026-04-21",
+          "opening": 800000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 800000
+        },
+        {
+          "date": "2026-04-22",
+          "opening": 800000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 800000
+        },
+        {
+          "date": "2026-04-23",
+          "opening": 800000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 800000
+        },
+        {
+          "date": "2026-04-24",
+          "opening": 800000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 800000
+        },
+        {
+          "date": "2026-04-25",
+          "opening": 800000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 800000
+        },
+        {
+          "date": "2026-04-26",
+          "opening": 800000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 800000
+        },
+        {
+          "date": "2026-04-27",
+          "opening": 800000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 800000
+        },
+        {
+          "date": "2026-04-28",
+          "opening": 800000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 800000
+        },
+        {
+          "date": "2026-04-29",
+          "opening": 800000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 800000
+        },
+        {
+          "date": "2026-04-30",
+          "opening": 800000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 800000
+        },
+        {
+          "date": "2026-05-01",
+          "opening": 800000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 800000
         }
       ]
     },
@@ -4227,6 +5217,224 @@
     {
       "sourceFile": "latest.xlsx",
       "section": "2b",
+      "rowNum": 32,
+      "name": "عماد الشايقي",
+      "openingBalanceApril1": 0,
+      "nonMoving": false,
+      "daily": [
+        {
+          "date": "2026-04-29",
+          "opening": 0,
+          "description": null,
+          "debt": 245000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 245000
+        },
+        {
+          "date": "2026-04-30",
+          "opening": 245000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 245000
+        },
+        {
+          "date": "2026-05-01",
+          "opening": 245000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 245000
+        }
+      ]
+    },
+    {
+      "sourceFile": "latest.xlsx",
+      "section": "2b",
+      "rowNum": 34,
+      "name": "محمد الشريف- العيادات",
+      "openingBalanceApril1": 0,
+      "nonMoving": false,
+      "daily": [
+        {
+          "date": "2026-04-11",
+          "opening": 0,
+          "description": null,
+          "debt": 500000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-12",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-13",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-14",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-15",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-16",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-17",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-18",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-19",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-20",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 500000,
+          "closing": 0
+        },
+        {
+          "date": "2026-04-23",
+          "opening": 0,
+          "description": null,
+          "debt": 500000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-24",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-25",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-26",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-27",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-28",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-29",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-30",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-05-01",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        }
+      ]
+    },
+    {
+      "sourceFile": "latest.xlsx",
+      "section": "2b",
       "rowNum": 35,
       "name": "عادل ابراهيم-  نادي المريخ",
       "openingBalanceApril1": 490000,
@@ -4485,6 +5693,842 @@
           "cash": 875000,
           "bank": 0,
           "closing": 0
+        }
+      ]
+    },
+    {
+      "sourceFile": "latest.xlsx",
+      "section": "2b",
+      "rowNum": 41,
+      "name": "احمد المندوب",
+      "openingBalanceApril1": 0,
+      "nonMoving": false,
+      "daily": [
+        {
+          "date": "2026-04-08",
+          "opening": 0,
+          "description": null,
+          "debt": 1373000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1373000
+        },
+        {
+          "date": "2026-04-09",
+          "opening": 1373000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 1373000,
+          "closing": 0
+        },
+        {
+          "date": "2026-04-11",
+          "opening": 0,
+          "description": null,
+          "debt": 3299850,
+          "cash": 0,
+          "bank": 0,
+          "closing": 3299850
+        },
+        {
+          "date": "2026-04-12",
+          "opening": 3299850,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 3299850,
+          "closing": 0
+        },
+        {
+          "date": "2026-04-13",
+          "opening": 0,
+          "description": null,
+          "debt": 1803200,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1803200
+        },
+        {
+          "date": "2026-04-14",
+          "opening": 1803200,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 1803200,
+          "closing": 0
+        },
+        {
+          "date": "2026-04-15",
+          "opening": 0,
+          "description": null,
+          "debt": 11669150,
+          "cash": 0,
+          "bank": 0,
+          "closing": 11669150
+        },
+        {
+          "date": "2026-04-16",
+          "opening": 11669150,
+          "description": null,
+          "debt": 8205350,
+          "cash": 0,
+          "bank": 9000000,
+          "closing": 10874500
+        },
+        {
+          "date": "2026-04-17",
+          "opening": 10874500,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 10874500
+        },
+        {
+          "date": "2026-04-18",
+          "opening": 10874500,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 4700000,
+          "closing": 6174500
+        },
+        {
+          "date": "2026-04-19",
+          "opening": 6174500,
+          "description": null,
+          "debt": 6484950,
+          "cash": 0,
+          "bank": 6174500,
+          "closing": 6484950
+        },
+        {
+          "date": "2026-04-20",
+          "opening": 6484950,
+          "description": null,
+          "debt": 4482167,
+          "cash": 1528900,
+          "bank": 3000000,
+          "closing": 6438217
+        },
+        {
+          "date": "2026-04-21",
+          "opening": 6438217,
+          "description": null,
+          "debt": 5624950,
+          "cash": 0,
+          "bank": 6438217,
+          "closing": 5624950
+        },
+        {
+          "date": "2026-04-22",
+          "opening": 5624950,
+          "description": null,
+          "debt": 6656450,
+          "cash": 0,
+          "bank": 3000000,
+          "closing": 9281400
+        },
+        {
+          "date": "2026-04-23",
+          "opening": 9281400,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 6000000,
+          "closing": 3281400
+        },
+        {
+          "date": "2026-04-24",
+          "opening": 3281400,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 3281400
+        },
+        {
+          "date": "2026-04-25",
+          "opening": 3281400,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 3281400
+        },
+        {
+          "date": "2026-04-26",
+          "opening": 3281400,
+          "description": null,
+          "debt": 3114017,
+          "cash": 0,
+          "bank": 3281400,
+          "closing": 3114017
+        },
+        {
+          "date": "2026-04-27",
+          "opening": 3114017,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 700000,
+          "closing": 2414017
+        },
+        {
+          "date": "2026-04-28",
+          "opening": 2414017,
+          "description": null,
+          "debt": 707750,
+          "cash": 0,
+          "bank": 0,
+          "closing": 3121767
+        },
+        {
+          "date": "2026-04-29",
+          "opening": 3121767,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 3121767
+        },
+        {
+          "date": "2026-04-30",
+          "opening": 3121767,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 3121767
+        },
+        {
+          "date": "2026-05-01",
+          "opening": 3121767,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 3121767
+        }
+      ]
+    },
+    {
+      "sourceFile": "latest.xlsx",
+      "section": "2b",
+      "rowNum": 42,
+      "name": "جلال يوسف",
+      "openingBalanceApril1": 0,
+      "nonMoving": false,
+      "daily": [
+        {
+          "date": "2026-04-16",
+          "opening": 0,
+          "description": null,
+          "debt": 1000000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1000000
+        },
+        {
+          "date": "2026-04-17",
+          "opening": 1000000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1000000
+        },
+        {
+          "date": "2026-04-18",
+          "opening": 1000000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1000000
+        },
+        {
+          "date": "2026-04-19",
+          "opening": 1000000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1000000
+        },
+        {
+          "date": "2026-04-20",
+          "opening": 1000000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1000000
+        },
+        {
+          "date": "2026-04-21",
+          "opening": 1000000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1000000
+        },
+        {
+          "date": "2026-04-22",
+          "opening": 1000000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1000000
+        },
+        {
+          "date": "2026-04-23",
+          "opening": 1000000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1000000
+        },
+        {
+          "date": "2026-04-24",
+          "opening": 1000000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1000000
+        },
+        {
+          "date": "2026-04-25",
+          "opening": 1000000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1000000
+        },
+        {
+          "date": "2026-04-26",
+          "opening": 1000000,
+          "description": null,
+          "debt": 0,
+          "cash": 1000000,
+          "bank": 0,
+          "closing": 0
+        }
+      ]
+    },
+    {
+      "sourceFile": "latest.xlsx",
+      "section": "2b",
+      "rowNum": 43,
+      "name": "سامي محمد- المستشفي",
+      "openingBalanceApril1": 0,
+      "nonMoving": false,
+      "daily": [
+        {
+          "date": "2026-04-19",
+          "opening": 0,
+          "description": null,
+          "debt": 500000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-20",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-21",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-22",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-23",
+          "opening": 500000,
+          "description": null,
+          "debt": 500000,
+          "cash": 0,
+          "bank": 500000,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-24",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-25",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-26",
+          "opening": 500000,
+          "description": null,
+          "debt": 500000,
+          "cash": 500000,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-27",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-28",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-29",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-30",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-05-01",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        }
+      ]
+    },
+    {
+      "sourceFile": "latest.xlsx",
+      "section": "2b",
+      "rowNum": 44,
+      "name": "عبد الرحمن- ابو يوسف",
+      "openingBalanceApril1": 0,
+      "nonMoving": false,
+      "daily": [
+        {
+          "date": "2026-04-20",
+          "opening": 0,
+          "description": null,
+          "debt": 725000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 725000
+        },
+        {
+          "date": "2026-04-21",
+          "opening": 725000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 725000
+        },
+        {
+          "date": "2026-04-22",
+          "opening": 725000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 725000
+        },
+        {
+          "date": "2026-04-23",
+          "opening": 725000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 725000
+        },
+        {
+          "date": "2026-04-24",
+          "opening": 725000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 725000
+        },
+        {
+          "date": "2026-04-25",
+          "opening": 725000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 725000
+        },
+        {
+          "date": "2026-04-26",
+          "opening": 725000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 725000
+        },
+        {
+          "date": "2026-04-27",
+          "opening": 725000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 725000
+        },
+        {
+          "date": "2026-04-28",
+          "opening": 725000,
+          "description": null,
+          "debt": 625000,
+          "cash": 0,
+          "bank": 725000,
+          "closing": 625000
+        },
+        {
+          "date": "2026-04-29",
+          "opening": 625000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 625000
+        },
+        {
+          "date": "2026-04-30",
+          "opening": 625000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 625000
+        },
+        {
+          "date": "2026-05-01",
+          "opening": 625000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 625000
+        }
+      ]
+    },
+    {
+      "sourceFile": "latest.xlsx",
+      "section": "2b",
+      "rowNum": 45,
+      "name": "بكري عادل ابراهيم",
+      "openingBalanceApril1": 0,
+      "nonMoving": false,
+      "daily": [
+        {
+          "date": "2026-04-22",
+          "opening": 0,
+          "description": null,
+          "debt": 306250,
+          "cash": 0,
+          "bank": 0,
+          "closing": 306250
+        },
+        {
+          "date": "2026-04-23",
+          "opening": 306250,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 306250
+        },
+        {
+          "date": "2026-04-24",
+          "opening": 306250,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 306250
+        },
+        {
+          "date": "2026-04-25",
+          "opening": 306250,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 306250
+        },
+        {
+          "date": "2026-04-26",
+          "opening": 306250,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 306250
+        },
+        {
+          "date": "2026-04-27",
+          "opening": 306250,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 306250
+        },
+        {
+          "date": "2026-04-28",
+          "opening": 306250,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 306250
+        },
+        {
+          "date": "2026-04-29",
+          "opening": 306250,
+          "description": null,
+          "debt": 0,
+          "cash": 306250,
+          "bank": 0,
+          "closing": 0
+        }
+      ]
+    },
+    {
+      "sourceFile": "latest.xlsx",
+      "section": "2b",
+      "rowNum": 46,
+      "name": "محمد- بقالة الواحة",
+      "openingBalanceApril1": 0,
+      "nonMoving": false,
+      "daily": [
+        {
+          "date": "2026-04-22",
+          "opening": 0,
+          "description": null,
+          "debt": 570000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 570000
+        },
+        {
+          "date": "2026-04-23",
+          "opening": 570000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 570000
+        },
+        {
+          "date": "2026-04-24",
+          "opening": 570000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 570000
+        },
+        {
+          "date": "2026-04-25",
+          "opening": 570000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 570000
+        },
+        {
+          "date": "2026-04-26",
+          "opening": 570000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 570000
+        },
+        {
+          "date": "2026-04-27",
+          "opening": 570000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 570000
+        },
+        {
+          "date": "2026-04-28",
+          "opening": 570000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 570000
+        },
+        {
+          "date": "2026-04-29",
+          "opening": 570000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 570000
+        },
+        {
+          "date": "2026-04-30",
+          "opening": 570000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 570000
+        },
+        {
+          "date": "2026-05-01",
+          "opening": 570000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 570000
+        }
+      ]
+    },
+    {
+      "sourceFile": "latest.xlsx",
+      "section": "2b",
+      "rowNum": 47,
+      "name": "عبدالله خميس- كافتريا دوكا",
+      "openingBalanceApril1": 0,
+      "nonMoving": false,
+      "daily": [
+        {
+          "date": "2026-04-27",
+          "opening": 0,
+          "description": null,
+          "debt": 300000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 300000
+        },
+        {
+          "date": "2026-04-28",
+          "opening": 300000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 300000
+        },
+        {
+          "date": "2026-04-29",
+          "opening": 300000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 300000
+        },
+        {
+          "date": "2026-04-30",
+          "opening": 300000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 300000
+        },
+        {
+          "date": "2026-05-01",
+          "opening": 300000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 300000
+        }
+      ]
+    },
+    {
+      "sourceFile": "latest.xlsx",
+      "section": "2b",
+      "rowNum": 48,
+      "name": "محمد- الحرمين",
+      "openingBalanceApril1": 0,
+      "nonMoving": false,
+      "daily": [
+        {
+          "date": "2026-04-30",
+          "opening": 0,
+          "description": null,
+          "debt": 400000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 400000
+        },
+        {
+          "date": "2026-05-01",
+          "opening": 400000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 400000
         }
       ]
     },
@@ -27262,6 +29306,70 @@
     {
       "sourceFile": "latest2.xlsx",
       "section": "1a",
+      "rowNum": 58,
+      "name": "سلفيات العتالة",
+      "openingBalanceApril1": 0,
+      "nonMoving": false,
+      "daily": [
+        {
+          "date": "2026-04-23",
+          "opening": 0,
+          "description": null,
+          "debt": 160000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 160000
+        },
+        {
+          "date": "2026-04-24",
+          "opening": 160000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 160000
+        },
+        {
+          "date": "2026-04-25",
+          "opening": 160000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 160000
+        },
+        {
+          "date": "2026-04-26",
+          "opening": 160000,
+          "description": null,
+          "debt": 0,
+          "cash": 160000,
+          "bank": 0,
+          "closing": 0
+        },
+        {
+          "date": "2026-04-30",
+          "opening": 0,
+          "description": null,
+          "debt": 140000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 140000
+        },
+        {
+          "date": "2026-05-01",
+          "opening": 140000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 140000
+        }
+      ]
+    },
+    {
+      "sourceFile": "latest2.xlsx",
+      "section": "1a",
       "rowNum": 60,
       "name": "مخبز كشكوش - الامين شربك",
       "openingBalanceApril1": 5243730,
@@ -29574,6 +31682,169 @@
     {
       "sourceFile": "latest2.xlsx",
       "section": "1a",
+      "rowNum": 73,
+      "name": "عائد زين العابدين",
+      "openingBalanceApril1": 0,
+      "nonMoving": false,
+      "daily": [
+        {
+          "date": "2026-04-02",
+          "opening": 0,
+          "description": null,
+          "debt": 132700,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132700
+        },
+        {
+          "date": "2026-04-03",
+          "opening": 132700,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132700
+        },
+        {
+          "date": "2026-04-04",
+          "opening": 132700,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132700
+        },
+        {
+          "date": "2026-04-05",
+          "opening": 132700,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132700
+        },
+        {
+          "date": "2026-04-06",
+          "opening": 132700,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132700
+        },
+        {
+          "date": "2026-04-07",
+          "opening": 132700,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132700
+        },
+        {
+          "date": "2026-04-08",
+          "opening": 132700,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132700
+        },
+        {
+          "date": "2026-04-09",
+          "opening": 132700,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132700
+        },
+        {
+          "date": "2026-04-10",
+          "opening": 132700,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132700
+        },
+        {
+          "date": "2026-04-11",
+          "opening": 132700,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132700
+        },
+        {
+          "date": "2026-04-12",
+          "opening": 132700,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132700
+        },
+        {
+          "date": "2026-04-13",
+          "opening": 132700,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132700
+        },
+        {
+          "date": "2026-04-14",
+          "opening": 132700,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132700
+        },
+        {
+          "date": "2026-04-15",
+          "opening": 132700,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132700
+        },
+        {
+          "date": "2026-04-16",
+          "opening": 132700,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132700
+        },
+        {
+          "date": "2026-04-17",
+          "opening": 132700,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132700
+        },
+        {
+          "date": "2026-04-18",
+          "opening": 132700,
+          "description": null,
+          "debt": 0,
+          "cash": 132700,
+          "bank": 0,
+          "closing": 0
+        }
+      ]
+    },
+    {
+      "sourceFile": "latest2.xlsx",
+      "section": "1a",
       "rowNum": 74,
       "name": "محمد عوض",
       "openingBalanceApril1": 3125000,
@@ -30533,6 +32804,295 @@
     {
       "sourceFile": "latest2.xlsx",
       "section": "1a",
+      "rowNum": 79,
+      "name": "سند صالح - الناله",
+      "openingBalanceApril1": 0,
+      "nonMoving": false,
+      "daily": [
+        {
+          "date": "2026-04-01",
+          "opening": 0,
+          "description": null,
+          "debt": 2247900,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2247900
+        },
+        {
+          "date": "2026-04-02",
+          "opening": 2247900,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2247900
+        },
+        {
+          "date": "2026-04-03",
+          "opening": 2247900,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2247900
+        },
+        {
+          "date": "2026-04-04",
+          "opening": 2247900,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2247900
+        },
+        {
+          "date": "2026-04-05",
+          "opening": 2247900,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2247900
+        },
+        {
+          "date": "2026-04-06",
+          "opening": 2247900,
+          "description": null,
+          "debt": 0,
+          "cash": 1000000,
+          "bank": 0,
+          "closing": 1247900
+        },
+        {
+          "date": "2026-04-07",
+          "opening": 1247900,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1247900
+        },
+        {
+          "date": "2026-04-08",
+          "opening": 1247900,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1247900
+        },
+        {
+          "date": "2026-04-09",
+          "opening": 1247900,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1247900
+        },
+        {
+          "date": "2026-04-10",
+          "opening": 1247900,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1247900
+        },
+        {
+          "date": "2026-04-11",
+          "opening": 1247900,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1247900
+        },
+        {
+          "date": "2026-04-12",
+          "opening": 1247900,
+          "description": null,
+          "debt": 2820000,
+          "cash": 1250000,
+          "bank": 0,
+          "closing": 2817900
+        },
+        {
+          "date": "2026-04-13",
+          "opening": 2817900,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2817900
+        },
+        {
+          "date": "2026-04-14",
+          "opening": 2817900,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2817900
+        },
+        {
+          "date": "2026-04-15",
+          "opening": 2817900,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2817900
+        },
+        {
+          "date": "2026-04-16",
+          "opening": 2817900,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2817900
+        },
+        {
+          "date": "2026-04-17",
+          "opening": 2817900,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2817900
+        },
+        {
+          "date": "2026-04-18",
+          "opening": 2817900,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2817900
+        },
+        {
+          "date": "2026-04-19",
+          "opening": 2817900,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2817900
+        },
+        {
+          "date": "2026-04-20",
+          "opening": 2817900,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2817900
+        },
+        {
+          "date": "2026-04-21",
+          "opening": 2817900,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2817900
+        },
+        {
+          "date": "2026-04-22",
+          "opening": 2817900,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2817900
+        },
+        {
+          "date": "2026-04-23",
+          "opening": 2817900,
+          "description": null,
+          "debt": 3525000,
+          "cash": 2818000,
+          "bank": 0,
+          "closing": 3524900
+        },
+        {
+          "date": "2026-04-24",
+          "opening": 3524900,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 3524900
+        },
+        {
+          "date": "2026-04-25",
+          "opening": 3524900,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 3524900
+        },
+        {
+          "date": "2026-04-26",
+          "opening": 3524900,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 3524900
+        },
+        {
+          "date": "2026-04-27",
+          "opening": 3524900,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 3524900
+        },
+        {
+          "date": "2026-04-28",
+          "opening": 3524900,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 3524900
+        },
+        {
+          "date": "2026-04-29",
+          "opening": 3524900,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 3524900
+        },
+        {
+          "date": "2026-04-30",
+          "opening": 3524900,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 3524900
+        },
+        {
+          "date": "2026-05-01",
+          "opening": 3524900,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 3524900
+        }
+      ]
+    },
+    {
+      "sourceFile": "latest2.xlsx",
+      "section": "1a",
       "rowNum": 80,
       "name": "وردي عتالي",
       "openingBalanceApril1": 100000,
@@ -30816,6 +33376,750 @@
           "cash": 0,
           "bank": 0,
           "closing": 100000
+        }
+      ]
+    },
+    {
+      "sourceFile": "latest2.xlsx",
+      "section": "1a",
+      "rowNum": 81,
+      "name": "مخبز الجمهور نادر الصادق",
+      "openingBalanceApril1": 0,
+      "nonMoving": false,
+      "daily": [
+        {
+          "date": "2026-04-15",
+          "opening": 0,
+          "description": null,
+          "debt": 2820000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2820000
+        },
+        {
+          "date": "2026-04-16",
+          "opening": 2820000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2820000
+        },
+        {
+          "date": "2026-04-17",
+          "opening": 2820000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2820000
+        },
+        {
+          "date": "2026-04-18",
+          "opening": 2820000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2820000
+        },
+        {
+          "date": "2026-04-19",
+          "opening": 2820000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2820000
+        },
+        {
+          "date": "2026-04-20",
+          "opening": 2820000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2820000
+        },
+        {
+          "date": "2026-04-21",
+          "opening": 2820000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2820000
+        },
+        {
+          "date": "2026-04-22",
+          "opening": 2820000,
+          "description": null,
+          "debt": 2820000,
+          "cash": 0,
+          "bank": 2820000,
+          "closing": 2820000
+        },
+        {
+          "date": "2026-04-23",
+          "opening": 2820000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2820000
+        },
+        {
+          "date": "2026-04-24",
+          "opening": 2820000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2820000
+        },
+        {
+          "date": "2026-04-25",
+          "opening": 2820000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2820000
+        },
+        {
+          "date": "2026-04-26",
+          "opening": 2820000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2820000
+        },
+        {
+          "date": "2026-04-27",
+          "opening": 2820000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2820000
+        },
+        {
+          "date": "2026-04-28",
+          "opening": 2820000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2820000
+        },
+        {
+          "date": "2026-04-29",
+          "opening": 2820000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2820000
+        },
+        {
+          "date": "2026-04-30",
+          "opening": 2820000,
+          "description": null,
+          "debt": 3525000,
+          "cash": 0,
+          "bank": 2820000,
+          "closing": 3525000
+        },
+        {
+          "date": "2026-05-01",
+          "opening": 3525000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 3525000
+        }
+      ]
+    },
+    {
+      "sourceFile": "latest2.xlsx",
+      "section": "1a",
+      "rowNum": 82,
+      "name": "محمد حامد - كمل نومك",
+      "openingBalanceApril1": 0,
+      "nonMoving": false,
+      "daily": [
+        {
+          "date": "2026-04-16",
+          "opening": 0,
+          "description": null,
+          "debt": 2100000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2100000
+        },
+        {
+          "date": "2026-04-17",
+          "opening": 2100000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2100000
+        },
+        {
+          "date": "2026-04-18",
+          "opening": 2100000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 100000,
+          "closing": 2000000
+        },
+        {
+          "date": "2026-04-19",
+          "opening": 2000000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2000000
+        },
+        {
+          "date": "2026-04-20",
+          "opening": 2000000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2000000
+        },
+        {
+          "date": "2026-04-21",
+          "opening": 2000000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2000000
+        },
+        {
+          "date": "2026-04-22",
+          "opening": 2000000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2000000
+        },
+        {
+          "date": "2026-04-23",
+          "opening": 2000000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2000000
+        },
+        {
+          "date": "2026-04-24",
+          "opening": 2000000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2000000
+        },
+        {
+          "date": "2026-04-25",
+          "opening": 2000000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2000000
+        },
+        {
+          "date": "2026-04-26",
+          "opening": 2000000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 2000000,
+          "closing": 0
+        },
+        {
+          "date": "2026-04-29",
+          "opening": 0,
+          "description": null,
+          "debt": 2825000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2825000
+        },
+        {
+          "date": "2026-04-30",
+          "opening": 2825000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 900000,
+          "closing": 1925000
+        },
+        {
+          "date": "2026-05-01",
+          "opening": 1925000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1925000
+        }
+      ]
+    },
+    {
+      "sourceFile": "latest2.xlsx",
+      "section": "1a",
+      "rowNum": 83,
+      "name": "مامون عوض الجيد",
+      "openingBalanceApril1": 0,
+      "nonMoving": false,
+      "daily": [
+        {
+          "date": "2026-04-19",
+          "opening": 0,
+          "description": null,
+          "debt": 12000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 12000
+        },
+        {
+          "date": "2026-04-20",
+          "opening": 12000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 12000
+        },
+        {
+          "date": "2026-04-21",
+          "opening": 12000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 12000
+        },
+        {
+          "date": "2026-04-22",
+          "opening": 12000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 12000,
+          "closing": 0
+        }
+      ]
+    },
+    {
+      "sourceFile": "latest2.xlsx",
+      "section": "1a",
+      "rowNum": 84,
+      "name": "بكري جعفر",
+      "openingBalanceApril1": 0,
+      "nonMoving": false,
+      "daily": [
+        {
+          "date": "2026-04-19",
+          "opening": 0,
+          "description": "سلفية",
+          "debt": 500000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-20",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-21",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-22",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-23",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-24",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-25",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-26",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-27",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-28",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-29",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-04-30",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        },
+        {
+          "date": "2026-05-01",
+          "opening": 500000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 500000
+        }
+      ]
+    },
+    {
+      "sourceFile": "latest2.xlsx",
+      "section": "1a",
+      "rowNum": 85,
+      "name": "ماهر بابكر العوامره",
+      "openingBalanceApril1": 0,
+      "nonMoving": false,
+      "daily": [
+        {
+          "date": "2026-04-20",
+          "opening": 0,
+          "description": null,
+          "debt": 372500,
+          "cash": 0,
+          "bank": 0,
+          "closing": 372500
+        },
+        {
+          "date": "2026-04-21",
+          "opening": 372500,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 372500
+        },
+        {
+          "date": "2026-04-22",
+          "opening": 372500,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 372500
+        },
+        {
+          "date": "2026-04-23",
+          "opening": 372500,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 372500,
+          "closing": 0
+        },
+        {
+          "date": "2026-04-30",
+          "opening": 0,
+          "description": null,
+          "debt": 320000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 320000
+        },
+        {
+          "date": "2026-05-01",
+          "opening": 320000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 320000
+        }
+      ]
+    },
+    {
+      "sourceFile": "latest2.xlsx",
+      "section": "1b",
+      "rowNum": 1,
+      "name": "محمددفع  الله اب سم",
+      "openingBalanceApril1": 0,
+      "nonMoving": false,
+      "daily": [
+        {
+          "date": "2026-04-01",
+          "opening": 0,
+          "description": null,
+          "debt": 100000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 100000
+        },
+        {
+          "date": "2026-04-02",
+          "opening": 100000,
+          "description": null,
+          "debt": 755000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 855000
+        },
+        {
+          "date": "2026-04-03",
+          "opening": 855000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 855000
+        },
+        {
+          "date": "2026-04-04",
+          "opening": 855000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 855000
+        },
+        {
+          "date": "2026-04-05",
+          "opening": 855000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 855000
+        },
+        {
+          "date": "2026-04-06",
+          "opening": 855000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 855000
+        },
+        {
+          "date": "2026-04-07",
+          "opening": 855000,
+          "description": null,
+          "debt": 100000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 955000
+        },
+        {
+          "date": "2026-04-08",
+          "opening": 955000,
+          "description": null,
+          "debt": 25000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 980000
+        },
+        {
+          "date": "2026-04-09",
+          "opening": 980000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 980000
+        },
+        {
+          "date": "2026-04-10",
+          "opening": 980000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 980000
+        },
+        {
+          "date": "2026-04-11",
+          "opening": 980000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 980000
+        },
+        {
+          "date": "2026-04-12",
+          "opening": 980000,
+          "description": null,
+          "debt": 100000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 1080000
+        },
+        {
+          "date": "2026-04-13",
+          "opening": 1080000,
+          "description": null,
+          "debt": 13770000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 14850000
+        },
+        {
+          "date": "2026-04-14",
+          "opening": 14850000,
+          "description": null,
+          "debt": 150000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 15000000
+        },
+        {
+          "date": "2026-04-15",
+          "opening": 15000000,
+          "description": null,
+          "debt": 1066000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 16066000
+        },
+        {
+          "date": "2026-04-16",
+          "opening": 16066000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 16066000
+        },
+        {
+          "date": "2026-04-17",
+          "opening": 16066000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 16066000
+        },
+        {
+          "date": "2026-04-18",
+          "opening": 16066000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 16066000
+        },
+        {
+          "date": "2026-04-19",
+          "opening": 16066000,
+          "description": null,
+          "debt": 100000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 16166000
+        },
+        {
+          "date": "2026-04-20",
+          "opening": 16166000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 16166000
+        },
+        {
+          "date": "2026-04-21",
+          "opening": 16166000,
+          "description": null,
+          "debt": 20200000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 36366000
+        },
+        {
+          "date": "2026-04-22",
+          "opening": 36366000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 36366000,
+          "closing": 0
         }
       ]
     },
@@ -31972,6 +35276,124 @@
           "cash": 0,
           "bank": 0,
           "closing": 13151562
+        }
+      ]
+    },
+    {
+      "sourceFile": "latest2.xlsx",
+      "section": "1b",
+      "rowNum": 16,
+      "name": "مخبز  زكي- الكريمت",
+      "openingBalanceApril1": 0,
+      "nonMoving": false,
+      "daily": [
+        {
+          "date": "2026-04-01",
+          "opening": 0,
+          "description": null,
+          "debt": 120750,
+          "cash": 0,
+          "bank": 0,
+          "closing": 120750
+        },
+        {
+          "date": "2026-04-02",
+          "opening": 120750,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 120750,
+          "closing": 0
+        },
+        {
+          "date": "2026-04-12",
+          "opening": 0,
+          "description": null,
+          "debt": 460000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 460000
+        },
+        {
+          "date": "2026-04-13",
+          "opening": 460000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 460000
+        },
+        {
+          "date": "2026-04-14",
+          "opening": 460000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 460000,
+          "closing": 0
+        },
+        {
+          "date": "2026-04-20",
+          "opening": 0,
+          "description": null,
+          "debt": 510000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 510000
+        },
+        {
+          "date": "2026-04-21",
+          "opening": 510000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 510000
+        },
+        {
+          "date": "2026-04-22",
+          "opening": 510000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 510000,
+          "closing": 0
+        },
+        {
+          "date": "2026-04-28",
+          "opening": 0,
+          "description": null,
+          "debt": 460000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 460000
+        },
+        {
+          "date": "2026-04-29",
+          "opening": 460000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 460000
+        },
+        {
+          "date": "2026-04-30",
+          "opening": 460000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 460000
+        },
+        {
+          "date": "2026-05-01",
+          "opening": 460000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 460000
         }
       ]
     },
@@ -33770,6 +37192,413 @@
           "cash": 0,
           "bank": 0,
           "closing": 617240
+        }
+      ]
+    },
+    {
+      "sourceFile": "latest2.xlsx",
+      "section": "1b",
+      "rowNum": 31,
+      "name": "عبده المهدي",
+      "openingBalanceApril1": 0,
+      "nonMoving": false,
+      "daily": [
+        {
+          "date": "2026-04-02",
+          "opening": 0,
+          "description": null,
+          "debt": 2802000,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2802000
+        },
+        {
+          "date": "2026-04-03",
+          "opening": 2802000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2802000
+        },
+        {
+          "date": "2026-04-04",
+          "opening": 2802000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2802000
+        },
+        {
+          "date": "2026-04-05",
+          "opening": 2802000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2802000
+        },
+        {
+          "date": "2026-04-06",
+          "opening": 2802000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2802000
+        },
+        {
+          "date": "2026-04-07",
+          "opening": 2802000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2802000
+        },
+        {
+          "date": "2026-04-08",
+          "opening": 2802000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 2802000
+        },
+        {
+          "date": "2026-04-09",
+          "opening": 2802000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 2000000,
+          "closing": 802000
+        },
+        {
+          "date": "2026-04-10",
+          "opening": 802000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 802000
+        },
+        {
+          "date": "2026-04-11",
+          "opening": 802000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 802000
+        },
+        {
+          "date": "2026-04-12",
+          "opening": 802000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 802000
+        },
+        {
+          "date": "2026-04-13",
+          "opening": 802000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 802000
+        },
+        {
+          "date": "2026-04-14",
+          "opening": 802000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 802000
+        },
+        {
+          "date": "2026-04-15",
+          "opening": 802000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 802000
+        },
+        {
+          "date": "2026-04-16",
+          "opening": 802000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 802000
+        },
+        {
+          "date": "2026-04-17",
+          "opening": 802000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 802000
+        },
+        {
+          "date": "2026-04-18",
+          "opening": 802000,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 802000,
+          "closing": 0
+        }
+      ]
+    },
+    {
+      "sourceFile": "latest2.xlsx",
+      "section": "1b",
+      "rowNum": 32,
+      "name": "فاقد عربة خميرة عمر محي الدين",
+      "openingBalanceApril1": 0,
+      "nonMoving": false,
+      "daily": [
+        {
+          "date": "2026-04-06",
+          "opening": 0,
+          "description": null,
+          "debt": 132800,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132800
+        },
+        {
+          "date": "2026-04-07",
+          "opening": 132800,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132800
+        },
+        {
+          "date": "2026-04-08",
+          "opening": 132800,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132800
+        },
+        {
+          "date": "2026-04-09",
+          "opening": 132800,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132800
+        },
+        {
+          "date": "2026-04-10",
+          "opening": 132800,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132800
+        },
+        {
+          "date": "2026-04-11",
+          "opening": 132800,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132800
+        },
+        {
+          "date": "2026-04-12",
+          "opening": 132800,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132800
+        },
+        {
+          "date": "2026-04-13",
+          "opening": 132800,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132800
+        },
+        {
+          "date": "2026-04-14",
+          "opening": 132800,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132800
+        },
+        {
+          "date": "2026-04-15",
+          "opening": 132800,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132800
+        },
+        {
+          "date": "2026-04-16",
+          "opening": 132800,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132800
+        },
+        {
+          "date": "2026-04-17",
+          "opening": 132800,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132800
+        },
+        {
+          "date": "2026-04-18",
+          "opening": 132800,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132800
+        },
+        {
+          "date": "2026-04-19",
+          "opening": 132800,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132800
+        },
+        {
+          "date": "2026-04-20",
+          "opening": 132800,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132800
+        },
+        {
+          "date": "2026-04-21",
+          "opening": 132800,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132800
+        },
+        {
+          "date": "2026-04-22",
+          "opening": 132800,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132800
+        },
+        {
+          "date": "2026-04-23",
+          "opening": 132800,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132800
+        },
+        {
+          "date": "2026-04-24",
+          "opening": 132800,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132800
+        },
+        {
+          "date": "2026-04-25",
+          "opening": 132800,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132800
+        },
+        {
+          "date": "2026-04-26",
+          "opening": 132800,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132800
+        },
+        {
+          "date": "2026-04-27",
+          "opening": 132800,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132800
+        },
+        {
+          "date": "2026-04-28",
+          "opening": 132800,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132800
+        },
+        {
+          "date": "2026-04-29",
+          "opening": 132800,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132800
+        },
+        {
+          "date": "2026-04-30",
+          "opening": 132800,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132800
+        },
+        {
+          "date": "2026-05-01",
+          "opening": 132800,
+          "description": null,
+          "debt": 0,
+          "cash": 0,
+          "bank": 0,
+          "closing": 132800
         }
       ]
     }
