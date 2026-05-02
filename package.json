@@ -54,6 +54,8 @@
     "script:reconcile-april-daily-debt": "node ./node_modules/tsx/dist/cli.mjs scripts/reconcile-april-daily-debt-column.ts",
     "script:apply-april-payments": "node ./node_modules/tsx/dist/cli.mjs scripts/apply-april-2026-excel-payments.ts",
     "script:apply-april-payments:apply": "node ./node_modules/tsx/dist/cli.mjs scripts/apply-april-2026-excel-payments.ts --confirm",
+    "script:apply-april-final": "node ./node_modules/tsx/dist/cli.mjs scripts/apply-april-2026-final-balances.ts --dry-run",
+    "script:apply-april-final:apply": "node ./node_modules/tsx/dist/cli.mjs scripts/apply-april-2026-final-balances.ts --confirm",
     "postinstall": "node ./node_modules/prisma/build/index.js generate"
   },
   "dependencies": {

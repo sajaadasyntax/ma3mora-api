@@ -1,5 +1,5 @@
 {
-  "extractedAt": "2026-05-02T05:27:41.272Z",
+  "extractedAt": "2026-05-02T10:45:28.749Z",
   "sources": [
     {
       "file": "latest.xlsx",
@@ -50,6 +50,7 @@
       "rowNum": 1,
       "name": "عزالدين الحوري",
       "openingBalanceApril1": 12350000,
+      "safiApril30": 39115000,
       "nonMoving": false,
       "daily": [
         {
@@ -339,6 +340,7 @@
       "rowNum": 2,
       "name": "خالد مدرسة المجد",
       "openingBalanceApril1": 88600,
+      "safiApril30": 54300,
       "nonMoving": false,
       "daily": [
         {
@@ -430,6 +432,7 @@
       "rowNum": 3,
       "name": "حمد النيل قسم الله-  معتوق",
       "openingBalanceApril1": 8745000,
+      "safiApril30": 0,
       "nonMoving": false,
       "daily": [
         {
@@ -656,6 +659,7 @@
       "rowNum": 4,
       "name": "محمد عبدالله -الحرمين",
       "openingBalanceApril1": 3290000,
+      "safiApril30": 0,
       "nonMoving": false,
       "daily": [
         {
@@ -792,6 +796,7 @@
       "rowNum": 5,
       "name": "يوسف احمد يوسف - بنك النيل",
       "openingBalanceApril1": 857100,
+      "safiApril30": 766500,
       "nonMoving": false,
       "daily": [
         {
@@ -1081,6 +1086,7 @@
       "rowNum": 6,
       "name": "عمار ادريس",
       "openingBalanceApril1": 89500,
+      "safiApril30": 89500,
       "nonMoving": false,
       "daily": [
         {
@@ -1370,6 +1376,7 @@
       "rowNum": 7,
       "name": "احمد مالك",
       "openingBalanceApril1": 8812000,
+      "safiApril30": 10373000,
       "nonMoving": false,
       "daily": [
         {
@@ -1659,6 +1666,7 @@
       "rowNum": 8,
       "name": "محمد مهدي",
       "openingBalanceApril1": 0,
+      "safiApril30": 2630000,
       "nonMoving": false,
       "daily": [
         {
@@ -1822,6 +1830,7 @@
       "rowNum": 9,
       "name": "احمد خالد البر",
       "openingBalanceApril1": 0,
+      "safiApril30": 0,
       "nonMoving": false,
       "daily": [
         {
@@ -2012,6 +2021,7 @@
       "rowNum": 10,
       "name": "عبد الوهاب اب سم",
       "openingBalanceApril1": 0,
+      "safiApril30": 0,
       "nonMoving": false,
       "daily": [
         {
@@ -2112,6 +2122,7 @@
       "rowNum": 11,
       "name": "عبد اللطيف الجيلي",
       "openingBalanceApril1": 0,
+      "safiApril30": 0,
       "nonMoving": false,
       "daily": [
         {
@@ -2140,6 +2151,7 @@
       "rowNum": 12,
       "name": "سعد موسي",
       "openingBalanceApril1": 0,
+      "safiApril30": 0,
       "nonMoving": false,
       "daily": [
         {
@@ -2222,6 +2234,7 @@
       "rowNum": 13,
       "name": "التوم حميدان - معتوق",
       "openingBalanceApril1": 0,
+      "safiApril30": 40430000,
       "nonMoving": false,
       "daily": [
         {
@@ -2286,6 +2299,7 @@
       "rowNum": 14,
       "name": "هاشم يوسف",
       "openingBalanceApril1": 0,
+      "safiApril30": 322400,
       "nonMoving": false,
       "daily": [
         {
@@ -2314,6 +2328,7 @@
       "rowNum": 1,
       "name": "مهند - البيت السعيد",
       "openingBalanceApril1": 234000,
+      "safiApril30": 590000,
       "nonMoving": false,
       "daily": [
         {
@@ -2603,6 +2618,7 @@
       "rowNum": 2,
       "name": "مهدى المستشفى",
       "openingBalanceApril1": 947500,
+      "safiApril30": 1337500,
       "nonMoving": false,
       "daily": [
         {
@@ -2892,6 +2908,7 @@
       "rowNum": 3,
       "name": "يوسف قسم الله (الاطفال)",
       "openingBalanceApril1": 2335000,
+      "safiApril30": 1500000,
       "nonMoving": false,
       "daily": [
         {
@@ -3181,6 +3198,7 @@
       "rowNum": 4,
       "name": "الجيلي ود الحلو - عبود",
       "openingBalanceApril1": 1109000,
+      "safiApril30": 0,
       "nonMoving": false,
       "daily": [
         {
@@ -3245,6 +3263,7 @@
       "rowNum": 6,
       "name": "منتصر حيدر- الميناء",
       "openingBalanceApril1": 1080000,
+      "safiApril30": 290000,
       "nonMoving": false,
       "daily": [
         {
@@ -3534,6 +3553,7 @@
       "rowNum": 8,
       "name": "القوس - الزعيم",
       "openingBalanceApril1": 657500,
+      "safiApril30": 0,
       "nonMoving": false,
       "daily": [
         {
@@ -3751,6 +3771,7 @@
       "rowNum": 10,
       "name": "عبد الرؤوف محمد- القرشي",
       "openingBalanceApril1": 0,
+      "safiApril30": 0,
       "nonMoving": false,
       "daily": [
         {
@@ -3833,6 +3854,7 @@
       "rowNum": 13,
       "name": "حمدي المودة",
       "openingBalanceApril1": 1225000,
+      "safiApril30": 0,
       "nonMoving": false,
       "daily": [
         {
@@ -4023,6 +4045,7 @@
       "rowNum": 14,
       "name": "دينق - شارع الدكاترة",
       "openingBalanceApril1": 0,
+      "safiApril30": 800000,
       "nonMoving": false,
       "daily": [
         {
@@ -4276,6 +4299,7 @@
       "rowNum": 20,
       "name": "مامون محمد احمد- السوق الكبير",
       "openingBalanceApril1": 1459000,
+      "safiApril30": 0,
       "nonMoving": false,
       "daily": [
         {
@@ -4430,6 +4454,7 @@
       "rowNum": 21,
       "name": "نصر الدين احمد - عبود",
       "openingBalanceApril1": 437500,
+      "safiApril30": 0,
       "nonMoving": false,
       "daily": [
         {
@@ -4503,6 +4528,7 @@
       "rowNum": 22,
       "name": "الشاذلي - المستشفي",
       "openingBalanceApril1": 1067500,
+      "safiApril30": 1235900,
       "nonMoving": false,
       "daily": [
         {
@@ -4765,6 +4791,7 @@
       "rowNum": 24,
       "name": "الافريقي مصطفي",
       "openingBalanceApril1": 350000,
+      "safiApril30": 500000,
       "nonMoving": false,
       "daily": [
         {
@@ -4901,6 +4928,7 @@
       "rowNum": 25,
       "name": "محمد - مستوصف الامل",
       "openingBalanceApril1": 519500,
+      "safiApril30": 0,
       "nonMoving": false,
       "daily": [
         {
@@ -4929,6 +4957,7 @@
       "rowNum": 26,
       "name": "محمد الشيخ- بقالة سام",
       "openingBalanceApril1": 717500,
+      "safiApril30": 0,
       "nonMoving": false,
       "daily": [
         {
@@ -5002,6 +5031,7 @@
       "rowNum": 27,
       "name": "محمد سعيد- الاندلس",
       "openingBalanceApril1": 487500,
+      "safiApril30": 0,
       "nonMoving": false,
       "daily": [
         {
@@ -5057,6 +5087,7 @@
       "rowNum": 28,
       "name": "الزين - مستوصف الجيلي",
       "openingBalanceApril1": 763000,
+      "safiApril30": 725000,
       "nonMoving": false,
       "daily": [
         {
@@ -5220,6 +5251,7 @@
       "rowNum": 32,
       "name": "عماد الشايقي",
       "openingBalanceApril1": 0,
+      "safiApril30": 245000,
       "nonMoving": false,
       "daily": [
         {
@@ -5257,6 +5289,7 @@
       "rowNum": 34,
       "name": "محمد الشريف- العيادات",
       "openingBalanceApril1": 0,
+      "safiApril30": 500000,
       "nonMoving": false,
       "daily": [
         {
@@ -5438,6 +5471,7 @@
       "rowNum": 35,
       "name": "عادل ابراهيم-  نادي المريخ",
       "openingBalanceApril1": 490000,
+      "safiApril30": 0,
       "nonMoving": false,
       "daily": [
         {
@@ -5511,6 +5545,7 @@
       "rowNum": 36,
       "name": "محمد- ود الحاجة",
       "openingBalanceApril1": 821000,
+      "safiApril30": 500000,
       "nonMoving": false,
       "daily": [
         {
@@ -5620,6 +5655,7 @@
       "rowNum": 40,
       "name": "محمد-  مستشفي جبيت",
       "openingBalanceApril1": 875000,
+      "safiApril30": 0,
       "nonMoving": false,
       "daily": [
         {
@@ -5702,6 +5738,7 @@
       "rowNum": 41,
       "name": "احمد المندوب",
       "openingBalanceApril1": 0,
+      "safiApril30": 3121767,
       "nonMoving": false,
       "daily": [
         {
@@ -5919,6 +5956,7 @@
       "rowNum": 42,
       "name": "جلال يوسف",
       "openingBalanceApril1": 0,
+      "safiApril30": 0,
       "nonMoving": false,
       "daily": [
         {
@@ -6028,6 +6066,7 @@
       "rowNum": 43,
       "name": "سامي محمد- المستشفي",
       "openingBalanceApril1": 0,
+      "safiApril30": 500000,
       "nonMoving": false,
       "daily": [
         {
@@ -6155,6 +6194,7 @@
       "rowNum": 44,
       "name": "عبد الرحمن- ابو يوسف",
       "openingBalanceApril1": 0,
+      "safiApril30": 625000,
       "nonMoving": false,
       "daily": [
         {
@@ -6273,6 +6313,7 @@
       "rowNum": 45,
       "name": "بكري عادل ابراهيم",
       "openingBalanceApril1": 0,
+      "safiApril30": 0,
       "nonMoving": false,
       "daily": [
         {
@@ -6355,6 +6396,7 @@
       "rowNum": 46,
       "name": "محمد- بقالة الواحة",
       "openingBalanceApril1": 0,
+      "safiApril30": 570000,
       "nonMoving": false,
       "daily": [
         {
@@ -6455,6 +6497,7 @@
       "rowNum": 47,
       "name": "عبدالله خميس- كافتريا دوكا",
       "openingBalanceApril1": 0,
+      "safiApril30": 300000,
       "nonMoving": false,
       "daily": [
         {
@@ -6510,6 +6553,7 @@
       "rowNum": 48,
       "name": "محمد- الحرمين",
       "openingBalanceApril1": 0,
+      "safiApril30": 400000,
       "nonMoving": false,
       "daily": [
         {
@@ -6538,6 +6582,7 @@
       "rowNum": 1,
       "name": "عبدالوهاب دفع الله اب سم",
       "openingBalanceApril1": 26312300,
+      "safiApril30": 26312300,
       "nonMoving": true,
       "daily": [
         {
@@ -6827,6 +6872,7 @@
       "rowNum": 2,
       "name": "بقالة البركة - يور / اب سم",
       "openingBalanceApril1": 1254000,
+      "safiApril30": 854000,
       "nonMoving": true,
       "daily": [
         {
@@ -7116,6 +7162,7 @@
       "rowNum": 3,
       "name": "اسعد الزمزمي",
       "openingBalanceApril1": 57750,
+      "safiApril30": 57750,
       "nonMoving": true,
       "daily": [
         {
@@ -7405,6 +7452,7 @@
       "rowNum": 4,
       "name": "اسعد مبارك",
       "openingBalanceApril1": 296000,
+      "safiApril30": 296000,
       "nonMoving": true,
       "daily": [
         {
@@ -7694,6 +7742,7 @@
       "rowNum": 5,
       "name": "مبارك الطيب",
       "openingBalanceApril1": 211600,
+      "safiApril30": 211600,
       "nonMoving": true,
       "daily": [
         {
@@ -7983,6 +8032,7 @@
       "rowNum": 6,
       "name": "هيثم حمد النيل",
       "openingBalanceApril1": 91450,
+      "safiApril30": 91450,
       "nonMoving": true,
       "daily": [
         {
@@ -8272,6 +8322,7 @@
       "rowNum": 7,
       "name": "محمد احمد بابكر - ابورويشد",
       "openingBalanceApril1": 2667750,
+      "safiApril30": 2667750,
       "nonMoving": true,
       "daily": [
         {
@@ -8561,6 +8612,7 @@
       "rowNum": 8,
       "name": "عابدين محمد - معتوق",
       "openingBalanceApril1": 5000,
+      "safiApril30": 5000,
       "nonMoving": true,
       "daily": [
         {
@@ -8850,6 +8902,7 @@
       "rowNum": 9,
       "name": "حسين علي",
       "openingBalanceApril1": 74100,
+      "safiApril30": 74100,
       "nonMoving": true,
       "daily": [
         {
@@ -9139,6 +9192,7 @@
       "rowNum": 11,
       "name": "اسامه ابراهيم",
       "openingBalanceApril1": 351500,
+      "safiApril30": 351500,
       "nonMoving": true,
       "daily": [
         {
@@ -9428,6 +9482,7 @@
       "rowNum": 14,
       "name": "عبد الرحمن عبدالله",
       "openingBalanceApril1": 41200,
+      "safiApril30": 41200,
       "nonMoving": true,
       "daily": [
         {
@@ -9717,6 +9772,7 @@
       "rowNum": 15,
       "name": "فاروق الحوري - معتوق",
       "openingBalanceApril1": 4375000,
+      "safiApril30": 4375000,
       "nonMoving": true,
       "daily": [
         {
@@ -10006,6 +10062,7 @@
       "rowNum": 16,
       "name": "جنابو بكري",
       "openingBalanceApril1": 30000,
+      "safiApril30": 30000,
       "nonMoving": true,
       "daily": [
         {
@@ -10295,6 +10352,7 @@
       "rowNum": 17,
       "name": "منصور علي",
       "openingBalanceApril1": 121000,
+      "safiApril30": 121000,
       "nonMoving": true,
       "daily": [
         {
@@ -10584,6 +10642,7 @@
       "rowNum": 19,
       "name": "ود ابراهيم",
       "openingBalanceApril1": 2822500,
+      "safiApril30": 2822500,
       "nonMoving": true,
       "daily": [
         {
@@ -10873,6 +10932,7 @@
       "rowNum": 20,
       "name": "عبد العزيز اب سم",
       "openingBalanceApril1": 282500,
+      "safiApril30": 282500,
       "nonMoving": true,
       "daily": [
         {
@@ -11162,6 +11222,7 @@
       "rowNum": 21,
       "name": "محمد خليفة",
       "openingBalanceApril1": 804500,
+      "safiApril30": 804500,
       "nonMoving": true,
       "daily": [
         {
@@ -11451,6 +11512,7 @@
       "rowNum": 22,
       "name": "الرشيد صالح",
       "openingBalanceApril1": 507500,
+      "safiApril30": 507500,
       "nonMoving": true,
       "daily": [
         {
@@ -11740,6 +11802,7 @@
       "rowNum": 23,
       "name": "معتز سالم",
       "openingBalanceApril1": 90700,
+      "safiApril30": 90700,
       "nonMoving": true,
       "daily": [
         {
@@ -12029,6 +12092,7 @@
       "rowNum": 24,
       "name": "يس المندوب",
       "openingBalanceApril1": 209700,
+      "safiApril30": 209700,
       "nonMoving": true,
       "daily": [
         {
@@ -12318,6 +12382,7 @@
       "rowNum": 25,
       "name": "سلمان بقالة",
       "openingBalanceApril1": 209800,
+      "safiApril30": 209800,
       "nonMoving": true,
       "daily": [
         {
@@ -12607,6 +12672,7 @@
       "rowNum": 26,
       "name": "عادل ابراهيم",
       "openingBalanceApril1": 9750,
+      "safiApril30": 9750,
       "nonMoving": true,
       "daily": [
         {
@@ -12896,6 +12962,7 @@
       "rowNum": null,
       "name": "بدر الدين محمد سالم",
       "openingBalanceApril1": 4000,
+      "safiApril30": 4000,
       "nonMoving": true,
       "daily": [
         {
@@ -13185,6 +13252,7 @@
       "rowNum": null,
       "name": "الهادي حمد",
       "openingBalanceApril1": 50000,
+      "safiApril30": 50000,
       "nonMoving": true,
       "daily": [
         {
@@ -13474,6 +13542,7 @@
       "rowNum": null,
       "name": "عثمان صوبان",
       "openingBalanceApril1": 246000,
+      "safiApril30": 246000,
       "nonMoving": true,
       "daily": [
         {
@@ -13763,6 +13832,7 @@
       "rowNum": null,
       "name": "محمد عبدالحميد",
       "openingBalanceApril1": 568500,
+      "safiApril30": 368500,
       "nonMoving": true,
       "daily": [
         {
@@ -14052,6 +14122,7 @@
       "rowNum": null,
       "name": "عبدالمنعم الكش",
       "openingBalanceApril1": 921000,
+      "safiApril30": 921000,
       "nonMoving": true,
       "daily": [
         {
@@ -14341,6 +14412,7 @@
       "rowNum": null,
       "name": "الخير المدني",
       "openingBalanceApril1": 600000,
+      "safiApril30": 600000,
       "nonMoving": true,
       "daily": [
         {
@@ -14630,6 +14702,7 @@
       "rowNum": null,
       "name": "مدثر احمد",
       "openingBalanceApril1": 370000,
+      "safiApril30": 370000,
       "nonMoving": true,
       "daily": [
         {
@@ -14919,6 +14992,7 @@
       "rowNum": null,
       "name": "ود الكمبو",
       "openingBalanceApril1": 300000,
+      "safiApril30": 300000,
       "nonMoving": true,
       "daily": [
         {
@@ -15208,6 +15282,7 @@
       "rowNum": null,
       "name": "علي اشهد",
       "openingBalanceApril1": 300000,
+      "safiApril30": 300000,
       "nonMoving": true,
       "daily": [
         {
@@ -15497,6 +15572,7 @@
       "rowNum": null,
       "name": "عبدالله ملح",
       "openingBalanceApril1": 614000,
+      "safiApril30": 0,
       "nonMoving": true,
       "daily": [
         {
@@ -15588,6 +15664,7 @@
       "rowNum": null,
       "name": "ضياء الدين حاج علي",
       "openingBalanceApril1": 300000,
+      "safiApril30": 300000,
       "nonMoving": true,
       "daily": [
         {
@@ -15877,6 +15954,7 @@
       "rowNum": null,
       "name": "ابراهيم عادل",
       "openingBalanceApril1": 66000,
+      "safiApril30": 66000,
       "nonMoving": true,
       "daily": [
         {
@@ -16166,6 +16244,7 @@
       "rowNum": null,
       "name": "محي الدين صالح",
       "openingBalanceApril1": 702000,
+      "safiApril30": 702000,
       "nonMoving": true,
       "daily": [
         {
@@ -16455,6 +16534,7 @@
       "rowNum": null,
       "name": "محمد البشير",
       "openingBalanceApril1": 600000,
+      "safiApril30": 600000,
       "nonMoving": true,
       "daily": [
         {
@@ -16744,6 +16824,7 @@
       "rowNum": null,
       "name": "عبد الرحمن سالم",
       "openingBalanceApril1": 5000,
+      "safiApril30": 5000,
       "nonMoving": true,
       "daily": [
         {
@@ -17033,6 +17114,7 @@
       "rowNum": null,
       "name": "احمد ادم",
       "openingBalanceApril1": 12500,
+      "safiApril30": 12500,
       "nonMoving": true,
       "daily": [
         {
@@ -17322,6 +17404,7 @@
       "rowNum": null,
       "name": "موسي سعيد",
       "openingBalanceApril1": 20000,
+      "safiApril30": 20000,
       "nonMoving": true,
       "daily": [
         {
@@ -17611,6 +17694,7 @@
       "rowNum": null,
       "name": "محمد الحلبي",
       "openingBalanceApril1": 55000,
+      "safiApril30": 55000,
       "nonMoving": true,
       "daily": [
         {
@@ -17900,6 +17984,7 @@
       "rowNum": null,
       "name": "عثمان مصطفي",
       "openingBalanceApril1": 7000,
+      "safiApril30": 7000,
       "nonMoving": true,
       "daily": [
         {
@@ -18189,6 +18274,7 @@
       "rowNum": null,
       "name": "محمد ادم",
       "openingBalanceApril1": 177500,
+      "safiApril30": 177500,
       "nonMoving": true,
       "daily": [
         {
@@ -18478,6 +18564,7 @@
       "rowNum": null,
       "name": "الحاج الرشيد",
       "openingBalanceApril1": 64500,
+      "safiApril30": 64500,
       "nonMoving": true,
       "daily": [
         {
@@ -18767,6 +18854,7 @@
       "rowNum": null,
       "name": "العيدوريس الطيب",
       "openingBalanceApril1": 5000,
+      "safiApril30": 5000,
       "nonMoving": true,
       "daily": [
         {
@@ -19056,6 +19144,7 @@
       "rowNum": null,
       "name": "محمد التهامي",
       "openingBalanceApril1": 175000,
+      "safiApril30": 175000,
       "nonMoving": true,
       "daily": [
         {
@@ -19345,6 +19434,7 @@
       "rowNum": null,
       "name": "عبدالله حسين",
       "openingBalanceApril1": 5250,
+      "safiApril30": 5250,
       "nonMoving": true,
       "daily": [
         {
@@ -19634,6 +19724,7 @@
       "rowNum": 27,
       "name": "محمد الزبير المندوب",
       "openingBalanceApril1": 9700,
+      "safiApril30": 9700,
       "nonMoving": true,
       "daily": [
         {
@@ -19923,6 +20014,7 @@
       "rowNum": 28,
       "name": "محمد المصطفي- بسطاوي",
       "openingBalanceApril1": 201000,
+      "safiApril30": 201000,
       "nonMoving": true,
       "daily": [
         {
@@ -20212,6 +20304,7 @@
       "rowNum": 1,
       "name": "مخبز اولاد ابراهيم",
       "openingBalanceApril1": 23027950,
+      "safiApril30": 12206500,
       "nonMoving": false,
       "daily": [
         {
@@ -20501,6 +20594,7 @@
       "rowNum": 2,
       "name": "موسى الصادق - الكشيف",
       "openingBalanceApril1": 14356600,
+      "safiApril30": 16716600,
       "nonMoving": false,
       "daily": [
         {
@@ -20790,6 +20884,7 @@
       "rowNum": 3,
       "name": "مخبز ام القرى",
       "openingBalanceApril1": 71755550,
+      "safiApril30": 46809450,
       "nonMoving": false,
       "daily": [
         {
@@ -21079,6 +21174,7 @@
       "rowNum": 4,
       "name": "مخبز الشهيد-الصادق عمر",
       "openingBalanceApril1": 10917500,
+      "safiApril30": 15439500,
       "nonMoving": false,
       "daily": [
         {
@@ -21368,6 +21464,7 @@
       "rowNum": 5,
       "name": "عادل عثمان ابو شوك",
       "openingBalanceApril1": 3150150,
+      "safiApril30": 10527850,
       "nonMoving": false,
       "daily": [
         {
@@ -21657,6 +21754,7 @@
       "rowNum": 6,
       "name": "محمد نصرالدين",
       "openingBalanceApril1": 20384500,
+      "safiApril30": 17639200,
       "nonMoving": false,
       "daily": [
         {
@@ -21946,6 +22044,7 @@
       "rowNum": 7,
       "name": "علي صالح",
       "openingBalanceApril1": 9149450,
+      "safiApril30": 6388950,
       "nonMoving": false,
       "daily": [
         {
@@ -22235,6 +22334,7 @@
       "rowNum": 8,
       "name": "موسى الصادق - لؤلؤة",
       "openingBalanceApril1": 17648000,
+      "safiApril30": 7648000,
       "nonMoving": false,
       "daily": [
         {
@@ -22524,6 +22624,7 @@
       "rowNum": 10,
       "name": "ابراهيم الحبشي",
       "openingBalanceApril1": 21893000,
+      "safiApril30": 629000,
       "nonMoving": false,
       "daily": [
         {
@@ -22813,6 +22914,7 @@
       "rowNum": 13,
       "name": "التوم حميدان",
       "openingBalanceApril1": 40967050,
+      "safiApril30": 35928050,
       "nonMoving": false,
       "daily": [
         {
@@ -23102,6 +23204,7 @@
       "rowNum": 14,
       "name": "عوض الجيد عبود",
       "openingBalanceApril1": 863000,
+      "safiApril30": 363000,
       "nonMoving": false,
       "daily": [
         {
@@ -23391,6 +23494,7 @@
       "rowNum": 16,
       "name": "احمد عمر بطه السوق",
       "openingBalanceApril1": 3722000,
+      "safiApril30": 3715000,
       "nonMoving": false,
       "daily": [
         {
@@ -23671,6 +23775,7 @@
       "rowNum": 18,
       "name": "محمد يوسف الجوهرة",
       "openingBalanceApril1": 8970000,
+      "safiApril30": 8378000,
       "nonMoving": false,
       "daily": [
         {
@@ -23879,6 +23984,7 @@
       "rowNum": 20,
       "name": "حمد - مخبز الاحسان",
       "openingBalanceApril1": 1992725,
+      "safiApril30": 4372025,
       "nonMoving": false,
       "daily": [
         {
@@ -24168,6 +24274,7 @@
       "rowNum": 22,
       "name": "ابراهيم محمد قرية محمد زين",
       "openingBalanceApril1": 3195400,
+      "safiApril30": 820400,
       "nonMoving": false,
       "daily": [
         {
@@ -24457,6 +24564,7 @@
       "rowNum": 25,
       "name": "حافظ عبدالله- الصلاة على النبي",
       "openingBalanceApril1": 6532900,
+      "safiApril30": 7432900,
       "nonMoving": false,
       "daily": [
         {
@@ -24746,6 +24854,7 @@
       "rowNum": 28,
       "name": "محمد ودالبحر",
       "openingBalanceApril1": 16340000,
+      "safiApril30": 13340000,
       "nonMoving": false,
       "daily": [
         {
@@ -25035,6 +25144,7 @@
       "rowNum": 29,
       "name": "مهدي التوحيد - ام طلحه",
       "openingBalanceApril1": 103500,
+      "safiApril30": 0,
       "nonMoving": false,
       "daily": [
         {
@@ -25225,6 +25335,7 @@
       "rowNum": 31,
       "name": "ياسر الطاهر ام طلحه",
       "openingBalanceApril1": 100350,
+      "safiApril30": 0,
       "nonMoving": false,
       "daily": [
         {
@@ -25406,6 +25517,7 @@
       "rowNum": 39,
       "name": "ابايزيد عبود",
       "openingBalanceApril1": 8299800,
+      "safiApril30": 1799800,
       "nonMoving": false,
       "daily": [
         {
@@ -25695,6 +25807,7 @@
       "rowNum": 40,
       "name": "ابراهيم عبود",
       "openingBalanceApril1": 14616000,
+      "safiApril30": 6176000,
       "nonMoving": false,
       "daily": [
         {
@@ -25984,6 +26097,7 @@
       "rowNum": 41,
       "name": "عصام يوسف-الحله جديده",
       "openingBalanceApril1": 2330050,
+      "safiApril30": 2000050,
       "nonMoving": false,
       "daily": [
         {
@@ -26273,6 +26387,7 @@
       "rowNum": 42,
       "name": "احمد يوسف - الفاضل",
       "openingBalanceApril1": 720000,
+      "safiApril30": 0,
       "nonMoving": false,
       "daily": [
         {
@@ -26346,6 +26461,7 @@
       "rowNum": 44,
       "name": "سامي ود البحر",
       "openingBalanceApril1": 17961200,
+      "safiApril30": 27528700,
       "nonMoving": false,
       "daily": [
         {
@@ -26635,6 +26751,7 @@
       "rowNum": 46,
       "name": "الجزولي فضل",
       "openingBalanceApril1": 11850000,
+      "safiApril30": 14660000,
       "nonMoving": false,
       "daily": [
         {
@@ -26879,6 +26996,7 @@
       "rowNum": 47,
       "name": "محمد عادل نادي المريخ فرم",
       "openingBalanceApril1": 4075000,
+      "safiApril30": 3715000,
       "nonMoving": false,
       "daily": [
         {
@@ -27123,6 +27241,7 @@
       "rowNum": 48,
       "name": "خالد - مدرسة المجد",
       "openingBalanceApril1": 168810,
+      "safiApril30": 343310,
       "nonMoving": false,
       "daily": [
         {
@@ -27412,6 +27531,7 @@
       "rowNum": 49,
       "name": "عبدالعزيز اليماني",
       "openingBalanceApril1": 20327600,
+      "safiApril30": 30362800,
       "nonMoving": false,
       "daily": [
         {
@@ -27701,6 +27821,7 @@
       "rowNum": 50,
       "name": "مصعب ودالتومه-الخيرات",
       "openingBalanceApril1": 5538000,
+      "safiApril30": 4612000,
       "nonMoving": false,
       "daily": [
         {
@@ -27990,6 +28111,7 @@
       "rowNum": 51,
       "name": "مخبز الدسيس",
       "openingBalanceApril1": 2257750,
+      "safiApril30": 3714750,
       "nonMoving": false,
       "daily": [
         {
@@ -28279,6 +28401,7 @@
       "rowNum": 52,
       "name": "الطيب سقيدة",
       "openingBalanceApril1": 2409000,
+      "safiApril30": 3715000,
       "nonMoving": false,
       "daily": [
         {
@@ -28568,6 +28691,7 @@
       "rowNum": 53,
       "name": "مصعب حيدر",
       "openingBalanceApril1": 7447400,
+      "safiApril30": 7430000,
       "nonMoving": false,
       "daily": [
         {
@@ -28776,6 +28900,7 @@
       "rowNum": 54,
       "name": "مخبز الصادق - محمد ادم",
       "openingBalanceApril1": 2990000,
+      "safiApril30": 3525000,
       "nonMoving": false,
       "daily": [
         {
@@ -29065,6 +29190,7 @@
       "rowNum": 57,
       "name": "الفاتح شربك",
       "openingBalanceApril1": 2990000,
+      "safiApril30": 1525000,
       "nonMoving": false,
       "daily": [
         {
@@ -29309,6 +29435,7 @@
       "rowNum": 58,
       "name": "سلفيات العتالة",
       "openingBalanceApril1": 0,
+      "safiApril30": 140000,
       "nonMoving": false,
       "daily": [
         {
@@ -29373,6 +29500,7 @@
       "rowNum": 60,
       "name": "مخبز كشكوش - الامين شربك",
       "openingBalanceApril1": 5243730,
+      "safiApril30": 6268230,
       "nonMoving": false,
       "daily": [
         {
@@ -29662,6 +29790,7 @@
       "rowNum": 62,
       "name": "احمد عمر - الفجر الشعبية",
       "openingBalanceApril1": 1150000,
+      "safiApril30": 7969700,
       "nonMoving": false,
       "daily": [
         {
@@ -29951,6 +30080,7 @@
       "rowNum": 64,
       "name": "علم الهدى - سفينة القوم",
       "openingBalanceApril1": 1654000,
+      "safiApril30": 1654000,
       "nonMoving": false,
       "daily": [
         {
@@ -30240,6 +30370,7 @@
       "rowNum": 67,
       "name": "مخبز الرضا - النور مختار",
       "openingBalanceApril1": 4075600,
+      "safiApril30": 4720600,
       "nonMoving": false,
       "daily": [
         {
@@ -30529,6 +30660,7 @@
       "rowNum": 68,
       "name": "مخبز الاخوه",
       "openingBalanceApril1": 2990000,
+      "safiApril30": 3525000,
       "nonMoving": false,
       "daily": [
         {
@@ -30818,6 +30950,7 @@
       "rowNum": 69,
       "name": "سامي الملك",
       "openingBalanceApril1": 3050000,
+      "safiApril30": 7100000,
       "nonMoving": false,
       "daily": [
         {
@@ -31107,6 +31240,7 @@
       "rowNum": 70,
       "name": "محمد ود حسن",
       "openingBalanceApril1": 3110000,
+      "safiApril30": 5287500,
       "nonMoving": false,
       "daily": [
         {
@@ -31396,6 +31530,7 @@
       "rowNum": 72,
       "name": "محمد يوسف",
       "openingBalanceApril1": 150000,
+      "safiApril30": 150000,
       "nonMoving": false,
       "daily": [
         {
@@ -31685,6 +31820,7 @@
       "rowNum": 73,
       "name": "عائد زين العابدين",
       "openingBalanceApril1": 0,
+      "safiApril30": 0,
       "nonMoving": false,
       "daily": [
         {
@@ -31848,6 +31984,7 @@
       "rowNum": 74,
       "name": "محمد عوض",
       "openingBalanceApril1": 3125000,
+      "safiApril30": 1129500,
       "nonMoving": false,
       "daily": [
         {
@@ -32137,6 +32274,7 @@
       "rowNum": 75,
       "name": "محمد مهدي",
       "openingBalanceApril1": 4700000,
+      "safiApril30": 0,
       "nonMoving": false,
       "daily": [
         {
@@ -32381,6 +32519,7 @@
       "rowNum": 76,
       "name": "ود المراد - حمدالنيل حسين",
       "openingBalanceApril1": 50000,
+      "safiApril30": 0,
       "nonMoving": false,
       "daily": [
         {
@@ -32445,6 +32584,7 @@
       "rowNum": 77,
       "name": "مخبز دوشكا بكري نصرالدين",
       "openingBalanceApril1": 3366500,
+      "safiApril30": 7050000,
       "nonMoving": false,
       "daily": [
         {
@@ -32734,6 +32874,7 @@
       "rowNum": 78,
       "name": "محمد الحرمين",
       "openingBalanceApril1": 630000,
+      "safiApril30": 0,
       "nonMoving": false,
       "daily": [
         {
@@ -32807,6 +32948,7 @@
       "rowNum": 79,
       "name": "سند صالح - الناله",
       "openingBalanceApril1": 0,
+      "safiApril30": 3524900,
       "nonMoving": false,
       "daily": [
         {
@@ -33096,6 +33238,7 @@
       "rowNum": 80,
       "name": "وردي عتالي",
       "openingBalanceApril1": 100000,
+      "safiApril30": 100000,
       "nonMoving": false,
       "daily": [
         {
@@ -33385,6 +33528,7 @@
       "rowNum": 81,
       "name": "مخبز الجمهور نادر الصادق",
       "openingBalanceApril1": 0,
+      "safiApril30": 3525000,
       "nonMoving": false,
       "daily": [
         {
@@ -33548,6 +33692,7 @@
       "rowNum": 82,
       "name": "محمد حامد - كمل نومك",
       "openingBalanceApril1": 0,
+      "safiApril30": 1925000,
       "nonMoving": false,
       "daily": [
         {
@@ -33684,6 +33829,7 @@
       "rowNum": 83,
       "name": "مامون عوض الجيد",
       "openingBalanceApril1": 0,
+      "safiApril30": 0,
       "nonMoving": false,
       "daily": [
         {
@@ -33730,6 +33876,7 @@
       "rowNum": 84,
       "name": "بكري جعفر",
       "openingBalanceApril1": 0,
+      "safiApril30": 500000,
       "nonMoving": false,
       "daily": [
         {
@@ -33857,6 +34004,7 @@
       "rowNum": 85,
       "name": "ماهر بابكر العوامره",
       "openingBalanceApril1": 0,
+      "safiApril30": 320000,
       "nonMoving": false,
       "daily": [
         {
@@ -33921,6 +34069,7 @@
       "rowNum": 1,
       "name": "محمددفع  الله اب سم",
       "openingBalanceApril1": 0,
+      "safiApril30": 0,
       "nonMoving": false,
       "daily": [
         {
@@ -34129,6 +34278,7 @@
       "rowNum": 9,
       "name": "خالد يوسف",
       "openingBalanceApril1": 1000000,
+      "safiApril30": 1000000,
       "nonMoving": false,
       "daily": [
         {
@@ -34418,6 +34568,7 @@
       "rowNum": 11,
       "name": "محمد احمد بابكر ابو رويشد",
       "openingBalanceApril1": 23860000,
+      "safiApril30": 9091000,
       "nonMoving": false,
       "daily": [
         {
@@ -34707,6 +34858,7 @@
       "rowNum": 13,
       "name": "نبيه الريح",
       "openingBalanceApril1": 17556000,
+      "safiApril30": 3056000,
       "nonMoving": false,
       "daily": [
         {
@@ -34996,6 +35148,7 @@
       "rowNum": 15,
       "name": "محمد الباقر - الهدى",
       "openingBalanceApril1": 117214325,
+      "safiApril30": 13151562,
       "nonMoving": false,
       "daily": [
         {
@@ -35285,6 +35438,7 @@
       "rowNum": 16,
       "name": "مخبز  زكي- الكريمت",
       "openingBalanceApril1": 0,
+      "safiApril30": 460000,
       "nonMoving": false,
       "daily": [
         {
@@ -35403,6 +35557,7 @@
       "rowNum": 17,
       "name": "يوسف عبدالعظيم",
       "openingBalanceApril1": 3096700,
+      "safiApril30": 1000700,
       "nonMoving": false,
       "daily": [
         {
@@ -35692,6 +35847,7 @@
       "rowNum": 18,
       "name": "مخبز ود عائس",
       "openingBalanceApril1": 1350000,
+      "safiApril30": 650000,
       "nonMoving": false,
       "daily": [
         {
@@ -35981,6 +36137,7 @@
       "rowNum": 22,
       "name": "الشفت",
       "openingBalanceApril1": 400000,
+      "safiApril30": 400000,
       "nonMoving": false,
       "daily": [
         {
@@ -36270,6 +36427,7 @@
       "rowNum": 23,
       "name": "الهميم - معتوق",
       "openingBalanceApril1": 3631050,
+      "safiApril30": 3631050,
       "nonMoving": false,
       "daily": [
         {
@@ -36559,6 +36717,7 @@
       "rowNum": 25,
       "name": "التوم حميدان معتوق",
       "openingBalanceApril1": 37079350,
+      "safiApril30": 61569950,
       "nonMoving": false,
       "daily": [
         {
@@ -36848,6 +37007,7 @@
       "rowNum": 29,
       "name": "الفاتح هجو",
       "openingBalanceApril1": 2990000,
+      "safiApril30": 0,
       "nonMoving": false,
       "daily": [
         {
@@ -36912,6 +37072,7 @@
       "rowNum": 30,
       "name": "مخبز الكتير علاء الدين محمد",
       "openingBalanceApril1": 617240,
+      "safiApril30": 617240,
       "nonMoving": false,
       "daily": [
         {
@@ -37201,6 +37362,7 @@
       "rowNum": 31,
       "name": "عبده المهدي",
       "openingBalanceApril1": 0,
+      "safiApril30": 0,
       "nonMoving": false,
       "daily": [
         {
@@ -37364,6 +37526,7 @@
       "rowNum": 32,
       "name": "فاقد عربة خميرة عمر محي الدين",
       "openingBalanceApril1": 0,
+      "safiApril30": 132800,
       "nonMoving": false,
       "daily": [
         {

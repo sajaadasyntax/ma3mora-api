@@ -74,6 +74,11 @@ export interface CustomerData {
   rowNum: number | null;
   name: string;
   openingBalanceApril1: number;
+  /**
+   * الصافي (net) — the closing balance after April 30 (col 192 in the workbook).
+   * This is the customer's final outstanding amount carried into May.
+   */
+  safiApril30: number;
   nonMoving: boolean;
   daily: DayData[];
 }
@@ -217,6 +222,21 @@ function hasAnyDailyActivity(daily: DayData[]): boolean {
   );
 }
 
+/**
+ * The الصافي column lives at the very end of the sheet (column index 192).
+ * It is the closing balance after the last day's activity = the customer's
+ * outstanding balance carried into May.
+ */
+const SAFI_COL_INDEX = 192;
+
+function readSafi(v: ExcelJS.CellValue[], opening: number, daily: DayData[]): number {
+  const explicit = cellNum(v[SAFI_COL_INDEX]);
+  if (explicit !== null) return explicit;
+  // Fallbacks if the workbook layout shifts: use last day's closing, then opening.
+  if (daily.length > 0) return daily[daily.length - 1].closing;
+  return opening;
+}
+
 // ─── PARSE BAKERY (latest2.xlsx) ──────────────────────────────────────────────
 /**
  * latest2.xlsx has two sections separated by repeated "الرقم" headers in col A.
@@ -249,6 +269,7 @@ function parseBakery(wb: ExcelJS.Workbook, fileName: string): CustomerData[] {
     const daily = extractDailyData(v, daySlots);
     const opening = cellNum(v[3]) ?? 0;
     if (opening <= 0 && !hasAnyDailyActivity(daily)) return;
+    const safi = readSafi(v, opening, daily);
 
     customers.push({
       sourceFile: fileName,
@@ -256,6 +277,7 @@ function parseBakery(wb: ExcelJS.Workbook, fileName: string): CustomerData[] {
       rowNum: aNum,
       name: colBStr,
       openingBalanceApril1: opening,
+      safiApril30: safi,
       nonMoving: false,
       daily,
     });
@@ -324,6 +346,7 @@ function parseGrocery(wb: ExcelJS.Workbook, fileName: string): CustomerData[] {
       const daily = extractDailyData(v, daySlots);
       const opening = c3;
       if (opening <= 0 && !hasAnyDailyActivity(daily)) return;
+      const safi = readSafi(v, opening, daily);
 
       customers.push({
         sourceFile: fileName,
@@ -331,6 +354,7 @@ function parseGrocery(wb: ExcelJS.Workbook, fileName: string): CustomerData[] {
         rowNum: null,
         name: colBStr,
         openingBalanceApril1: opening,
+        safiApril30: safi,
         nonMoving: true,
         daily,
       });
@@ -344,6 +368,7 @@ function parseGrocery(wb: ExcelJS.Workbook, fileName: string): CustomerData[] {
     const daily = extractDailyData(v, daySlots);
     const opening = cellNum(v[3]) ?? 0;
     if (opening <= 0 && !hasAnyDailyActivity(daily)) return;
+    const safi = readSafi(v, opening, daily);
 
     customers.push({
       sourceFile: fileName,
@@ -351,6 +376,7 @@ function parseGrocery(wb: ExcelJS.Workbook, fileName: string): CustomerData[] {
       rowNum: aNum!,
       name: colBStr,
       openingBalanceApril1: opening,
+      safiApril30: safi,
       nonMoving,
       daily,
     });
@@ -470,6 +496,17 @@ async function main(): Promise<void> {
   const t1a    = sumOpening('1a');
   const t1b    = sumOpening('1b');
 
+  const sumSafi = (tag: SectionTag, nm?: boolean) =>
+    all
+      .filter((c) => c.section === tag && (nm === undefined || c.nonMoving === nm))
+      .reduce((s, c) => s + c.safiApril30, 0);
+
+  const safi2a    = sumSafi('2a');
+  const safi2b    = sumSafi('2b', false);
+  const safi2b_nm = sumSafi('2b', true);
+  const safi1a    = sumSafi('1a');
+  const safi1b    = sumSafi('1b');
+
   const gWs = groceryWb.worksheets[0];
   const bWs = bakeryWb.worksheets[0];
 
@@ -486,6 +523,11 @@ async function main(): Promise<void> {
   checkSubtotal('1a wholesale',      t1a,    readSubtotalRow(bWs, 121));
   checkSubtotal('1b agent-whl',      t1b,    readSubtotalRow(bWs, 245));
   console.log(`  Grand bakery:  ${(t1a + t1b).toLocaleString()} SDG`);
+
+  console.log('\nFinal balance (الصافي) totals — these are the target outstanding amounts:');
+  console.log(`  Grocery: 2a=${safi2a.toLocaleString()}  2b=${safi2b.toLocaleString()}  2b-nm=${safi2b_nm.toLocaleString()}  total=${(safi2a + safi2b + safi2b_nm).toLocaleString()} SDG`);
+  console.log(`  Bakery:  1a=${safi1a.toLocaleString()}  1b=${safi1b.toLocaleString()}  total=${(safi1a + safi1b).toLocaleString()} SDG`);
+  console.log(`  GRAND:   ${(safi2a + safi2b + safi2b_nm + safi1a + safi1b).toLocaleString()} SDG`);
 
   // ── Customer count summary ─────────────────────────────────────────────────
   const count = (tag: SectionTag, nm?: boolean) =>
