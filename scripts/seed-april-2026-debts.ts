@@ -1,34 +1,26 @@
 /**
  * seed-april-2026-debts.ts
  *
- * Resets all pre-April-2026 carry-over debts and re-seeds them from two Excel
- * sheets (April 1 opening balances).
+ * Resets April 2026 carry-over seeded debts (PRE-SYS-* invoices only) and
+ * re-seeds April 1 opening balances from the canonical JSON produced by
+ * extract-april-2026-debts-to-json.ts.
  *
- * What the parser reads (per customer data row) — and ONLY this:
- *   • Column C = "رصيد افتتاحي" under the 2026-04-01 column (first day block).
- *   That is the balance at the start of 1 Apr — it does NOT include:
- *   – any "سداد كاش" / "سداد بنكك" / daily payments in April,
- *   – "المديونية" in later day columns,
- *   – the end-of-month TOTAL / "الصافي" summary columns.
- *   The seeder never scans those cells; only v[3] (column C) per row.
+ * Safe for manual invoices: the reset phase deletes ONLY PRE-SYS-* invoices
+ * (which are script-generated). Every manually-created pre-April invoice is
+ * preserved; apply-april-2026-excel-payments.ts Phase 1 will mark them PAID
+ * with no cash effect so they don't double-count.
  *
- * Usage:
- *   --dry-run           Parse, match, print plan — no DB writes
- *   --confirm           Required to execute destructive writes
- *   --no-reset          Skip the delete phase, only seed
- *   --file1=<path>      Override first workbook (default: scripts/data/april-2026-debts/debts-25kg-april-2026.xlsx)
- *   --file2=<path>      Override second workbook (default: .../debts-products-april-2026.xlsx)
+ * Usage (from apps/api):
+ *   npm run script:seed-april-debts          # dry-run / preview
+ *   npm run script:seed-april-debts:apply    # live write
  *
- * Quick start (from apps/api):
- *   npm run script:seed-april-debts
- *   npm run script:seed-april-debts:apply
- *
- * If `npx tsx` fails with "Permission denied" (strict .bin permissions or noexec),
- * run the CLI directly:
- *   node ./node_modules/tsx/dist/cli.mjs scripts/seed-april-2026-debts.ts --dry-run
+ *   node ./node_modules/tsx/dist/cli.mjs scripts/seed-april-2026-debts.ts [flags]
+ *   --dry-run      Parse, match, print plan — no DB writes; also writes diff JSON lists
+ *   --confirm      Required to execute destructive writes
+ *   --no-reset     Skip the PRE-SYS-* delete phase, only seed
+ *   --json=<path>  JSON file produced by extract-april-2026-debts-to-json.ts
  */
 
-import ExcelJS from 'exceljs';
 import {
   PrismaClient,
   Prisma,
@@ -41,6 +33,8 @@ import {
 } from '@prisma/client';
 import * as path from 'path';
 import * as fs from 'fs';
+import type { AprilDebtsJson, CustomerData } from './extract-april-2026-debts-to-json';
+import { NAME_OVERRIDES } from './data/april-2026-debts/name-overrides';
 
 // ═══════════════════════════════════════════════════════════
 // CLI
@@ -50,34 +44,18 @@ const DRY_RUN = ARGS.includes('--dry-run');
 const NO_RESET = ARGS.includes('--no-reset');
 const CONFIRM = ARGS.includes('--confirm');
 
-/** Committed copies live next to this script: scripts/data/april-2026-debts/ */
-const DEFAULT_DEBT_DATA_DIR = path.join(__dirname, 'data', 'april-2026-debts');
-const DEFAULT_FILE1 = path.join(DEFAULT_DEBT_DATA_DIR, 'debts-25kg-april-2026.xlsx');
-const DEFAULT_FILE2 = path.join(DEFAULT_DEBT_DATA_DIR, 'debts-products-april-2026.xlsx');
-
-const FILE1 =
-  ARGS.find((a) => a.startsWith('--file1='))?.slice('--file1='.length) ?? DEFAULT_FILE1;
-const FILE2 =
-  ARGS.find((a) => a.startsWith('--file2='))?.slice('--file2='.length) ?? DEFAULT_FILE2;
+const DATA_DIR = path.join(__dirname, 'data', 'april-2026-debts');
+const DEFAULT_JSON = path.join(DATA_DIR, 'april-2026-debts.json');
+const JSON_FILE =
+  ARGS.find((a) => a.startsWith('--json='))?.slice('--json='.length) ?? DEFAULT_JSON;
 
 // ═══════════════════════════════════════════════════════════
 // CONSTANTS
 // ═══════════════════════════════════════════════════════════
-/** Prisma Decimal limit is 15,2 → max safe value per invoice */
 const MAX_SAFE_AMOUNT = 99_999_999.99;
-
-/** Bail out if we would delete more rows than this (safety net) */
 const MAX_SAFE_DELETE = 10_000;
-
-/**
- * All invoices/orders created *before* this date that are still unpaid are
- * considered legacy carry-over and will be deleted.
- */
 const APRIL_1 = new Date('2026-04-01T00:00:00.000Z');
-
-/** New seed invoices will carry this createdAt so aggregates treat them as opening balance */
 const SEED_DATE = new Date('2026-04-01T00:00:00.000Z');
-
 const REPORT_FILE = path.join(__dirname, 'unmatched-debts-report.json');
 
 // ═══════════════════════════════════════════════════════════
@@ -90,11 +68,15 @@ interface DebtRow {
   name: string;
   openingBalance: number;
   sectionTag: SectionTag;
+  nonMoving: boolean;
+  /** Aggregated from JSON daily array */
+  totalDebt: number;
+  totalCash: number;
+  totalBank: number;
 }
 
 interface MatchResult {
   row: DebtRow;
-  /** null means we will create a new customer */
   existingCustomerId: string | null;
   existingCustomerName: string | null;
   isNew: boolean;
@@ -115,16 +97,16 @@ interface UnmatchedEntry {
 function normalizeArabic(raw: string): string {
   return raw
     .trim()
-    .replace(/ـ/g, '')                       // tatweel
-    .replace(/[\u064B-\u0652\u0670]/g, '')   // diacritics + superscript alef
-    .replace(/[أإآٱ]/g, 'ا')                 // alef variants
-    .replace(/ى/g, 'ي')                      // alef maqsura
-    .replace(/ة/g, 'ه')                      // taa marbouta
-    .replace(/ؤ/g, 'و')                      // waw hamza
-    .replace(/ئ/g, 'ي')                      // ya hamza
-    .replace(/\u06A9/g, 'ك')                 // Farsi kaf -> Arabic kaf
-    .replace(/\u06CC/g, 'ي')                 // Farsi ye -> Arabic ye
-    .replace(/[-.\u060C,/()]/g, ' ')         // punctuation -> space
+    .replace(/ـ/g, '')
+    .replace(/[\u064B-\u0652\u0670]/g, '')
+    .replace(/[أإآٱ]/g, 'ا')
+    .replace(/ى/g, 'ي')
+    .replace(/ة/g, 'ه')
+    .replace(/ؤ/g, 'و')
+    .replace(/ئ/g, 'ي')
+    .replace(/\u06A9/g, 'ك')
+    .replace(/\u06CC/g, 'ي')
+    .replace(/[-.\u060C,/()]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -148,130 +130,33 @@ function levenshtein(a: string, b: string): number {
 }
 
 // ═══════════════════════════════════════════════════════════
-// CELL VALUE HELPERS
+// JSON LOADER
 // ═══════════════════════════════════════════════════════════
-
-/** Safely extract a numeric value from an exceljs cell value (handles formula results) */
-function cellNum(v: ExcelJS.CellValue): number | null {
-  if (v === null || v === undefined) return null;
-  if (typeof v === 'number') return v;
-  if (typeof v === 'object' && 'result' in (v as any)) {
-    const r = (v as any).result;
-    if (typeof r === 'number') return r;
+function loadDebtRowsFromJson(jsonPath: string): DebtRow[] {
+  if (!fs.existsSync(jsonPath)) {
+    console.error(`\n✗ JSON file not found: ${jsonPath}`);
+    console.error('  Run first:  npm run script:extract-april-debts');
+    process.exit(1);
   }
-  return null;
-}
+  const data = JSON.parse(fs.readFileSync(jsonPath, 'utf8')) as AprilDebtsJson;
+  const rows: DebtRow[] = [];
 
-/** Safely extract a string from a cell value */
-function cellStr(v: ExcelJS.CellValue): string | null {
-  if (v === null || v === undefined) return null;
-  if (typeof v === 'string') return v.trim() || null;
-  if (typeof v === 'object' && 'text' in (v as any)) {
-    const t = (v as any).text;
-    return typeof t === 'string' ? t.trim() || null : null;
+  for (const c of data.customers) {
+    if (c.openingBalanceApril1 <= 0) continue;
+    const totalDebt = c.daily.reduce((s, d) => s + d.debt, 0);
+    const totalCash = c.daily.reduce((s, d) => s + d.cash, 0);
+    const totalBank = c.daily.reduce((s, d) => s + d.bank, 0);
+    rows.push({
+      rowNum: c.rowNum,
+      name: c.name,
+      openingBalance: c.openingBalanceApril1,
+      sectionTag: c.section as SectionTag,
+      nonMoving: c.nonMoving,
+      totalDebt,
+      totalCash,
+      totalBank,
+    });
   }
-  return null;
-}
-
-// ═══════════════════════════════════════════════════════════
-// EXCEL PARSERS
-// ═══════════════════════════════════════════════════════════
-
-/**
- * Parse ديون 25 كيلو.xlsx
- * Sheet structure: two sections separated by a repeated header row where cell A = 'الرقم'.
- * Section 1a → BAKERY WHOLESALE
- * Section 1b → GROCERY AGENT_WHOLESALE
- *
- * Reads only `row.values[3]` (column C) as opening; ignores all other columns in the row.
- */
-async function parseFile1(filePath: string): Promise<DebtRow[]> {
-  const wb = new ExcelJS.Workbook();
-  await wb.xlsx.readFile(filePath);
-  const ws = wb.worksheets[0];
-  const rows: DebtRow[] = [];
-  let currentSection: SectionTag = '1a';
-  let headerCount = 0;
-
-  ws.eachRow({ includeEmpty: false }, (row) => {
-    const v = row.values as ExcelJS.CellValue[];
-    // exceljs row.values is 1-indexed: v[1]=colA, v[2]=colB, v[3]=colC
-    const colA = v[1];
-    const colB = v[2];
-    const colC = v[3];
-
-    // Section boundary: col A is the string 'الرقم'
-    const aStr = cellStr(colA);
-    if (aStr === 'الرقم') {
-      headerCount++;
-      currentSection = headerCount <= 1 ? '1a' : '1b';
-      return;
-    }
-
-    // Data row: col A is an integer row number, col B is a customer name
-    const aNum = cellNum(colA);
-    const bStr = cellStr(colB);
-    if (aNum !== null && Number.isInteger(aNum) && bStr) {
-      const opening = cellNum(colC) ?? 0;
-      if (opening > 0) {
-        rows.push({
-          rowNum: aNum,
-          name: bStr,
-          openingBalance: opening,
-          sectionTag: currentSection,
-        });
-      }
-    }
-  });
-
-  return rows;
-}
-
-/**
- * Parse ديون شهر 4 المنتجات.xlsx
- * Sheet structure: two sections.
- * First section header: a row where col B contains 'مديونية منتجات الجملة' (or file starts with section 2a implicitly).
- * Second section header: a row where col B contains 'قطاعي'.
- * Section 2a → GROCERY WHOLESALE
- * Section 2b → GROCERY RETAIL
- *
- * Reads only `row.values[3]` (column C) as opening; ignores all other columns in the row.
- */
-async function parseFile2(filePath: string): Promise<DebtRow[]> {
-  const wb = new ExcelJS.Workbook();
-  await wb.xlsx.readFile(filePath);
-  const ws = wb.worksheets[0];
-  const rows: DebtRow[] = [];
-  let currentSection: SectionTag = '2a';
-
-  ws.eachRow({ includeEmpty: false }, (row) => {
-    const v = row.values as ExcelJS.CellValue[];
-    const colA = v[1];
-    const colB = v[2];
-    const colC = v[3];
-
-    const bStr = cellStr(colB);
-
-    // Detect section 2b boundary: col B contains 'قطاعي'
-    if (bStr && bStr.includes('قطاعي')) {
-      currentSection = '2b';
-      return;
-    }
-
-    // Data row: col A is an integer, col B is a name
-    const aNum = cellNum(colA);
-    if (aNum !== null && Number.isInteger(aNum) && bStr) {
-      const opening = cellNum(colC) ?? 0;
-      if (opening > 0) {
-        rows.push({
-          rowNum: aNum,
-          name: bStr,
-          openingBalance: opening,
-          sectionTag: currentSection,
-        });
-      }
-    }
-  });
 
   return rows;
 }
@@ -279,9 +164,8 @@ async function parseFile2(filePath: string): Promise<DebtRow[]> {
 // ═══════════════════════════════════════════════════════════
 // SECTION HELPERS
 // ═══════════════════════════════════════════════════════════
-
 function sectionToDivision(tag: SectionTag): Section {
-  return tag === '1a' ? Section.BAKERY : Section.GROCERY;
+  return tag === '1a' || tag === '1b' ? Section.BAKERY : Section.GROCERY;
 }
 
 function sectionToCustomerType(tag: SectionTag): CustomerType {
@@ -294,7 +178,7 @@ function sectionToCustomerType(tag: SectionTag): CustomerType {
 }
 
 function sectionToInvoiceSection(tag: SectionTag): Section {
-  return tag === '1a' ? Section.BAKERY : Section.GROCERY;
+  return tag === '1a' || tag === '1b' ? Section.BAKERY : Section.GROCERY;
 }
 
 function sectionLabel(tag: SectionTag): string {
@@ -307,9 +191,25 @@ function sectionLabel(tag: SectionTag): string {
 }
 
 // ═══════════════════════════════════════════════════════════
+// NAME_OVERRIDES VALIDATION
+// ═══════════════════════════════════════════════════════════
+async function validateOverrides(prisma: PrismaClient): Promise<void> {
+  for (const [excelName, override] of Object.entries(NAME_OVERRIDES)) {
+    const id =
+      typeof override === 'string' ? override :
+      typeof override === 'object' && 'customerId' in override ? override.customerId :
+      null;
+    if (!id) continue;
+    const exists = await prisma.customer.findUnique({ where: { id }, select: { id: true } });
+    if (!exists) {
+      console.warn(`  ⚠ NAME_OVERRIDES["${excelName}"] -> id "${id}" not found in DB — entry will be treated as new customer`);
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
 // NAME MATCHING
 // ═══════════════════════════════════════════════════════════
-
 async function matchRows(
   prisma: PrismaClient,
   rows: DebtRow[],
@@ -329,22 +229,57 @@ async function matchRows(
   const unmatchedReport: UnmatchedEntry[] = [];
 
   for (const row of rows) {
-    const normQuery = normalizeArabic(row.name);
+    const trimmedName = row.name.trim();
+    const normQuery = normalizeArabic(trimmedName);
     const targetDivision = sectionToDivision(row.sectionTag);
-    let candidates = normalizedDb.filter((c) => false); // empty start
+
+    // ── NAME_OVERRIDES takes precedence ─────────────────────
+    const override = NAME_OVERRIDES[trimmedName];
+    if (override !== undefined) {
+      const id =
+        typeof override === 'string' ? override :
+        typeof override === 'object' && 'customerId' in override ? override.customerId :
+        null;
+
+      if (id) {
+        const exists = await prisma.customer.findUnique({ where: { id }, select: { id: true, name: true } });
+        if (exists) {
+          matched.push({ row, existingCustomerId: id, existingCustomerName: exists.name, isNew: false, matchNote: 'override' });
+          continue;
+        }
+        console.warn(`  ⚠ Override id "${id}" for "${trimmedName}" not found — treating as new`);
+      }
+      // Empty string or { create: true } normally means create. If the seed was
+      // already run once, prefer the exact DB match so the script remains rerunnable.
+      const exactCreated = normalizedDb.filter(
+        (c) => c.normalized === normQuery && c.division === targetDivision,
+      );
+      if (exactCreated.length === 1) {
+        matched.push({
+          row,
+          existingCustomerId: exactCreated[0].id,
+          existingCustomerName: exactCreated[0].name,
+          isNew: false,
+          matchNote: 'override:create-existing',
+        });
+        continue;
+      }
+      matched.push({ row, existingCustomerId: null, existingCustomerName: null, isNew: true, matchNote: 'override:create' });
+      continue;
+    }
+
+    // ── Fuzzy matching ───────────────────────────────────────
+    let candidates = normalizedDb.filter(() => false);
     let matchNote = '';
 
-    // Step 1: exact normalized match
     const exact = normalizedDb.filter((c) => c.normalized === normQuery);
     if (exact.length > 0) { candidates = exact; matchNote = 'exact'; }
 
-    // Step 2: Levenshtein ≤ 2
     if (candidates.length === 0) {
       const lev = normalizedDb.filter((c) => levenshtein(c.normalized, normQuery) <= 2);
       if (lev.length > 0) { candidates = lev; matchNote = 'levenshtein≤2'; }
     }
 
-    // Step 3: substring (min 8 chars both sides)
     if (candidates.length === 0 && normQuery.length >= 8) {
       const sub = normalizedDb.filter(
         (c) =>
@@ -390,154 +325,213 @@ async function matchRows(
   return { matched, unmatchedReport };
 }
 
-/** All existing DB customer ids that appear on the Excel list (one id per matched row). */
-function buildExcelCustomerIdSet(matched: MatchResult[]): Set<string> {
-  const s = new Set<string>();
-  for (const m of matched) {
-    if (m.existingCustomerId) s.add(m.existingCustomerId);
-  }
-  return s;
-}
-
 // ═══════════════════════════════════════════════════════════
-// RESET PHASE
+// DRY-RUN DIFF LISTS
 // ═══════════════════════════════════════════════════════════
-
-async function resetPhase(
+async function writeDryRunLists(
   prisma: PrismaClient,
-  excelCustomerIds: Set<string>,
+  rows: DebtRow[],
+  matched: MatchResult[],
 ): Promise<void> {
-  console.log('\n══════════════════════════════════');
-  console.log('RESET PHASE');
-  console.log('══════════════════════════════════');
-  console.log(
-    `  Excel-matched customer ids (protected): ${excelCustomerIds.size} (unpaid pre-April invoices for these are kept)`,
+  const reportsDir = __dirname;
+
+  // ── 1. Excel customers ──────────────────────────────────
+  interface ExcelCustomerEntry {
+    excelName: string;
+    section: SectionTag;
+    nonMoving: boolean;
+    openingBalanceApril1: number;
+    totalDebtApril: number;
+    totalCashApril: number;
+    totalBankApril: number;
+    matchedCustomerId: string | null;
+    matchedCustomerName: string | null;
+    isNew: boolean;
+    matchNote?: string;
+  }
+
+  const excelList: ExcelCustomerEntry[] = matched.map((m) => ({
+    excelName: m.row.name,
+    section: m.row.sectionTag,
+    nonMoving: m.row.nonMoving,
+    openingBalanceApril1: m.row.openingBalance,
+    totalDebtApril: m.row.totalDebt,
+    totalCashApril: m.row.totalCash,
+    totalBankApril: m.row.totalBank,
+    matchedCustomerId: m.existingCustomerId,
+    matchedCustomerName: m.existingCustomerName,
+    isNew: m.isNew,
+    matchNote: m.matchNote,
+  }));
+
+  fs.writeFileSync(
+    path.join(reportsDir, 'april-customers-from-excel.json'),
+    JSON.stringify(excelList, null, 2),
+    'utf8',
   );
 
-  // ── Find target SalesInvoices ──────────────────────────────
-  // 1) All legacy seeded opening-balance lines (replaced in seed for Excel list + cleared for others)
-  const preSysInvoices = await prisma.salesInvoice.findMany({
-    where: { invoiceNumber: { startsWith: 'PRE-SYS-' } },
-    select: { id: true, invoiceNumber: true, total: true, paidAmount: true },
-  });
-
-  // 2) Unpaid pre-April real invoices: only for customers *not* on the Excel list (clear carry-over for others)
-  const preAprilAllInvoices = await prisma.salesInvoice.findMany({
+  // ── 2. DB customers with pre-April unpaid invoices ─────
+  const preAprilInvoices = await prisma.salesInvoice.findMany({
     where: {
       createdAt: { lt: APRIL_1 },
-      NOT: { invoiceNumber: { startsWith: 'PRE-SYS-' } },
+      paymentConfirmationStatus: { not: 'REJECTED' },
     },
     select: {
       id: true,
       invoiceNumber: true,
       total: true,
       paidAmount: true,
-      createdAt: true,
       customerId: true,
+      customer: { select: { id: true, name: true, division: true, type: true } },
     },
   });
 
-  const preAprilUnpaidNotOnExcel = preAprilAllInvoices.filter((inv) => {
-    const unpaid = new Prisma.Decimal(inv.total).greaterThan(new Prisma.Decimal(inv.paidAmount));
-    if (!unpaid) return false;
-    const cid = inv.customerId;
-    if (!cid) return true;
-    return !excelCustomerIds.has(cid);
+  const unpaidByCustomer = new Map<
+    string,
+    { id: string; name: string; division: Section; type: CustomerType; outstanding: number; invoiceCount: number; hasPreSys: boolean; hasManual: boolean }
+  >();
+
+  for (const inv of preAprilInvoices) {
+    const outstanding = new Prisma.Decimal(inv.total).sub(new Prisma.Decimal(inv.paidAmount));
+    if (!outstanding.greaterThan(0)) continue;
+    if (!inv.customerId || !inv.customer) continue;
+
+    const existing = unpaidByCustomer.get(inv.customerId);
+    const isPreSys = inv.invoiceNumber.startsWith('PRE-SYS-');
+    if (existing) {
+      existing.outstanding += outstanding.toNumber();
+      existing.invoiceCount += 1;
+      if (isPreSys) existing.hasPreSys = true;
+      else existing.hasManual = true;
+    } else {
+      unpaidByCustomer.set(inv.customerId, {
+        id: inv.customerId,
+        name: inv.customer.name,
+        division: inv.customer.division,
+        type: inv.customer.type,
+        outstanding: outstanding.toNumber(),
+        invoiceCount: 1,
+        hasPreSys: isPreSys,
+        hasManual: !isPreSys,
+      });
+    }
+  }
+
+  const dbList = Array.from(unpaidByCustomer.values());
+  fs.writeFileSync(
+    path.join(reportsDir, 'april-customers-with-unpaid-in-db.json'),
+    JSON.stringify(dbList, null, 2),
+    'utf8',
+  );
+
+  // ── 3. Overlap ─────────────────────────────────────────
+  const matchedIds = new Set<string>(
+    matched.filter((m) => m.existingCustomerId).map((m) => m.existingCustomerId as string),
+  );
+  const dbCustomerIds = new Set(dbList.map((c) => c.id));
+
+  const excelOnly = excelList.filter((e) => e.isNew);
+  const dbOnly = dbList.filter((c) => !matchedIds.has(c.id));
+  const inBoth = matched
+    .filter((m) => m.existingCustomerId && dbCustomerIds.has(m.existingCustomerId))
+    .map((m) => {
+      const dbEntry = unpaidByCustomer.get(m.existingCustomerId!);
+      const diff = Math.abs((dbEntry?.outstanding ?? 0) - m.row.openingBalance);
+      return {
+        excelName: m.row.name,
+        customerId: m.existingCustomerId,
+        customerName: m.existingCustomerName,
+        section: m.row.sectionTag,
+        nonMoving: m.row.nonMoving,
+        excelOpening: m.row.openingBalance,
+        dbOutstanding: dbEntry?.outstanding ?? 0,
+        diff: diff,
+        mismatch: diff > 0.01,
+      };
+    });
+
+  const mismatchCount = inBoth.filter((e) => e.mismatch).length;
+
+  fs.writeFileSync(
+    path.join(reportsDir, 'april-customers-overlap.json'),
+    JSON.stringify({ excelOnly, dbOnly, inBoth }, null, 2),
+    'utf8',
+  );
+
+  // ── Console summary ─────────────────────────────────────
+  const sectionCounts: Record<SectionTag, number> = { '1a': 0, '1b': 0, '2a': 0, '2b': 0 };
+  for (const r of rows) sectionCounts[r.sectionTag]++;
+
+  console.log(`\n  Excel customers:              ${rows.length} (1a:${sectionCounts['1a']} 1b:${sectionCounts['1b']} 2a:${sectionCounts['2a']} 2b:${sectionCounts['2b']})`);
+  console.log(`  DB customers w/ unpaid:       ${dbList.length}`);
+  console.log(`    → Excel-only (will create):   ${excelOnly.length}`);
+  console.log(`    → DB-only (will be PAID):     ${dbOnly.length}`);
+  console.log(`    → In both:                    ${inBoth.length}  (${inBoth.length - mismatchCount} match, ${mismatchCount} mismatches)`);
+  console.log(`\n  Diff reports written to:`);
+  console.log(`    ${path.join(reportsDir, 'april-customers-from-excel.json')}`);
+  console.log(`    ${path.join(reportsDir, 'april-customers-with-unpaid-in-db.json')}`);
+  console.log(`    ${path.join(reportsDir, 'april-customers-overlap.json')}`);
+}
+
+// ═══════════════════════════════════════════════════════════
+// RESET PHASE — deletes PRE-SYS-* only; manual invoices preserved
+// ═══════════════════════════════════════════════════════════
+async function resetPhase(prisma: PrismaClient): Promise<void> {
+  console.log('\n══════════════════════════════════');
+  console.log('RESET PHASE');
+  console.log('══════════════════════════════════');
+  console.log('  Scope: PRE-SYS-* invoices only (manual invoices are preserved).');
+
+  const preSysInvoices = await prisma.salesInvoice.findMany({
+    where: { invoiceNumber: { startsWith: 'PRE-SYS-' } },
+    select: { id: true, invoiceNumber: true, total: true, paidAmount: true },
   });
 
-  const invoiceIdSet = new Set<string>([
-    ...preSysInvoices.map((i) => i.id),
-    ...preAprilUnpaidNotOnExcel.map((i) => i.id),
-  ]);
-  const invoiceIds = Array.from(invoiceIdSet);
-
-  const outstandingInvoices = [...preSysInvoices, ...preAprilUnpaidNotOnExcel].reduce(
+  const outstanding = preSysInvoices.reduce(
     (sum, inv) => {
-      const outstanding = new Prisma.Decimal(inv.total).sub(
-        new Prisma.Decimal(inv.paidAmount),
-      );
-      return sum.add(outstanding.greaterThan(0) ? outstanding : new Prisma.Decimal(0));
+      const o = new Prisma.Decimal(inv.total).sub(new Prisma.Decimal(inv.paidAmount));
+      return sum.add(o.greaterThan(0) ? o : new Prisma.Decimal(0));
     },
     new Prisma.Decimal(0),
   );
 
-  console.log(`  PRE-SYS-* SalesInvoices:                    ${preSysInvoices.length}`);
-  console.log(
-    `  Unpaid pre-April (customers NOT in Excel): ${preAprilUnpaidNotOnExcel.length}`,
-  );
-  console.log(`  Total SalesInvoices to delete:              ${invoiceIds.length}`);
-  console.log(`  Outstanding receivables deleted:            ${outstandingInvoices.toFixed(2)} SDG`);
+  console.log(`  PRE-SYS-* invoices to delete:   ${preSysInvoices.length}`);
+  console.log(`  Outstanding receivables freed:   ${outstanding.toFixed(2)} SDG`);
 
-  // ── ProcOrders: intentionally not modified ─────────────────
-  console.log(`  ProcOrders:                                 0 (skipped — not deleted)`);
+  const obCount = await prisma.openingBalance.count({ where: { scope: 'CUSTOMER' } });
+  console.log(`  Customer OpeningBalances:        ${obCount} (will be deleted)`);
 
-  // ── Opening Balances: CUSTOMER only, same rule as invoices (supplier OB untouched)
-  const obWhereCustomerNotOnExcel: Prisma.OpeningBalanceWhereInput =
-    excelCustomerIds.size === 0
-      ? { scope: 'CUSTOMER' }
-      : {
-          scope: 'CUSTOMER',
-          OR: [
-            { customerId: null },
-            { customerId: { notIn: Array.from(excelCustomerIds) } },
-          ],
-        };
-
-  const obCount = await prisma.openingBalance.count({ where: obWhereCustomerNotOnExcel });
-  const supplierObCount = await prisma.openingBalance.count({ where: { scope: 'SUPPLIER' } });
-  console.log(`  Customer OpeningBalances to delete:         ${obCount} (not on Excel list)`);
-  console.log(`  Supplier OpeningBalances:                   ${supplierObCount} (skipped — not deleted)`);
-
-  // ── Safety check ───────────────────────────────────────────
-  const totalRows = invoiceIds.length + obCount;
-  if (totalRows > MAX_SAFE_DELETE) {
+  if (preSysInvoices.length + obCount > MAX_SAFE_DELETE) {
     throw new Error(
-      `\nSafety check FAILED: would delete ${totalRows} rows (limit: ${MAX_SAFE_DELETE}).\n` +
-        `Review the numbers above and increase MAX_SAFE_DELETE if intentional.`,
+      `Safety check FAILED: would delete ${preSysInvoices.length + obCount} rows (limit: ${MAX_SAFE_DELETE}).`,
     );
   }
 
-  if (DRY_RUN) {
-    console.log('\n  [DRY RUN] No changes made.');
+  if (DRY_RUN || !CONFIRM) {
+    console.log('\n  [NO WRITE] Run with --confirm to execute the reset phase.');
     return;
   }
-
-  if (!CONFIRM) {
-    console.log('\n  Run with --confirm to execute the reset phase.');
-    return;
-  }
-
-  // ── Execute ────────────────────────────────────────────────
-  console.log('\n  Executing deletions...');
 
   const BATCH = 500;
-  let deletedInvoices = 0;
-  for (let i = 0; i < invoiceIds.length; i += BATCH) {
-    const batch = invoiceIds.slice(i, i + BATCH);
-    const result = await prisma.salesInvoice.deleteMany({ where: { id: { in: batch } } });
-    deletedInvoices += result.count;
+  let deleted = 0;
+  const ids = preSysInvoices.map((i) => i.id);
+  for (let i = 0; i < ids.length; i += BATCH) {
+    const r = await prisma.salesInvoice.deleteMany({ where: { id: { in: ids.slice(i, i + BATCH) } } });
+    deleted += r.count;
   }
-  console.log(`  ✓ Deleted ${deletedInvoices} SalesInvoices`);
+  console.log(`  ✓ Deleted ${deleted} PRE-SYS-* SalesInvoices`);
 
-  const obDeleted = await prisma.openingBalance.deleteMany({ where: obWhereCustomerNotOnExcel });
+  const obDeleted = await prisma.openingBalance.deleteMany({ where: { scope: 'CUSTOMER' } });
   console.log(`  ✓ Deleted ${obDeleted.count} customer OpeningBalances`);
 
-  // Invalidate pre-April cumulative aggregates so they recompute cleanly
-  const caDeleted = await prisma.customerCumulativeAggregate.deleteMany({
-    where: { date: { lt: APRIL_1 } },
-  });
-  const saDeleted = await prisma.supplierCumulativeAggregate.deleteMany({
-    where: { date: { lt: APRIL_1 } },
-  });
-  console.log(
-    `  ✓ Invalidated ${caDeleted.count} CustomerCumulativeAggregates + ${saDeleted.count} SupplierCumulativeAggregates`,
-  );
+  const caDeleted = await prisma.customerCumulativeAggregate.deleteMany({ where: { date: { lt: APRIL_1 } } });
+  const saDeleted = await prisma.supplierCumulativeAggregate.deleteMany({ where: { date: { lt: APRIL_1 } } });
+  console.log(`  ✓ Invalidated ${caDeleted.count} CustomerCumulativeAggregates + ${saDeleted.count} SupplierCumulativeAggregates`);
 }
 
 // ═══════════════════════════════════════════════════════════
 // ENSURE LEGACY ITEM
 // ═══════════════════════════════════════════════════════════
-
 async function ensureLateItem(
   prisma: PrismaClient,
   section: Section,
@@ -570,6 +564,16 @@ async function ensureLateItem(
 // ═══════════════════════════════════════════════════════════
 // SEED PHASE
 // ═══════════════════════════════════════════════════════════
+function splitAmount(total: number): number[] {
+  const parts: number[] = [];
+  let remaining = total;
+  while (remaining > 0) {
+    const chunk = Math.min(remaining, MAX_SAFE_AMOUNT);
+    parts.push(chunk);
+    remaining = Math.round((remaining - chunk) * 100) / 100;
+  }
+  return parts;
+}
 
 async function seedPhase(
   prisma: PrismaClient,
@@ -602,7 +606,6 @@ async function seedPhase(
   for (const match of matchedRows) {
     const { row, existingCustomerId, existingCustomerName, isNew } = match;
 
-    // ── Resolve customer ───────────────────────────────────
     let customerId: string;
     let customerName: string;
 
@@ -610,12 +613,9 @@ async function seedPhase(
       customerId = existingCustomerId;
       customerName = existingCustomerName!;
     } else {
-      // New customer
       if (DRY_RUN || !CONFIRM) {
         const note = match.matchNote ? ` [${match.matchNote}]` : '';
-        console.log(
-          `  [NEW] "${row.name}" (${sectionLabel(row.sectionTag)}) → ${row.openingBalance.toLocaleString()} SDG${note}`,
-        );
+        console.log(`  [NEW] "${row.name}" (${sectionLabel(row.sectionTag)}) → ${row.openingBalance.toLocaleString()} SDG${note}`);
         perSection[row.sectionTag].invoices += 1;
         perSection[row.sectionTag].sdg += row.openingBalance;
         totalSeeded = totalSeeded.add(new Prisma.Decimal(row.openingBalance));
@@ -636,7 +636,6 @@ async function seedPhase(
       console.log(`  ✨ Created customer: "${customerName}"`);
     }
 
-    // ── Determine invoice metadata ─────────────────────────
     const invoiceSection = sectionToInvoiceSection(row.sectionTag);
     const lateItem = invoiceSection === Section.BAKERY ? lateItemBakery : lateItemGrocery;
     const salesUserId =
@@ -646,18 +645,16 @@ async function seedPhase(
     const shortId = customerId.slice(-6);
     const timestamp = Date.now();
     const label = sectionLabel(row.sectionTag);
-    const notes = `رصيد افتتاحي 2026-04-01 - ${label}`;
+    const nmSuffix = row.nonMoving ? ' (غير متحركة)' : '';
+    const notes = `رصيد افتتاحي 2026-04-01 - ${label}${nmSuffix}`;
 
-    // ── Split if amount exceeds Decimal(15,2) limit ────────
     const amount = row.openingBalance;
     const parts = amount > MAX_SAFE_AMOUNT ? splitAmount(amount) : [amount];
 
     if (DRY_RUN || !CONFIRM) {
       const note = match.matchNote ? ` [${match.matchNote}]` : '';
       const partsNote = parts.length > 1 ? ` (split into ${parts.length} invoices)` : '';
-      console.log(
-        `  [SEED] "${customerName}" → ${amount.toLocaleString()} SDG (${label})${note}${partsNote}`,
-      );
+      console.log(`  [SEED] "${customerName}" → ${amount.toLocaleString()} SDG (${label}${nmSuffix})${note}${partsNote}`);
       perSection[row.sectionTag].invoices += parts.length;
       perSection[row.sectionTag].sdg += amount;
       totalSeeded = totalSeeded.add(new Prisma.Decimal(amount));
@@ -699,7 +696,6 @@ async function seedPhase(
           },
         },
       });
-
       invoicesCreated++;
     }
 
@@ -715,22 +711,9 @@ async function seedPhase(
   return { invoicesCreated, newCustomers, totalSeeded, perSection };
 }
 
-/** Split an amount into chunks of MAX_SAFE_AMOUNT */
-function splitAmount(total: number): number[] {
-  const parts: number[] = [];
-  let remaining = total;
-  while (remaining > 0) {
-    const chunk = Math.min(remaining, MAX_SAFE_AMOUNT);
-    parts.push(chunk);
-    remaining = Math.round((remaining - chunk) * 100) / 100;
-  }
-  return parts;
-}
-
 // ═══════════════════════════════════════════════════════════
 // MAIN
 // ═══════════════════════════════════════════════════════════
-
 async function main(): Promise<void> {
   console.log('╔══════════════════════════════════════════════════╗');
   console.log('║   APRIL 2026 DEBT RESET & SEED                   ║');
@@ -738,39 +721,25 @@ async function main(): Promise<void> {
   if (DRY_RUN) console.log('  MODE: DRY RUN — no database writes');
   else if (!CONFIRM) console.log('  MODE: PREVIEW — run with --confirm to write');
   else console.log('  MODE: LIVE — database will be modified');
-  console.log(`  File 1: ${FILE1}`);
-  console.log(`  File 2: ${FILE2}`);
+  console.log(`  JSON: ${JSON_FILE}`);
   console.log();
 
-  // Verify files exist
-  for (const [label, fpath] of [['File 1', FILE1], ['File 2', FILE2]] as [string, string][]) {
-    if (!fs.existsSync(fpath)) {
-      console.error(`✗ ${label} not found: ${fpath}`);
-      console.error('  Use --file1=<path> and/or --file2=<path> to override.');
-      process.exit(1);
-    }
-  }
+  const rows = loadDebtRowsFromJson(JSON_FILE);
+
+  const sectionCounts: Record<SectionTag, number> = { '1a': 0, '1b': 0, '2a': 0, '2b': 0 };
+  for (const r of rows) sectionCounts[r.sectionTag]++;
+  const nonMovingCount = rows.filter((r) => r.nonMoving).length;
+
+  console.log(`Loaded ${rows.length} rows from JSON:`);
+  console.log(`  1a: ${sectionCounts['1a']}  1b: ${sectionCounts['1b']}  2a: ${sectionCounts['2a']}  2b: ${sectionCounts['2b']}  (non-moving: ${nonMovingCount})`);
+  console.log(`  Grand opening total: ${rows.reduce((s, r) => s + r.openingBalance, 0).toLocaleString()} SDG`);
 
   const prisma = new PrismaClient();
 
   try {
-    // ── Parse Excel files ────────────────────────────────────
-    console.log('Parsing Excel files...');
-    console.log(
-      '  (Amount source: column C only = رصيد افتتاحي ليوم 2026-04-01 per row — excludes all April daily payments & الصافي totals.)',
-    );
-    const rows1 = await parseFile1(FILE1);
-    const rows2 = await parseFile2(FILE2);
-    const allRows = [...rows1, ...rows2];
+    await validateOverrides(prisma);
 
-    console.log(`  File 1: ${rows1.length} rows (${rows1.filter(r => r.sectionTag === '1a').length} section-1a, ${rows1.filter(r => r.sectionTag === '1b').length} section-1b)`);
-    console.log(`  File 2: ${rows2.length} rows (${rows2.filter(r => r.sectionTag === '2a').length} section-2a, ${rows2.filter(r => r.sectionTag === '2b').length} section-2b)`);
-    console.log(`  Total:  ${allRows.length} rows`);
-
-    const grandOpeningTotal = allRows.reduce((s, r) => s + r.openingBalance, 0);
-    console.log(`  Grand opening balance total: ${grandOpeningTotal.toLocaleString()} SDG`);
-
-    // ── Find warehouse ───────────────────────────────────────
+    // ── Find warehouse ─────────────────────────────────────
     const mainWarehouse = await prisma.inventory.findFirst({
       where: { OR: [{ name: { contains: 'رئيسي' } }, { name: 'المخزن الرئيسي' }] },
       select: { id: true, name: true },
@@ -780,7 +749,7 @@ async function main(): Promise<void> {
     }
     console.log(`\n  Warehouse: ${mainWarehouse.name} (${mainWarehouse.id})`);
 
-    // ── Find sales users ─────────────────────────────────────
+    // ── Find sales users ──────────────────────────────────
     const bakeryUser = await prisma.user.findFirst({
       where: { role: { in: [Role.SALES_BAKERY, Role.ACCOUNTANT, Role.MANAGER] } },
       select: { id: true, username: true },
@@ -801,41 +770,46 @@ async function main(): Promise<void> {
     console.log(`  Bakery user:  ${bakeryUser.username}`);
     console.log(`  Grocery user: ${groceryUser.username}`);
 
-    // ── Match names ──────────────────────────────────────────
+    // ── Match names ────────────────────────────────────────
     console.log('\nMatching names against existing customers...');
-    const { matched, unmatchedReport } = await matchRows(prisma, allRows);
+    const { matched, unmatchedReport } = await matchRows(prisma, rows);
 
     const exactCount = matched.filter((m) => !m.matchNote && !m.isNew).length;
-    const fuzzyCount = matched.filter((m) => m.matchNote && !m.isNew).length;
+    const fuzzyCount = matched.filter((m) => m.matchNote && !m.isNew && m.matchNote !== 'override').length;
+    const overrideCount = matched.filter((m) => m.matchNote === 'override').length;
     const newCount = matched.filter((m) => m.isNew).length;
     console.log(`  Exact matches:     ${exactCount}`);
     console.log(`  Fuzzy matches:     ${fuzzyCount}`);
+    console.log(`  Override matches:  ${overrideCount}`);
     console.log(`  New customers:     ${newCount}`);
 
     if (fuzzyCount > 0) {
       console.log('\n  Fuzzy match details:');
       matched
-        .filter((m) => m.matchNote && !m.isNew)
-        .forEach((m) =>
-          console.log(`    "${m.row.name}" → "${m.existingCustomerName}" [${m.matchNote}]`),
-        );
+        .filter((m) => m.matchNote && !m.isNew && m.matchNote !== 'override')
+        .forEach((m) => console.log(`    "${m.row.name}" → "${m.existingCustomerName}" [${m.matchNote}]`));
     }
 
     if (unmatchedReport.length > 0) {
       fs.writeFileSync(REPORT_FILE, JSON.stringify(unmatchedReport, null, 2), 'utf8');
       console.log(`\n  ⚠ ${unmatchedReport.length} unmatched/ambiguous rows → ${REPORT_FILE}`);
-      console.log('    New customers will be created for these.');
+      console.log(`    Edit scripts/data/april-2026-debts/name-overrides.ts for these names.`);
     }
 
-    // ── Reset phase (needs match results: only clear non–Excel customers) ──
-    const excelCustomerIds = buildExcelCustomerIdSet(matched);
+    // ── Dry-run diff lists ────────────────────────────────
+    if (DRY_RUN || !CONFIRM) {
+      console.log('\n── DRY-RUN DIFF LISTS ──');
+      await writeDryRunLists(prisma, rows, matched);
+    }
+
+    // ── Reset phase ────────────────────────────────────────
     if (!NO_RESET) {
-      await resetPhase(prisma, excelCustomerIds);
+      await resetPhase(prisma);
     } else {
       console.log('\n[--no-reset] Skipping reset phase.');
     }
 
-    // ── Seed phase ───────────────────────────────────────────
+    // ── Seed phase ─────────────────────────────────────────
     const { invoicesCreated, newCustomers: nc, totalSeeded, perSection } = await seedPhase(
       prisma,
       matched,
@@ -843,14 +817,14 @@ async function main(): Promise<void> {
       salesUserBySection,
     );
 
-    // ── Final summary ────────────────────────────────────────
+    // ── Final summary ──────────────────────────────────────
     console.log('\n══════════════════════════════════');
     console.log('SUMMARY');
     console.log('══════════════════════════════════');
-    console.log(`  Section 1a (25kg group 1):  ${perSection['1a'].invoices} invoices, ${perSection['1a'].sdg.toLocaleString()} SDG`);
-    console.log(`  Section 1b (25kg group 2):  ${perSection['1b'].invoices} invoices, ${perSection['1b'].sdg.toLocaleString()} SDG`);
-    console.log(`  Section 2a (products jml):  ${perSection['2a'].invoices} invoices, ${perSection['2a'].sdg.toLocaleString()} SDG`);
-    console.log(`  Section 2b (products ret):  ${perSection['2b'].invoices} invoices, ${perSection['2b'].sdg.toLocaleString()} SDG`);
+    console.log(`  Section 1a (bakery whl):    ${perSection['1a'].invoices} invoices, ${perSection['1a'].sdg.toLocaleString()} SDG`);
+    console.log(`  Section 1b (bakery agent):  ${perSection['1b'].invoices} invoices, ${perSection['1b'].sdg.toLocaleString()} SDG`);
+    console.log(`  Section 2a (grocery whl):   ${perSection['2a'].invoices} invoices, ${perSection['2a'].sdg.toLocaleString()} SDG`);
+    console.log(`  Section 2b (grocery ret):   ${perSection['2b'].invoices} invoices, ${perSection['2b'].sdg.toLocaleString()} SDG`);
     console.log(`  ─────────────────────────────────`);
     console.log(`  Total invoices:  ${invoicesCreated}`);
     console.log(`  New customers:   ${nc}`);
@@ -858,7 +832,7 @@ async function main(): Promise<void> {
     if (DRY_RUN || !CONFIRM) {
       console.log('\n  Run with --confirm to apply the above changes.');
     } else {
-      console.log('\n  ✅ Done. Debt reset and April 2026 opening balances seeded.');
+      console.log('\n  ✅ Done. April 2026 opening balances seeded.');
     }
   } finally {
     await prisma.$disconnect();

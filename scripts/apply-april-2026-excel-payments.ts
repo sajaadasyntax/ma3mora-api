@@ -9,7 +9,7 @@
  *      No SalesPayment, no aggregate update, no treasury entry.
  *
  *   2. Excel daily payment replay (real cash effect)
- *      Walk both April Excel workbooks day by day, per row. For each
+ *      Walk the canonical April JSON day by day, per row. For each
  *      (customer, day, method) where سداد كاش or سداد بنكك > 0, allocate that
  *      amount FIFO across the customer's currently-unpaid invoices (oldest
  *      first), creating real SalesPayment rows and updating the daily
@@ -27,8 +27,7 @@
  *   --confirm                  Actually write to the database
  *   --skip-cleanup             Skip Phase 1
  *   --skip-payments            Skip Phases 2-4
- *   --file1=<path>             Override workbook 1 (default: ديون المنتجات.xlsx)
- *   --file2=<path>             Override workbook 2 (default: مخزن رئيسي بقالات.xlsx)
+ *   --json=<path>              Override JSON source (default: data/april-2026-debts/april-2026-debts.json)
  *   --start-date=YYYY-MM-DD    Earliest day column to process (default: 2026-04-01)
  *   --end-date=YYYY-MM-DD      Latest day column to process   (default: 2026-04-30)
  *   --user=<userId>            User id to use as recordedBy on SalesPayment
@@ -42,7 +41,6 @@
  *   excel-payments-unmatched.json  Excel customer names with no DB match
  */
 
-import ExcelJS from 'exceljs';
 import {
   PrismaClient,
   Prisma,
@@ -55,6 +53,8 @@ import * as path from 'path';
 import * as fs from 'fs';
 
 import { aggregationService } from '../src/services/aggregationService';
+import type { AprilDebtsJson } from './extract-april-2026-debts-to-json';
+import { NAME_OVERRIDES, type NameOverride } from './data/april-2026-debts/name-overrides';
 
 // ═══════════════════════════════════════════════════════════
 // CLI
@@ -68,13 +68,10 @@ const SKIP_PAYMENTS = ARGS.includes('--skip-payments');
 const RUN_RECALC = ARGS.includes('--recalc');
 
 const DEFAULT_DEBT_DATA_DIR = path.join(__dirname, 'data', 'april-2026-debts');
-const DEFAULT_FILE1 = path.join(DEFAULT_DEBT_DATA_DIR, 'ديون المنتجات.xlsx');
-const DEFAULT_FILE2 = path.join(DEFAULT_DEBT_DATA_DIR, 'مخزن رئيسي بقالات.xlsx');
+const DEFAULT_JSON = path.join(DEFAULT_DEBT_DATA_DIR, 'april-2026-debts.json');
 
-const FILE1 =
-  ARGS.find((a) => a.startsWith('--file1='))?.slice('--file1='.length) ?? DEFAULT_FILE1;
-const FILE2 =
-  ARGS.find((a) => a.startsWith('--file2='))?.slice('--file2='.length) ?? DEFAULT_FILE2;
+const JSON_FILE =
+  ARGS.find((a) => a.startsWith('--json='))?.slice('--json='.length) ?? DEFAULT_JSON;
 
 const START_DATE = parseDateArg(
   ARGS.find((a) => a.startsWith('--start-date='))?.slice('--start-date='.length),
@@ -91,90 +88,26 @@ const USER_ID_OVERRIDE =
 const APRIL_1 = new Date('2026-04-01T00:00:00.000Z');
 const TAG = 'EXCEL-APR2026';
 
+type SectionTag = '1a' | '1b' | '2a' | '2b';
+
 /**
- * Per-source-file customer defaults.
- *
- * Used in two places:
- *   1. Multiple-candidate disambiguation. When the fuzzy matcher returns >1 DB
- *      candidate for a row, we narrow by `customer.type === preferredType` for
- *      that source file. If exactly one candidate survives, we pick it.
- *   2. New-customer creation. When EXCEL_NAME_OVERRIDES has an entry whose value
- *      is the empty string `""` (or `{ create: true }`), the new Customer row
- *      is inserted with these defaults unless explicitly overridden in the entry.
- *
- * Mapping is keyed by the Excel file's basename:
- *   ديون المنتجات.xlsx       -> WHOLESALE / GROCERY  (products debts; wholesale)
- *   مخزن رئيسي بقالات.xlsx   -> RETAIL    / GROCERY  (main warehouse; grocery retail)
+ * Section defaults are driven by each JSON row's own section tag.
+ * This prevents bakery rows from being treated as grocery retail when a file is renamed.
  */
-const FILE_DEFAULTS: Record<string, { type: CustomerType; division: Section }> = {
-  'ديون المنتجات.xlsx': { type: CustomerType.WHOLESALE, division: Section.GROCERY },
-  'مخزن رئيسي بقالات.xlsx': { type: CustomerType.RETAIL, division: Section.GROCERY },
+const SECTION_DEFAULTS: Record<SectionTag, { type: CustomerType; division: Section }> = {
+  '1a': { type: CustomerType.WHOLESALE, division: Section.BAKERY },
+  '1b': { type: CustomerType.AGENT_WHOLESALE, division: Section.BAKERY },
+  '2a': { type: CustomerType.WHOLESALE, division: Section.GROCERY },
+  '2b': { type: CustomerType.RETAIL, division: Section.GROCERY },
 };
 
 const FALLBACK_DEFAULTS = { type: CustomerType.WHOLESALE, division: Section.GROCERY };
 
-const FILE_TYPE_GROUPS: Record<string, CustomerType[]> = {
-  'ديون المنتجات.xlsx': [CustomerType.WHOLESALE, CustomerType.AGENT_WHOLESALE],
-  'مخزن رئيسي بقالات.xlsx': [
-    CustomerType.RETAIL,
-    CustomerType.AGENT_RETAIL,
-    CustomerType.BAKERY_CUSTOMER,
-  ],
-};
-
-/**
- * Manual overrides for Excel customer names that the fuzzy matcher cannot resolve
- * automatically. The dry-run prints every unmatched name with its daily totals so
- * you can decide per-name whether to: (a) point it at an existing Customer.id, or
- * (b) ask the script to create a brand-new Customer row.
- *
- * Key:   Excel customer name EXACTLY as it appears in the workbook (cell B in
- *        the data row). Leading/trailing whitespace is trimmed automatically;
- *        otherwise the string is used verbatim.
- *
- * Value (any of these forms):
- *   '<cuid>'                                       -> use that existing customer
- *   ''                                              -> create a new customer with file
- *                                                     defaults (FILE_DEFAULTS)
- *   { customerId: '<cuid>' }                       -> use that existing customer
- *   { create: true }                               -> create with file defaults
- *   { create: true, type, division, name }         -> create with explicit fields
- *
- * Disambiguation note: if the SAME Excel name appears in BOTH workbooks and the
- * fuzzy matcher returns multiple DB candidates, you usually do NOT need an entry
- * here. The file-type rule (FILE_DEFAULTS above) splits them automatically:
- *   ديون المنتجات row     -> picks the WHOLESALE candidate
- *   مخزن رئيسي بقالات row -> picks the RETAIL    candidate
- */
-type ExcelOverride =
-  | string
-  | { customerId: string }
-  | {
-      create: true;
-      name?: string;
-      type?: CustomerType;
-      division?: Section;
-    };
-
-const EXCEL_NAME_OVERRIDES: Record<string, ExcelOverride> = {
-  // ── Use existing customer (id supplied from dry-run output) ──────────────
-  'احمد المندوب': 'cmn4o77je003nb84wd7orx4uz',
-  'مخبز  زكي- الكريمت': 'cmn5t6hpg004vtpdk0ihrkpb7',
-  'مخبز ود عائس': 'cmn1zy7sj00gdm99srdrsxjrs',
-
-  // ── Create new customer (no id supplied; file defaults will be used) ────
-  'مخبز اولاد ابراهيم': '', // مخزن رئيسي بقالات => GROCERY/RETAIL
-  'عبد اللطيف الجيلي': '', // ديون المنتجات    => GROCERY/WHOLESALE
-  'جلال يوسف': '', // ديون المنتجات    => GROCERY/WHOLESALE
-
-  // The remaining `multiple_candidates` rows from the dry-run dump are resolved
-  // automatically by the FILE_DEFAULTS file-type rule and do NOT need entries here:
-  //   التوم حميدان معتوق  [مخزن رئيسي بقالات]   -> picks RETAIL candidate
-  //   محمد مهدي           [مخزن رئيسي بقالات]   -> picks RETAIL candidate
-  //   محمد مهدي           [ديون المنتجات]       -> picks WHOLESALE candidate
-  //   مهدى المستشفى       [ديون المنتجات]       -> picks WHOLESALE candidate
-  //   خالد مدرسة المجد    [ديون المنتجات]       -> picks WHOLESALE candidate
-  //   خالد - مدرسة المجد  [مخزن رئيسي بقالات]   -> picks RETAIL candidate
+const SECTION_TYPE_GROUPS: Record<SectionTag, CustomerType[]> = {
+  '1a': [CustomerType.WHOLESALE],
+  '1b': [CustomerType.AGENT_WHOLESALE],
+  '2a': [CustomerType.WHOLESALE, CustomerType.AGENT_WHOLESALE],
+  '2b': [CustomerType.RETAIL, CustomerType.AGENT_RETAIL, CustomerType.BAKERY_CUSTOMER],
 };
 
 const REPORTS_DIR = __dirname;
@@ -191,48 +124,6 @@ function parseDateArg(s: string | undefined, fallback: Date): Date {
     throw new Error(`Invalid date argument: ${s}`);
   }
   return d;
-}
-
-// ═══════════════════════════════════════════════════════════
-// CELL VALUE HELPERS
-// ═══════════════════════════════════════════════════════════
-
-function cellNum(v: ExcelJS.CellValue): number | null {
-  if (v === null || v === undefined) return null;
-  if (typeof v === 'number') return v;
-  if (typeof v === 'object' && 'result' in (v as any)) {
-    const r = (v as any).result;
-    if (typeof r === 'number') return r;
-  }
-  if (typeof v === 'string') {
-    const cleaned = v.replace(/[,\s]/g, '');
-    const n = Number(cleaned);
-    return Number.isFinite(n) ? n : null;
-  }
-  return null;
-}
-
-function cellStr(v: ExcelJS.CellValue): string | null {
-  if (v === null || v === undefined) return null;
-  if (typeof v === 'string') return v.trim() || null;
-  if (typeof v === 'object' && 'text' in (v as any)) {
-    const t = (v as any).text;
-    return typeof t === 'string' ? t.trim() || null : null;
-  }
-  return null;
-}
-
-function cellDate(v: ExcelJS.CellValue): Date | null {
-  if (v instanceof Date) return v;
-  if (typeof v === 'string') {
-    const d = new Date(v);
-    return isNaN(d.getTime()) ? null : d;
-  }
-  if (typeof v === 'object' && v !== null && 'result' in (v as any)) {
-    const r = (v as any).result;
-    if (r instanceof Date) return r;
-  }
-  return null;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -275,7 +166,7 @@ function levenshtein(a: string, b: string): number {
 }
 
 // ═══════════════════════════════════════════════════════════
-// EXCEL PARSING
+// JSON PAYMENT LOADER
 // ═══════════════════════════════════════════════════════════
 
 interface DayPayment {
@@ -286,82 +177,49 @@ interface DayPayment {
 
 interface ExcelCustomerRow {
   sourceFile: string;
-  rowNum: number;
+  section: SectionTag;
+  rowNum: number | null;
   name: string;
   daily: DayPayment[]; // only days with any non-zero cash/bank
 }
 
-/**
- * Both workbooks share the same layout:
- *   row 1: top title
- *   row 2: per-day repeated date in row[2 .. 2 + 6*d], starting at col C (idx 3)
- *   row 3: sub-headers ("رصيد افتتاحي" | "البيان" | "المديونية" | "سداد كاش" | "سداد بنكك" | "رصيد ختامي")
- *   row 4..end: data rows where col A is the row number and col B is the customer name.
- *
- * Day d (0-based) cells:
- *   idx (3 + d*6) + 0  -> رصيد افتتاحي
- *   idx (3 + d*6) + 1  -> البيان
- *   idx (3 + d*6) + 2  -> المديونية
- *   idx (3 + d*6) + 3  -> سداد كاش      (PaymentMethod.CASH)
- *   idx (3 + d*6) + 4  -> سداد بنكك     (PaymentMethod.BANKAK)
- *   idx (3 + d*6) + 5  -> رصيد ختامي
- */
-async function parseWorkbookPayments(filePath: string): Promise<ExcelCustomerRow[]> {
-  if (!fs.existsSync(filePath)) {
-    throw new Error(`Excel file not found: ${filePath}`);
-  }
-  const wb = new ExcelJS.Workbook();
-  await wb.xlsx.readFile(filePath);
-  const ws = wb.worksheets[0];
-  if (!ws) throw new Error(`No worksheet in ${filePath}`);
+function dateOnlyUtc(date: Date): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+}
 
-  // Build day -> column index map by walking row 2 left to right.
-  const dateRow = ws.getRow(2);
-  const dateValues = dateRow.values as ExcelJS.CellValue[];
-  const dayByCol: { idx: number; date: Date }[] = [];
-  for (let idx = 3; idx < dateValues.length; idx += 6) {
-    const d = cellDate(dateValues[idx]);
-    if (!d) break;
-    if (d.getTime() < START_DATE.getTime() || d.getTime() > END_DATE.getTime()) continue;
-    dayByCol.push({ idx, date: d });
+function loadPaymentsFromJson(jsonPath: string): ExcelCustomerRow[] {
+  if (!fs.existsSync(jsonPath)) {
+    throw new Error(`JSON file not found: ${jsonPath}\nRun first: npm run script:extract-april-debts`);
   }
 
+  const data = JSON.parse(fs.readFileSync(jsonPath, 'utf8')) as AprilDebtsJson;
   const out: ExcelCustomerRow[] = [];
 
-  ws.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-    if (rowNumber < 4) return; // skip headers
-
-    const v = row.values as ExcelJS.CellValue[];
-    const colA = v[1];
-    const colB = v[2];
-
-    const aNum = cellNum(colA);
-    const bStr = cellStr(colB);
-
-    // Data row: integer in col A, non-empty string in col B.
-    if (!(aNum !== null && Number.isInteger(aNum) && bStr)) return;
-
+  for (const customer of data.customers) {
     const daily: DayPayment[] = [];
-    for (const day of dayByCol) {
-      const cashRaw = cellNum(v[day.idx + 3]) ?? 0;
-      const bankRaw = cellNum(v[day.idx + 4]) ?? 0;
-      if (cashRaw <= 0 && bankRaw <= 0) continue;
+    for (const day of customer.daily) {
+      const date = dateOnlyUtc(new Date(`${day.date}T00:00:00.000Z`));
+      if (date.getTime() < START_DATE.getTime() || date.getTime() > END_DATE.getTime()) continue;
+      const cash = day.cash > 0 ? day.cash : 0;
+      const bank = day.bank > 0 ? day.bank : 0;
+      if (cash <= 0 && bank <= 0) continue;
       daily.push({
-        date: day.date,
-        cash: new Prisma.Decimal(cashRaw > 0 ? cashRaw : 0),
-        bank: new Prisma.Decimal(bankRaw > 0 ? bankRaw : 0),
+        date,
+        cash: new Prisma.Decimal(cash),
+        bank: new Prisma.Decimal(bank),
       });
     }
 
-    if (daily.length === 0) return;
+    if (daily.length === 0) continue;
 
     out.push({
-      sourceFile: path.basename(filePath),
-      rowNum: aNum,
-      name: bStr,
+      sourceFile: customer.sourceFile,
+      section: customer.section as SectionTag,
+      rowNum: customer.rowNum,
+      name: customer.name,
       daily,
     });
-  });
+  }
 
   return out;
 }
@@ -385,29 +243,29 @@ interface UnmatchedExcelCustomer extends ExcelCustomerRow {
 }
 
 /**
- * Read an EXCEL_NAME_OVERRIDES value into a normalised shape:
+ * Read a NAME_OVERRIDES value into a normalised shape:
  *   { kind: 'use'; id }                                  - existing customer
  *   { kind: 'create'; name, type, division }             - create new customer
  *   null                                                  - no override / falls through to fuzzy
  */
 function resolveOverride(
-  raw: ExcelOverride | undefined,
+  raw: NameOverride | undefined,
   excelName: string,
-  sourceFile: string,
+  section: SectionTag,
 ):
   | { kind: 'use'; id: string }
   | { kind: 'create'; name: string; type: CustomerType; division: Section }
   | null {
   if (raw === undefined) return null;
-  const fileDefaults = FILE_DEFAULTS[sourceFile] ?? FALLBACK_DEFAULTS;
+  const defaults = SECTION_DEFAULTS[section] ?? FALLBACK_DEFAULTS;
 
   if (typeof raw === 'string') {
     if (raw.length === 0) {
       return {
         kind: 'create',
         name: excelName,
-        type: fileDefaults.type,
-        division: fileDefaults.division,
+        type: defaults.type,
+        division: defaults.division,
       };
     }
     return { kind: 'use', id: raw };
@@ -420,8 +278,8 @@ function resolveOverride(
   return {
     kind: 'create',
     name: raw.name ?? excelName,
-    type: raw.type ?? fileDefaults.type,
-    division: raw.division ?? fileDefaults.division,
+    type: raw.type ?? defaults.type,
+    division: raw.division ?? defaults.division,
   };
 }
 
@@ -441,7 +299,7 @@ async function matchCustomers(
   const byId = new Map(all.map((c) => [c.id, c]));
 
   // Validate the manual overrides up front so typos surface fast.
-  for (const [excelName, raw] of Object.entries(EXCEL_NAME_OVERRIDES)) {
+  for (const [excelName, raw] of Object.entries(NAME_OVERRIDES)) {
     const id =
       typeof raw === 'string' && raw.length > 0
         ? raw
@@ -450,7 +308,7 @@ async function matchCustomers(
           : null;
     if (id && !byId.has(id)) {
       console.warn(
-        `  WARNING: EXCEL_NAME_OVERRIDES["${excelName}"] -> ${id} is not a known Customer.id; the entry will be IGNORED.`,
+        `  WARNING: NAME_OVERRIDES["${excelName}"] -> ${id} is not a known Customer.id; the entry will be IGNORED.`,
       );
     }
   }
@@ -466,9 +324,9 @@ async function matchCustomers(
 
     // 1) Exact-name override map wins over fuzzy matching.
     const override = resolveOverride(
-      EXCEL_NAME_OVERRIDES[trimmedName],
+      NAME_OVERRIDES[trimmedName],
       trimmedName,
-      row.sourceFile,
+      row.section,
     );
 
     if (override?.kind === 'use' && byId.has(override.id)) {
@@ -483,6 +341,22 @@ async function matchCustomers(
     }
 
     if (override?.kind === 'create') {
+      const defaults = SECTION_DEFAULTS[row.section] ?? FALLBACK_DEFAULTS;
+      const existingExact = normalized.filter(
+        (c) =>
+          c.norm === normalizeArabic(override.name) &&
+          c.division === defaults.division &&
+          c.type === defaults.type,
+      );
+      if (existingExact.length === 1) {
+        matched.push({
+          ...row,
+          customerId: existingExact[0].id,
+          customerName: existingExact[0].name,
+          matchNote: 'override:create-existing',
+        });
+        continue;
+      }
       matched.push({
         ...row,
         customerId: '',
@@ -515,12 +389,11 @@ async function matchCustomers(
       note = 'substring';
     }
 
-    // 3) If multiple candidates, narrow by source file -> customer type family,
-    //    then by division. This handles duplicate customer names where one row is
-    //    wholesale/product debt and the other is retail/main-warehouse debt.
+    // 3) If multiple candidates, narrow by JSON section -> customer type family,
+    //    then by division. This handles duplicate customer names across sections.
     if (candidates.length > 1) {
-      const defaults = FILE_DEFAULTS[row.sourceFile];
-      const preferredTypes = FILE_TYPE_GROUPS[row.sourceFile] ?? [];
+      const defaults = SECTION_DEFAULTS[row.section];
+      const preferredTypes = SECTION_TYPE_GROUPS[row.section] ?? [];
 
       if (preferredTypes.length > 0) {
         const typeFiltered = candidates.filter((c) => preferredTypes.includes(c.type));
@@ -572,7 +445,7 @@ async function matchCustomers(
 
 /**
  * Print the unmatched Excel rows in a console-readable table so the user can
- * pick them up and supply customer ids for EXCEL_NAME_OVERRIDES.
+ * pick them up and supply customer ids for NAME_OVERRIDES.
  */
 function printUnmatched(unmatched: UnmatchedExcelCustomer[]): void {
   if (unmatched.length === 0) {
@@ -584,16 +457,13 @@ function printUnmatched(unmatched: UnmatchedExcelCustomer[]): void {
   console.log(`UNMATCHED EXCEL CUSTOMER NAMES (${unmatched.length})`);
   console.log('══════════════════════════════════');
   console.log(
-    '  These rows will be SKIPPED until you add an entry to EXCEL_NAME_OVERRIDES at',
+    '  These rows will be SKIPPED until you add an entry to NAME_OVERRIDES at',
   );
-  console.log('  the top of this script. Pick one of these two formats per name:');
+  console.log('  scripts/data/april-2026-debts/name-overrides.ts. Pick one of these formats per name:');
   console.log('     "Excel name": "<customer-id>",   // use existing customer');
   console.log('     "Excel name": "",                // create a NEW customer');
   console.log(
-    '                                         (file defaults: ديون المنتجات => GROCERY/WHOLESALE,',
-  );
-  console.log(
-    '                                                         مخزن رئيسي بقالات => GROCERY/RETAIL)',
+    '                                         (section defaults: 1a/1b bakery, 2a/2b grocery)',
   );
   console.log('  ----------------------------------------');
 
@@ -617,7 +487,7 @@ function printUnmatched(unmatched: UnmatchedExcelCustomer[]): void {
             .join(', ')}${u.candidates.length > 3 ? ', …' : ''})`
         : '';
     console.log(
-      `  ${String(idx).padStart(3, ' ')}. "${u.name}"  [${u.sourceFile} row ${u.rowNum}]`,
+      `  ${String(idx).padStart(3, ' ')}. "${u.name}"  [${u.sourceFile} ${u.section} row ${u.rowNum ?? '-'}]`,
     );
     console.log(
       `       cash=${cash.toFixed(2)}  bank=${bank.toFixed(2)}  total=${total.toFixed(2)} SDG  reason=${u.reason}${candidateNote}`,
@@ -828,7 +698,7 @@ async function phase2ReverseOld(): Promise<ReversalResult> {
 }
 
 // ═══════════════════════════════════════════════════════════
-// PHASE 2.5 — create new customers requested by EXCEL_NAME_OVERRIDES
+// PHASE 2.5 — create new customers requested by NAME_OVERRIDES
 // ═══════════════════════════════════════════════════════════
 
 interface CreateResult {
@@ -838,7 +708,7 @@ interface CreateResult {
 }
 
 /**
- * For every matched row that came from an EXCEL_NAME_OVERRIDES entry without an
+ * For every matched row that came from a NAME_OVERRIDES entry without an
  * id (i.e. `pendingCreate` is set), insert a Customer row and rewrite the row's
  * customerId/customerName so phases 3-4 treat them like any other matched row.
  *
@@ -859,9 +729,9 @@ async function phaseCreateCustomers(
   console.log(`PHASE 2.5 — create new customers (${pending.length})`);
   console.log('══════════════════════════════════');
   console.log(
-    '  These names exist in EXCEL_NAME_OVERRIDES with NO customer id, so a new',
+    '  These names exist in NAME_OVERRIDES with NO customer id, so a new',
   );
-  console.log('  Customer row will be inserted using FILE_DEFAULTS for type/division.');
+  console.log('  Customer row will be inserted using the JSON row section for type/division.');
   console.log('  ----------------------------------------');
 
   for (const m of pending) {
@@ -870,7 +740,7 @@ async function phaseCreateCustomers(
       new Prisma.Decimal(0),
     );
     console.log(
-      `  + "${m.pendingCreate!.name}"  ${m.pendingCreate!.division}/${m.pendingCreate!.type}   total=${total.toFixed(2)} SDG  [${m.sourceFile} row ${m.rowNum}]`,
+      `  + "${m.pendingCreate!.name}"  ${m.pendingCreate!.division}/${m.pendingCreate!.type}   total=${total.toFixed(2)} SDG  [${m.sourceFile} ${m.section} row ${m.rowNum ?? '-'}]`,
     );
   }
 
@@ -1257,8 +1127,7 @@ async function main() {
   console.log(`skip-cleanup:   ${SKIP_CLEANUP}`);
   console.log(`skip-payments:  ${SKIP_PAYMENTS}`);
   console.log(`run-recalc:     ${RUN_RECALC}`);
-  console.log(`file 1:         ${FILE1}`);
-  console.log(`file 2:         ${FILE2}`);
+  console.log(`json:           ${JSON_FILE}`);
   console.log(`start date:     ${ymd(START_DATE)}`);
   console.log(`end date:       ${ymd(END_DATE)}`);
 
@@ -1275,16 +1144,13 @@ async function main() {
     return;
   }
 
-  // Parse Excel
-  console.log('\nReading Excel files...');
-  const [rows1, rows2] = await Promise.all([
-    parseWorkbookPayments(FILE1),
-    parseWorkbookPayments(FILE2),
-  ]);
-  const allRows = [...rows1, ...rows2];
-  console.log(`  ${path.basename(FILE1)}: ${rows1.length} customer rows with payments`);
-  console.log(`  ${path.basename(FILE2)}: ${rows2.length} customer rows with payments`);
+  // Load JSON payments
+  console.log('\nReading April debts JSON...');
+  const allRows = loadPaymentsFromJson(JSON_FILE);
+  const rowsBySection: Record<SectionTag, number> = { '1a': 0, '1b': 0, '2a': 0, '2b': 0 };
+  for (const row of allRows) rowsBySection[row.section]++;
   console.log(`  total rows with non-zero cash/bank payments: ${allRows.length}`);
+  console.log(`  by section: 1a=${rowsBySection['1a']} 1b=${rowsBySection['1b']} 2a=${rowsBySection['2a']} 2b=${rowsBySection['2b']}`);
 
   const totalCashPlanned = allRows.reduce(
     (s, r) => s.add(r.daily.reduce((ss, d) => ss.add(d.cash), new Prisma.Decimal(0))),
@@ -1302,7 +1168,7 @@ async function main() {
   console.log(`  matched customers:   ${matched.length}`);
   console.log(`  unmatched rows:      ${unmatched.length}`);
 
-  // Always print unmatched names so you can supply ids for EXCEL_NAME_OVERRIDES.
+  // Always print unmatched names so you can supply ids for NAME_OVERRIDES.
   printUnmatched(unmatched);
 
   // Persist the unmatched JSON immediately (even before the rest of the run finishes)
@@ -1316,7 +1182,7 @@ async function main() {
   // Phase 2 (reverse old)
   await phase2ReverseOld();
 
-  // Phase 2.5 (create new customers requested via EXCEL_NAME_OVERRIDES)
+  // Phase 2.5 (create new customers requested via NAME_OVERRIDES)
   await phaseCreateCustomers(matched);
 
   // Phase 3-4 (apply new)

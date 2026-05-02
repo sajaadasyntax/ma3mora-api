@@ -1,22 +1,22 @@
 /**
- * Read-only reconciliation: compare April-1 Excel debt balances with current
+ * Read-only reconciliation: compare April-1 JSON debt balances with current
  * unpaid PRE-SYS sales invoices in the database.
  *
- * The Excel parser intentionally matches seed-april-2026-debts.ts:
- *   - reads only column C ("رصيد افتتاحي")
- *   - parses both files into the same four source sections
+ * The JSON loader intentionally matches seed-april-2026-debts.ts:
+ *   - reads openingBalanceApril1 only
+ *   - reads all source sections from april-2026-debts.json
  *   - matches Arabic customer names to current Customer rows
  *
  * Usage from apps/api:
  *   node ./node_modules/tsx/dist/cli.mjs scripts/reconcile-pre-sys-unpaid-with-excel.ts
- *   node ./node_modules/tsx/dist/cli.mjs scripts/reconcile-pre-sys-unpaid-with-excel.ts --file1=... --file2=...
+ *   node ./node_modules/tsx/dist/cli.mjs scripts/reconcile-pre-sys-unpaid-with-excel.ts --source-json=...
  *   node ./node_modules/tsx/dist/cli.mjs scripts/reconcile-pre-sys-unpaid-with-excel.ts --json
  */
 
-import ExcelJS from 'exceljs';
 import { Prisma, PrismaClient, Section } from '@prisma/client';
 import * as fs from 'fs';
 import * as path from 'path';
+import type { AprilDebtsJson } from './extract-april-2026-debts-to-json';
 
 const prisma = new PrismaClient();
 
@@ -39,12 +39,10 @@ interface CustomerMatch {
 
 const ARGS = process.argv.slice(2);
 const DEFAULT_DIR = path.join(__dirname, 'data', 'april-2026-debts');
-const FILE1 =
-  ARGS.find((a) => a.startsWith('--file1='))?.slice('--file1='.length) ??
-  path.join(DEFAULT_DIR, 'debts-25kg-april-2026.xlsx');
-const FILE2 =
-  ARGS.find((a) => a.startsWith('--file2='))?.slice('--file2='.length) ??
-  path.join(DEFAULT_DIR, 'debts-products-april-2026.xlsx');
+const SOURCE_JSON =
+  ARGS.find((a) => a.startsWith('--source-json='))?.slice('--source-json='.length) ??
+  ARGS.find((a) => a.startsWith('--debt-json='))?.slice('--debt-json='.length) ??
+  path.join(DEFAULT_DIR, 'april-2026-debts.json');
 const PREFIX = ARGS.find((a) => a.startsWith('--prefix='))?.slice('--prefix='.length) ?? 'PRE-SYS';
 const JSON_OUTPUT = ARGS.includes('--json');
 const INCLUDE_REJECTED = ARGS.includes('--include-rejected');
@@ -89,116 +87,24 @@ function levenshtein(a: string, b: string): number {
   return prev[n];
 }
 
-function cellNum(v: ExcelJS.CellValue): number | null {
-  if (v === null || v === undefined) return null;
-  if (typeof v === 'number') return v;
-  if (typeof v === 'object' && 'result' in (v as any)) {
-    const r = (v as any).result;
-    if (typeof r === 'number') return r;
-  }
-  return null;
-}
-
-function cellStr(v: ExcelJS.CellValue): string | null {
-  if (v === null || v === undefined) return null;
-  if (typeof v === 'string') return v.trim() || null;
-  if (typeof v === 'object' && 'text' in (v as any)) {
-    const t = (v as any).text;
-    return typeof t === 'string' ? t.trim() || null : null;
-  }
-  return null;
-}
-
-async function parseFile1(filePath: string): Promise<DebtRow[]> {
-  const wb = new ExcelJS.Workbook();
-  await wb.xlsx.readFile(filePath);
-  const ws = wb.worksheets[0];
-  const rows: DebtRow[] = [];
-  let currentSection: SectionTag = '1a';
-  let headerCount = 0;
-
-  ws.eachRow({ includeEmpty: false }, (row) => {
-    const v = row.values as ExcelJS.CellValue[];
-    const colA = v[1];
-    const colB = v[2];
-    const colC = v[3];
-    const aStr = cellStr(colA);
-
-    if (aStr === 'الرقم') {
-      headerCount++;
-      currentSection = headerCount <= 1 ? '1a' : '1b';
-      return;
-    }
-
-    const aNum = cellNum(colA);
-    const bStr = cellStr(colB);
-    if (aNum !== null && Number.isInteger(aNum) && bStr) {
-      const opening = cellNum(colC) ?? 0;
-      if (opening > 0) {
-        rows.push({
-          rowNum: aNum,
-          name: bStr,
-          openingBalance: opening,
-          sectionTag: currentSection,
-          sourceFile: path.basename(filePath),
-        });
-      }
-    }
-  });
-
-  return rows;
-}
-
-async function parseFile2(filePath: string): Promise<DebtRow[]> {
-  const wb = new ExcelJS.Workbook();
-  await wb.xlsx.readFile(filePath);
-  const ws = wb.worksheets[0];
-  const rows: DebtRow[] = [];
-  let currentSection: SectionTag = '2a';
-
-  ws.eachRow({ includeEmpty: false }, (row) => {
-    const v = row.values as ExcelJS.CellValue[];
-    const colA = v[1];
-    const colB = v[2];
-    const colC = v[3];
-    const bStr = cellStr(colB);
-
-    if (bStr && bStr.includes('قطاعي')) {
-      currentSection = '2b';
-      return;
-    }
-
-    const aNum = cellNum(colA);
-    if (aNum !== null && Number.isInteger(aNum) && bStr) {
-      const opening = cellNum(colC) ?? 0;
-      if (opening > 0) {
-        rows.push({
-          rowNum: aNum,
-          name: bStr,
-          openingBalance: opening,
-          sectionTag: currentSection,
-          sourceFile: path.basename(filePath),
-        });
-      }
-    }
-  });
-
-  return rows;
-}
-
 function sectionToDivision(tag: SectionTag): Section {
-  return tag === '1a' ? Section.BAKERY : Section.GROCERY;
+  return tag === '1a' || tag === '1b' ? Section.BAKERY : Section.GROCERY;
 }
 
-async function loadExcelRows(): Promise<DebtRow[]> {
-  for (const file of [FILE1, FILE2]) {
-    if (!fs.existsSync(file)) {
-      throw new Error(`Excel file not found: ${file}`);
-    }
+function loadExcelRows(): DebtRow[] {
+  if (!fs.existsSync(SOURCE_JSON)) {
+    throw new Error(`Debt JSON file not found: ${SOURCE_JSON}\nRun first: npm run script:extract-april-debts`);
   }
-
-  const [rows1, rows2] = await Promise.all([parseFile1(FILE1), parseFile2(FILE2)]);
-  return [...rows1, ...rows2];
+  const data = JSON.parse(fs.readFileSync(SOURCE_JSON, 'utf8')) as AprilDebtsJson;
+  return data.customers
+    .filter((c) => c.openingBalanceApril1 > 0)
+    .map((c) => ({
+      rowNum: c.rowNum,
+      name: c.name,
+      openingBalance: c.openingBalanceApril1,
+      sectionTag: c.section as SectionTag,
+      sourceFile: c.sourceFile,
+    }));
 }
 
 async function buildMatcher() {
@@ -375,7 +281,7 @@ async function main() {
 
   const payload = {
     prefix: PREFIX,
-    files: [FILE1, FILE2],
+    sourceJson: SOURCE_JSON,
     excludeRejected: !INCLUDE_REJECTED,
     tolerance: TOLERANCE.toFixed(2),
     summary: {
@@ -404,8 +310,7 @@ async function main() {
   console.log('='.repeat(78));
   console.log(`Prefix: ${PREFIX}`);
   console.log(`Rejected invoices: ${INCLUDE_REJECTED ? 'included' : 'excluded'}`);
-  console.log(`File 1: ${FILE1}`);
-  console.log(`File 2: ${FILE2}`);
+  console.log(`Source JSON: ${SOURCE_JSON}`);
   console.log('-'.repeat(78));
   console.log(`Excel rows parsed:              ${payload.summary.excelRows}`);
   console.log(`Excel matched customers:        ${payload.summary.excelMatchedCustomers}`);

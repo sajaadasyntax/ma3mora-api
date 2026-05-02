@@ -42,6 +42,7 @@
     "script:backfill-advance-paid-at": "tsx scripts/backfill-advance-paid-at.ts",
     "script:backfill-initial-quantity": "tsx scripts/backfill-initial-quantity.ts",
     "script:backfill-initial-quantity:apply": "tsx scripts/backfill-initial-quantity.ts --apply",
+    "script:extract-april-debts": "node ./node_modules/tsx/dist/cli.mjs scripts/extract-april-2026-debts-to-json.ts",
     "script:seed-april-debts": "node ./node_modules/tsx/dist/cli.mjs scripts/seed-april-2026-debts.ts --dry-run",
     "script:seed-april-debts:apply": "node ./node_modules/tsx/dist/cli.mjs scripts/seed-april-2026-debts.ts --confirm",
     "script:clear-customer-ob": "node ./node_modules/tsx/dist/cli.mjs scripts/clear-customer-opening-balances.ts --dry-run",
@@ -50,6 +51,7 @@
     "script:check-pre-sys-unpaid:json": "node ./node_modules/tsx/dist/cli.mjs scripts/check-pre-sys-unpaid.ts --json",
     "script:reconcile-pre-sys-excel": "node ./node_modules/tsx/dist/cli.mjs scripts/reconcile-pre-sys-unpaid-with-excel.ts",
     "script:reconcile-pre-sys-excel:json": "node ./node_modules/tsx/dist/cli.mjs scripts/reconcile-pre-sys-unpaid-with-excel.ts --json",
+    "script:reconcile-april-daily-debt": "node ./node_modules/tsx/dist/cli.mjs scripts/reconcile-april-daily-debt-column.ts",
     "script:apply-april-payments": "node ./node_modules/tsx/dist/cli.mjs scripts/apply-april-2026-excel-payments.ts",
     "script:apply-april-payments:apply": "node ./node_modules/tsx/dist/cli.mjs scripts/apply-april-2026-excel-payments.ts --confirm",
     "postinstall": "node ./node_modules/prisma/build/index.js generate"
