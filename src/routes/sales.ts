@@ -12,6 +12,28 @@ const router = Router();
 router.use(requireAuth);
 router.use(blockAuditorWrites);
 
+const BUSINESS_TIMEZONE_OFFSET = '+03:00';
+const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function addDaysToDateOnly(date: string, days: number): string {
+  const [year, month, day] = date.split('-').map(Number);
+  const utc = new Date(Date.UTC(year, month - 1, day + days));
+  return utc.toISOString().slice(0, 10);
+}
+
+function parseBusinessDateBoundary(value: string, boundary: 'start' | 'endExclusive'): Date {
+  if (DATE_ONLY_RE.test(value)) {
+    const date = boundary === 'start' ? value : addDaysToDateOnly(value, 1);
+    return new Date(`${date}T00:00:00.000${BUSINESS_TIMEZONE_OFFSET}`);
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`Invalid date filter: ${value}`);
+  }
+  return parsed;
+}
+
 // Utility function to calculate payment status based on paidAmount and total
 function calculatePaymentStatus(paidAmount: Prisma.Decimal, total: Prisma.Decimal): 'PAID' | 'PARTIAL' | 'CREDIT' {
   if (paidAmount.lessThanOrEqualTo(0)) {
@@ -169,14 +191,10 @@ router.get('/invoices', requireRole('SALES_GROCERY', 'SALES_BAKERY', 'AGENT_GROC
     if (startDate || endDate) {
       where.createdAt = {};
       if (startDate) {
-        const start = new Date(startDate as string);
-        start.setHours(0, 0, 0, 0);
-        where.createdAt.gte = start;
+        where.createdAt.gte = parseBusinessDateBoundary(startDate as string, 'start');
       }
       if (endDate) {
-        const end = new Date(endDate as string);
-        end.setHours(23, 59, 59, 999);
-        where.createdAt.lte = end;
+        where.createdAt.lt = parseBusinessDateBoundary(endDate as string, 'endExclusive');
       }
     }
 
