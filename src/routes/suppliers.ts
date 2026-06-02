@@ -30,7 +30,7 @@ router.get('/', requireRole('PROCUREMENT', 'ACCOUNTANT', 'AUDITOR', 'MANAGER'), 
   }
 });
 
-router.post('/', requireRole('PROCUREMENT', 'MANAGER'), createAuditLog('Supplier'), async (req: AuthRequest, res) => {
+router.post('/', requireRole('PROCUREMENT', 'MANAGER', 'ACCOUNTANT'), createAuditLog('Supplier'), async (req: AuthRequest, res) => {
   try {
     const data = createSupplierSchema.parse(req.body);
 

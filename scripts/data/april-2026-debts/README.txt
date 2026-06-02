@@ -27,7 +27,7 @@ Step 2 — Apply final balances (the easy path)
   npm run script:apply-april-final          # dry-run / preview
   npm run script:apply-april-final:apply    # write
 
-What this does (cutoff: createdAt < 2026-05-01):
+What this does (cutoff: createdAt < 2026-05-01 00:00 Sudan time / +03:00):
 
   1. Deletes all PRE-SYS-* invoices (script-generated; safe to recreate).
   2. Removes EXCEL-APR2026:* SalesPayments left over from older runs.

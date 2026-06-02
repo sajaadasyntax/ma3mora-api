@@ -36,6 +36,7 @@ const createExpenseSchema = z.object({
   method: z.enum(['CASH', 'BANKAK', 'BANK_NILE', 'DEBT', 'OTHERS']),
   description: z.string().min(1),
   isDebt: z.boolean().optional().default(false),
+  expenseHeadId: z.string().optional(),
 });
 
 const createIncomeSchema = z.object({

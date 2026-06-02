@@ -58,10 +58,10 @@ const JSON_FILE =
 const MAX_SAFE_AMOUNT = 99_999_999.99;
 const MAX_SAFE_DELETE = 20_000;
 
-/** Cutoff: this script does not touch any data created on/after this date. */
-const MAY_1 = new Date('2026-05-01T00:00:00.000Z');
-/** New PRE-SYS invoices are stamped with this date (last second of April 30). */
-const FINAL_BALANCE_DATE = new Date('2026-04-30T23:59:59.999Z');
+/** Cutoff: this script does not touch any data created on/after May 1 in Sudan time (+03:00). */
+const MAY_1 = new Date('2026-05-01T00:00:00.000+03:00');
+/** New PRE-SYS invoices are stamped at the last millisecond of April 30 in Sudan time (+03:00). */
+const FINAL_BALANCE_DATE = new Date('2026-04-30T23:59:59.999+03:00');
 
 const REPORTS_DIR = __dirname;
 const REPORT_PLAN = path.join(REPORTS_DIR, 'april-final-balances-plan.json');
